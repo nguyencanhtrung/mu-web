@@ -163,7 +163,7 @@ Write-Host "Link successful." -ForegroundColor Green
 $patchScript = Join-Path $ClientDir "patch-login-page.ps1"
 if (Test-Path $patchScript) {
     Write-Host "Applying WebGL patches..." -ForegroundColor Cyan
-    & powershell -NoProfile -File $patchScript -Token login107
+    & powershell -NoProfile -File $patchScript -Token login110
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Patching failed!"
         exit 1
