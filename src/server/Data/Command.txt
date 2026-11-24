@@ -49,4 +49,10 @@
 "/makemob"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//makemob <MonsterNumber>
 "/tamastart"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//tamastart
 "/gm"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	0	//gm <on|off>
+"/setstr"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//setstr <Value> (set own character directly)
+"/setene"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//setene <Value> (set own character directly)
+"/setreset"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//setreset <Value> (set own character directly)
+"/setlevel"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//setlevel <Value> (set own character directly)
+"/setagi"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//setagi <Value> (set own character directly)
+"/setvit"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//setvit <Value> (set own character directly)
 end

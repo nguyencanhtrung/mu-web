@@ -4,6 +4,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <emscripten.h>
 
 struct MuFont {
     int height;
@@ -36,7 +37,20 @@ extern "C" void* mu_font_create(int height, int weight, int italic, const char* 
     if (height >= 0) lead = (cell <= 16) ? 3 : (cell * 5 + 16) / 32;
     int em = cell - lead;
     if (em < 8) em = 8;
-    font->height = em;
+    // The WebGL framebuffer uses device pixels. Keep the configured font's
+    // visible size in CSS pixels on Retina displays and when browser zoom changes.
+    double density = EM_ASM_DOUBLE({
+        var bar = document.getElementById('muTopBar');
+        var top = bar ? bar.offsetHeight : 40;
+        // Dense legacy panels also need a smaller face in short/narrow windows.
+        var fit = Math.max(0.65, Math.min(1, window.innerWidth / 1024,
+                                        (window.innerHeight - top) / 600));
+        return (window.devicePixelRatio || 1) * fit;
+    });
+    if (density < 0.5) density = 0.5;
+    if (density > 4.0) density = 4.0;
+    font->height = (int)(em * density + 0.5);
+    if (font->height < 8) font->height = 8;
     font->weight = weight > 0 ? weight : 400;
     font->italic = italic ? 1 : 0;
     const char* src = (face && face[0]) ? face : "Arial";

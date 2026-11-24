@@ -42,11 +42,11 @@ CommandResetMoney_AL1=0
 CommandResetMoney_AL2=0
 CommandResetMoney_AL3=0
 
-; Amount of points gain after utilizing "/reset"
-CommandResetPoint_AL0=0
-CommandResetPoint_AL1=0
-CommandResetPoint_AL2=0
-CommandResetPoint_AL3=0
+; Points awarded per reset (also awarded when keeping character stats)
+CommandResetPoint_AL0=500
+CommandResetPoint_AL1=500
+CommandResetPoint_AL2=500
+CommandResetPoint_AL3=500
 
 ; Percentage of points gain after utilizing "/reset"
 CommandResetPointRateDW=100

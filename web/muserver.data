@@ -54,6 +54,12 @@ end//===========================================================================
 "/makemob"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//makemob <MonsterNumber>
 "/tamastart"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//tamastart
 "/gm"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	0	//gm <on|off>
+"/setstr"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//setstr <Value> (set own character directly)
+"/setene"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//setene <Value> (set own character directly)
+"/setreset"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//setreset <Value> (set own character directly)
+"/setlevel"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//setlevel <Value> (set own character directly)
+"/setagi"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//setagi <Value> (set own character directly)
+"/setvit"	1	1	1	1	0	0	0	0	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	*	0	1	//setvit <Value> (set own character directly)
 end
 //=================================================================
 // When click the NPC located on the coordinates
@@ -3121,11 +3127,11 @@ CommandResetMoney_AL1=0
 CommandResetMoney_AL2=0
 CommandResetMoney_AL3=0
 
-; Amount of points gain after utilizing "/reset"
-CommandResetPoint_AL0=0
-CommandResetPoint_AL1=0
-CommandResetPoint_AL2=0
-CommandResetPoint_AL3=0
+; Points awarded per reset (also awarded when keeping character stats)
+CommandResetPoint_AL0=500
+CommandResetPoint_AL1=500
+CommandResetPoint_AL2=500
+CommandResetPoint_AL3=500
 
 ; Percentage of points gain after utilizing "/reset"
 CommandResetPointRateDW=100

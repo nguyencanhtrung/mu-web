@@ -791,7 +791,7 @@ static void CurrentFont(int* px, int* bold, int* italic, int* crisp, char* face)
     }
     face[31] = 0;
     if (*px < 8) *px = 12;
-    if (*px > 64) *px = 64;
+    if (*px > 192) *px = 192;
 }
 
 static GLuint Text_GlyphAtlas(void)
@@ -935,28 +935,35 @@ static void Text_DrawGlyphs(float x, float baseline, int ascent, const char* s, 
         s_logged = 1;
         printf("MAP glyphs n=%d x=%.0f y=%.0f\n", count, x, top);
     }
-    float pen = x;
-    for (int i = 0; i < count; ++i) {
-        unsigned char c = (unsigned char)s[i];
-        if (c < 32) c = 32;
-        int adv = s_glyphAdv[c];
-        if (adv <= 0) adv = 4;
-        float u0 = (float)(c % 16) * cell / atlas;
-        float v0 = (float)(c / 16) * cell / atlas;
-        float u1 = u0 + (float)adv / atlas;
-        float v1 = v0 + cell / atlas;
-        float x0 = pen;
-        float y0 = top - cell;
-        float x1 = x0 + (float)adv;
-        float y1 = top;
-        glBegin(GL_TRIANGLE_FAN);
-        glColor4f(ink[0], ink[1], ink[2], ink[3]);
-        glTexCoord2f(u0, v0); glVertex2f(x0, y1);
-        glTexCoord2f(u0, v1); glVertex2f(x0, y0);
-        glTexCoord2f(u1, v1); glVertex2f(x1, y0);
-        glTexCoord2f(u1, v0); glVertex2f(x1, y1);
-        glEnd();
-        pen = x1;
+    // A one-pixel dark shadow separates labels from textured panels and the
+    // world without changing item-quality colors or the measured text width.
+    // Draw the whole shadow first so it cannot cover neighboring glyphs.
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool shadow = (pass == 0);
+        float pen = x;
+        for (int i = 0; i < count; ++i) {
+            unsigned char c = (unsigned char)s[i];
+            if (c < 32) c = 32;
+            int adv = s_glyphAdv[c];
+            if (adv <= 0) adv = 4;
+            float u0 = (float)(c % 16) * cell / atlas;
+            float v0 = (float)(c / 16) * cell / atlas;
+            float u1 = u0 + (float)adv / atlas;
+            float v1 = v0 + cell / atlas;
+            float x0 = pen + (shadow ? 1.0f : 0.0f);
+            float y0 = top - cell - (shadow ? 1.0f : 0.0f);
+            float x1 = x0 + (float)adv;
+            float y1 = top - (shadow ? 1.0f : 0.0f);
+            glBegin(GL_TRIANGLE_FAN);
+            if (shadow) glColor4f(0.0f, 0.0f, 0.0f, ink[3] * 0.85f);
+            else glColor4f(ink[0], ink[1], ink[2], ink[3]);
+            glTexCoord2f(u0, v0); glVertex2f(x0, y1);
+            glTexCoord2f(u0, v1); glVertex2f(x0, y0);
+            glTexCoord2f(u1, v1); glVertex2f(x1, y0);
+            glTexCoord2f(u1, v0); glVertex2f(x1, y1);
+            glEnd();
+            pen += (float)adv;
+        }
     }
     glDisable(GL_TEXTURE_2D);
 }

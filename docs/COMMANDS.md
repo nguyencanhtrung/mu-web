@@ -75,8 +75,25 @@ Commands are typed directly into the standard in-game chat input box (press `Ent
 
 ### Game Master (GM) Commands
 
+Enable GM with `/gm on`, then use `/setstr 32000`, `/setene 32000`, `/setagi 32000`, `/setvit 32000`,
+`/setreset 100`, or `/setlevel 400`. These commands affect your own character,
+update the client immediately, and save the result. STR/AGI/VIT/ENE accept values from
+your class's starting stat through `MaxStatPoint` (currently 32767); reset accepts
+0 through `CommandResetLimit` (currently 10000); level accepts 1 through
+`MaxCharacterLevel` (currently 400). Values replace the current total and can
+increase or decrease it. Unallocated points remain unchanged, including when
+setting level. Setting reset does not perform a normal reset or award points.
+Existing automatic stat allocation and automatic reset settings still apply.
+
+
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
+| `/setstr` | `<value>` | Set your base Strength directly; does not spend unallocated points. |
+| `/setene` | `<value>` | Set your base Energy directly; does not spend unallocated points. |
+| `/setagi` | `<value>` | Set your base Agility directly; does not spend unallocated points. |
+| `/setvit` | `<value>` | Set your base Vitality directly; does not spend unallocated points. |
+| `/setreset` | `<value>` | Set your total reset count directly. |
+| `/setlevel` | `<value>` | Set your level and matching experience directly. |
 | `/addmoney` | `<amount>` | Add Zen to character inventory (up to 2,000,000,000). |
 | `/submoney` | `<amount>` | Deduct Zen from character inventory. |
 | `/evo` | *none* | Instantly complete 2nd class change quest for GM (DK -> BK, DW -> SM, Elf -> ME). |
@@ -166,7 +183,7 @@ Once your character reaches the realm reset level requirement, reset your level 
 - **Requirements & Effects**:
   - Resets character Level to **1**.
   - Adds **+1** to character reset count.
-  - Grants bonus stat points according to reset table and difficulty settings.
+  - Grants **500 unallocated stat points per reset** by default, with existing stats and unspent points retained (`CommandResetStat_AL*=0`). Reset-table overrides and class point rates apply. If stat clearing is enabled, stats return to class defaults and unallocated points are recalculated from the cumulative reset rewards.
   - Teleports character back to starting safe-zone town (Lorencia, Noria, or Devias).
   - Equipped items and inventory items are preserved.
 

@@ -1,53 +1,4 @@
 // include: shell.js
-// include: minimum_runtime_check.js
-(function() {
-  // "30.0.0" -> 300000
-  function humanReadableVersionToPacked(str) {
-    str = str.split('-')[0]; // Remove any trailing part from e.g. "12.53.3-alpha"
-    var vers = str.split('.').slice(0, 3);
-    while(vers.length < 3) vers.push('00');
-    vers = vers.map((n, i, arr) => n.padStart(2, '0'));
-    return vers.join('');
-  }
-  // 300000 -> "30.0.0"
-  var packedVersionToHumanReadable = n => [n / 10_000 | 0, (n / 100 | 0) % 100, n % 100].join('.');
-
-  var TARGET_NOT_SUPPORTED = 2147483647;
-
-  // Note: We use a typeof check here instead of optional chaining using
-  // globalThis because older browsers might not have globalThis defined.
-
-  // We skip the node version checking when running on Bun/Deno since the node
-  // version they report doesn't seem to be useful.
-  if (typeof process !== 'undefined' && !process.versions?.bun && typeof Deno == "undefined") {
-    var currentNodeVersion = process.versions?.node ? humanReadableVersionToPacked(process.versions.node) : TARGET_NOT_SUPPORTED;
-    if (currentNodeVersion < 180300) {
-      throw new Error(`This emscripten-generated code requires node v${ packedVersionToHumanReadable(180300) } (detected v${packedVersionToHumanReadable(currentNodeVersion)})`);
-    }
-  }
-
-  var userAgent = typeof navigator !== 'undefined' && navigator.userAgent;
-  if (!userAgent) {
-    return;
-  }
-
-  var currentSafariVersion = userAgent.includes("Safari/") && !userAgent.includes("Chrome/") && userAgent.match(/Version\/(\d+\.?\d*\.?\d*)/) ? humanReadableVersionToPacked(userAgent.match(/Version\/(\d+\.?\d*\.?\d*)/)[1]) : TARGET_NOT_SUPPORTED;
-  if (currentSafariVersion < 150000) {
-    throw new Error(`This emscripten-generated code requires Safari v${ packedVersionToHumanReadable(150000) } (detected v${currentSafariVersion})`);
-  }
-
-  var currentFirefoxVersion = userAgent.match(/Firefox\/(\d+(?:\.\d+)?)/) ? parseFloat(userAgent.match(/Firefox\/(\d+(?:\.\d+)?)/)[1]) : TARGET_NOT_SUPPORTED;
-  if (currentFirefoxVersion < 79) {
-    throw new Error(`This emscripten-generated code requires Firefox v79 (detected v${currentFirefoxVersion})`);
-  }
-
-  var currentChromeVersion = userAgent.match(/Chrome\/(\d+(?:\.\d+)?)/) ? parseFloat(userAgent.match(/Chrome\/(\d+(?:\.\d+)?)/)[1]) : TARGET_NOT_SUPPORTED;
-  if (currentChromeVersion < 85) {
-    throw new Error(`This emscripten-generated code requires Chrome v85 (detected v${currentChromeVersion})`);
-  }
-})();
-
-// end include: minimum_runtime_check.js
 // The Module object: Our interface to the outside world. We import
 // and export values on it. There are various ways Module can be used:
 // 1. Not defined. We create it here
@@ -67,25 +18,25 @@ var Module = typeof Module != 'undefined' ? Module : {};
 // setting the ENVIRONMENT setting at compile time (see settings.js).
 
 // Attempt to auto-detect the environment
-var ENVIRONMENT_IS_WEB = !!globalThis.window;
-var ENVIRONMENT_IS_WORKER = !!globalThis.WorkerGlobalScope;
+var ENVIRONMENT_IS_WEB = typeof window == 'object';
+var ENVIRONMENT_IS_WORKER = typeof WorkerGlobalScope != 'undefined';
 // N.b. Electron.js environment is simultaneously a NODE-environment, but
 // also a web environment.
-var ENVIRONMENT_IS_NODE = globalThis.process?.versions?.node && globalThis.process?.type != 'renderer';
+var ENVIRONMENT_IS_NODE = typeof process == 'object' && process.versions?.node && process.type != 'renderer';
 var ENVIRONMENT_IS_SHELL = !ENVIRONMENT_IS_WEB && !ENVIRONMENT_IS_NODE && !ENVIRONMENT_IS_WORKER;
 
 // --pre-jses are emitted after the Module integration code, so that they can
 // refer to Module (if they choose; they can also define Module)
 
-  if (!Module['expectedDataFileDownloads']) Module['expectedDataFileDownloads'] = 0;
+  Module['expectedDataFileDownloads'] ??= 0;
   Module['expectedDataFileDownloads']++;
   (() => {
     // Do not attempt to redownload the virtual filesystem data when in a pthread or a Wasm Worker context.
     var isPthread = typeof ENVIRONMENT_IS_PTHREAD != 'undefined' && ENVIRONMENT_IS_PTHREAD;
     var isWasmWorker = typeof ENVIRONMENT_IS_WASM_WORKER != 'undefined' && ENVIRONMENT_IS_WASM_WORKER;
     if (isPthread || isWasmWorker) return;
-    var isNode = globalThis.process && globalThis.process.versions && globalThis.process.versions.node && globalThis.process.type != 'renderer';
-    async function loadPackage(metadata) {
+    var isNode = typeof process === 'object' && typeof process.versions === 'object' && typeof process.versions.node === 'string';
+    function loadPackage(metadata) {
 
       var PACKAGE_PATH = '';
       if (typeof window === 'object') {
@@ -94,89 +45,97 @@ var ENVIRONMENT_IS_SHELL = !ENVIRONMENT_IS_WEB && !ENVIRONMENT_IS_NODE && !ENVIR
         // web worker
         PACKAGE_PATH = encodeURIComponent(location.pathname.substring(0, location.pathname.lastIndexOf('/')) + '/');
       }
-      var PACKAGE_NAME = 'C:/Work/_Projects/mu-online-solo-classic/src/client/out/shell_login.data';
+      var PACKAGE_NAME = '/home/mars/workspace/studio/mu-web/src/client/out/shell_login.data';
       var REMOTE_PACKAGE_BASE = 'shell_login.data';
       var REMOTE_PACKAGE_NAME = Module['locateFile'] ? Module['locateFile'](REMOTE_PACKAGE_BASE, '') : REMOTE_PACKAGE_BASE;
-      var REMOTE_PACKAGE_SIZE = metadata['remote_package_size'];
+var REMOTE_PACKAGE_SIZE = metadata['remote_package_size'];
 
-      async function fetchRemotePackage(packageName, packageSize) {
+      function fetchRemotePackage(packageName, packageSize, callback, errback) {
         if (isNode) {
-          var contents = require('fs').readFileSync(packageName);
-          return new Uint8Array(contents).buffer;
-        }
-        if (!Module['dataFileDownloads']) Module['dataFileDownloads'] = {};
-        try {
-          var response = await fetch(packageName);
-        } catch (e) {
-          throw new Error(`Network Error: ${packageName}`, {e});
-        }
-        if (!response.ok) {
-          throw new Error(`${response.status}: ${response.url}`);
-        }
-
-        const chunks = [];
-        const headers = response.headers;
-        const contentLength = Number(headers.get('Content-Length')) || 0;
-        const total = contentLength > 0 ? contentLength : (Number(packageSize) || 0);
-        const uncompressedTotal = Number(packageSize) || total || 1;
-        let loaded = 0;
-
-        Module['setStatus'] && Module['setStatus']('Downloading data...');
-        const reader = response.body.getReader();
-
-        while (1) {
-          var {done, value} = await reader.read();
-          if (done) {
-            Module['dataFileDownloads'][packageName] = {loaded: total, total};
-            let totalLoaded = 0;
-            let totalSize = 0;
-            for (const download of Object.values(Module['dataFileDownloads'])) {
-              totalLoaded += download.loaded;
-              totalSize += download.total;
+          require('fs').readFile(packageName, (err, contents) => {
+            if (err) {
+              errback(err);
+            } else {
+              callback(contents.buffer);
             }
-            Module['setStatus'] && Module['setStatus'](`Downloading data... (${totalLoaded}/${totalSize})`);
-            break;
-          }
-          chunks.push(value);
-          loaded += value.length;
-          const wireLoaded = total === uncompressedTotal
-            ? loaded
-            : Math.min(total, Math.round(loaded * (total / uncompressedTotal)));
-          Module['dataFileDownloads'][packageName] = {loaded: wireLoaded, total};
-
-          let totalLoaded = 0;
-          let totalSize = 0;
-
-          for (const download of Object.values(Module['dataFileDownloads'])) {
-            totalLoaded += download.loaded;
-            totalSize += download.total;
-          }
-
-          Module['setStatus'] && Module['setStatus'](`Downloading data... (${totalLoaded}/${totalSize})`);
+          });
+          return;
         }
+        Module['dataFileDownloads'] ??= {};
+        fetch(packageName)
+          .catch((cause) => Promise.reject(new Error(`Network Error: ${packageName}`, {cause}))) // If fetch fails, rewrite the error to include the failing URL & the cause.
+          .then((response) => {
+            if (!response.ok) {
+              return Promise.reject(new Error(`${response.status}: ${response.url}`));
+            }
 
-        const packageData = new Uint8Array(chunks.map((c) => c.length).reduce((a, b) => a + b, 0));
-        let offset = 0;
-        for (const chunk of chunks) {
-          packageData.set(chunk, offset);
-          offset += chunk.length;
+            if (!response.body && response.arrayBuffer) { // If we're using the polyfill, readers won't be available...
+              return response.arrayBuffer().then(callback);
+            }
+
+            const reader = response.body.getReader();
+            const iterate = () => reader.read().then(handleChunk).catch((cause) => {
+              return Promise.reject(new Error(`Unexpected error while handling : ${response.url} ${cause}`, {cause}));
+            });
+
+            const chunks = [];
+            const headers = response.headers;
+            const total = Number(headers.get('Content-Length')) || Number(packageSize);
+            const uncompressedTotal = Number(packageSize) || total || 1;
+            let loaded = 0;
+
+            const handleChunk = ({done, value}) => {
+              if (!done) {
+                chunks.push(value);
+                loaded += value.length;
+                Module['dataFileDownloads'][packageName] = {loaded: Math.min(total, Math.round(loaded * total / uncompressedTotal)), total};
+
+                let totalLoaded = 0;
+                let totalSize = 0;
+
+                for (const download of Object.values(Module['dataFileDownloads'])) {
+                  totalLoaded += download.loaded;
+                  totalSize += download.total;
+                }
+
+                Module['setStatus']?.(`Downloading data... (${totalLoaded}/${totalSize})`);
+                return iterate();
+              } else {
+                const packageData = new Uint8Array(chunks.map((c) => c.length).reduce((a, b) => a + b, 0));
+                let offset = 0;
+                for (const chunk of chunks) {
+                  packageData.set(chunk, offset);
+                  offset += chunk.length;
+                }
+                callback(packageData.buffer);
+              }
+            };
+
+            Module['setStatus']?.('Downloading data...');
+            return iterate();
+          });
+      };
+
+      function handleError(error) {
+        console.error('package error:', error);
+      };
+
+      var fetchedCallback = null;
+      var fetched = Module['getPreloadedPackage'] ? Module['getPreloadedPackage'](REMOTE_PACKAGE_NAME, REMOTE_PACKAGE_SIZE) : null;
+
+      if (!fetched) fetchRemotePackage(REMOTE_PACKAGE_NAME, REMOTE_PACKAGE_SIZE, (data) => {
+        if (fetchedCallback) {
+          fetchedCallback(data);
+          fetchedCallback = null;
+        } else {
+          fetched = data;
         }
-        return packageData.buffer;
-      }
+      }, handleError);
 
-      var fetchPromise;
-      var fetched = Module['getPreloadedPackage'] && Module['getPreloadedPackage'](REMOTE_PACKAGE_NAME, REMOTE_PACKAGE_SIZE);
-
-      if (!fetched) {
-        // Note that we don't use await here because we want to execute the
-        // the rest of this function immediately.
-        fetchPromise = fetchRemotePackage(REMOTE_PACKAGE_NAME, REMOTE_PACKAGE_SIZE);
-      }
-
-    async function runWithFS(Module) {
+    function runWithFS(Module) {
 
       function assert(check, msg) {
-        if (!check) throw new Error(msg);
+        if (!check) throw msg + new Error().stack;
       }
 Module['FS_createPath']("/", "Data", true, true);
 Module['FS_createPath']("/Data", "Effect", true, true);
@@ -223,41 +182,72 @@ Module['FS_createPath']("/Data", "World7", true, true);
 Module['FS_createPath']("/Data", "World8", true, true);
 Module['FS_createPath']("/Data", "World9", true, true);
 
-      async function processPackageData(arrayBuffer) {
+      /** @constructor */
+      function DataRequest(start, end, audio) {
+        this.start = start;
+        this.end = end;
+        this.audio = audio;
+      }
+      DataRequest.prototype = {
+        requests: {},
+        open: function(mode, name) {
+          this.name = name;
+          this.requests[name] = this;
+          Module['addRunDependency'](`fp ${this.name}`);
+        },
+        send: function() {},
+        onload: function() {
+          var byteArray = this.byteArray.subarray(this.start, this.end);
+          this.finish(byteArray);
+        },
+        finish: function(byteArray) {
+          var that = this;
+          // canOwn this data in the filesystem, it is a slide into the heap that will never change
+          Module['FS_createDataFile'](this.name, null, byteArray, true, true, true);
+          Module['removeRunDependency'](`fp ${that.name}`);
+          this.requests[this.name] = null;
+        }
+      };
+
+      var files = metadata['files'];
+      for (var i = 0; i < files.length; ++i) {
+        new DataRequest(files[i]['start'], files[i]['end'], files[i]['audio'] || 0).open('GET', files[i]['filename']);
+      }
+
+      function processPackageData(arrayBuffer) {
         assert(arrayBuffer, 'Loading data file failed.');
-        assert(arrayBuffer.constructor.name === ArrayBuffer.name, 'bad input to processPackageData ' + arrayBuffer.constructor.name);
+        assert(arrayBuffer.constructor.name === ArrayBuffer.name, 'bad input to processPackageData');
         var byteArray = new Uint8Array(arrayBuffer);
         var curr;
         // Reuse the bytearray from the XHR as the source for file reads.
-          for (var file of metadata['files']) {
-            var name = file['filename'];
-            var data = byteArray.subarray(file['start'], file['end']);
-            // canOwn this data in the filesystem, it is a slice into the heap that will never change
-        Module['FS_createDataFile'](name, null, data, true, true, true);
-          }
-          Module['removeRunDependency']('datafile_C:/Work/_Projects/mu-online-solo-classic/src/client/out/shell_login.data');
-      }
-      Module['addRunDependency']('datafile_C:/Work/_Projects/mu-online-solo-classic/src/client/out/shell_login.data');
+          DataRequest.prototype.byteArray = byteArray;
+          var files = metadata['files'];
+          for (var i = 0; i < files.length; ++i) {
+            DataRequest.prototype.requests[files[i].filename].onload();
+          }          Module['removeRunDependency']('datafile_/home/mars/workspace/studio/mu-web/src/client/out/shell_login.data');
 
-      if (!Module['preloadResults']) Module['preloadResults'] = {};
+      };
+      Module['addRunDependency']('datafile_/home/mars/workspace/studio/mu-web/src/client/out/shell_login.data');
+
+      Module['preloadResults'] ??= {};
 
       Module['preloadResults'][PACKAGE_NAME] = {fromCache: false};
-      if (!fetched) {
-        fetched = await fetchPromise;
+      if (fetched) {
+        processPackageData(fetched);
+        fetched = null;
+      } else {
+        fetchedCallback = processPackageData;
       }
-      await processPackageData(fetched);
 
     }
-    // Detect whether the module JS file has already been loaded.
-    if (Module['FS_createPath']) {
+    if (Module['calledRun']) {
       runWithFS(Module);
     } else {
-      if (!Module['preRun']) Module['preRun'] = [];
-      Module['preRun'].push(runWithFS); // FS is not initialized yet, wait for it
+      (Module['preRun'] ??= []).push(runWithFS); // FS is not initialized yet, wait for it
     }
 
     }
-    loadPackage({"files": [{"filename": "/Data/Dec2.dat", "start": 0, "end": 54}, {"filename": "/Data/Effect/Chrome01.OZJ", "start": 54, "end": 9058}, {"filename": "/Data/Effect/Chrome02.OZJ", "start": 9058, "end": 15349}, {"filename": "/Data/Effect/DinoE.OZJ", "start": 15349, "end": 27677}, {"filename": "/Data/Effect/Explotion01.OZJ", "start": 27677, "end": 69591}, {"filename": "/Data/Effect/Fire01.OZJ", "start": 69591, "end": 83871}, {"filename": "/Data/Effect/Fire02.OZJ", "start": 83871, "end": 93374}, {"filename": "/Data/Effect/Fire03.OZJ", "start": 93374, "end": 107099}, {"filename": "/Data/Effect/Fire04.OZJ", "start": 107099, "end": 116508}, {"filename": "/Data/Effect/Flame01.OZJ", "start": 116508, "end": 125987}, {"filename": "/Data/Effect/Flare.OZJ", "start": 125987, "end": 137190}, {"filename": "/Data/Effect/JointEnergy01.OZJ", "start": 137190, "end": 142044}, {"filename": "/Data/Effect/JointLaser01.OZJ", "start": 142044, "end": 147741}, {"filename": "/Data/Effect/JointLaser02.OZJ", "start": 147741, "end": 156207}, {"filename": "/Data/Effect/JointSpirit01.OZJ", "start": 156207, "end": 166383}, {"filename": "/Data/Effect/JointThunder01.OZJ", "start": 166383, "end": 178222}, {"filename": "/Data/Effect/Magic_Circle1.OZJ", "start": 178222, "end": 185145}, {"filename": "/Data/Effect/Magic_Ground1.OZJ", "start": 185145, "end": 198830}, {"filename": "/Data/Effect/Magic_Ground2.OZJ", "start": 198830, "end": 212768}, {"filename": "/Data/Effect/NSkill.OZJ", "start": 212768, "end": 216646}, {"filename": "/Data/Effect/PoundingBall.OZJ", "start": 216646, "end": 222215}, {"filename": "/Data/Effect/Shiny01.OZJ", "start": 222215, "end": 227150}, {"filename": "/Data/Effect/Shiny02.OZJ", "start": 227150, "end": 233739}, {"filename": "/Data/Effect/Shiny03.OZJ", "start": 233739, "end": 237258}, {"filename": "/Data/Effect/Spark01.OZJ", "start": 237258, "end": 242166}, {"filename": "/Data/Effect/Spark02.OZJ", "start": 242166, "end": 247050}, {"filename": "/Data/Effect/Spark03.OZJ", "start": 247050, "end": 252781}, {"filename": "/Data/Effect/Thunder01.OZJ", "start": 252781, "end": 261625}, {"filename": "/Data/Effect/bab2.OZJ", "start": 261625, "end": 267318}, {"filename": "/Data/Effect/blood.OZT", "start": 267318, "end": 332902}, {"filename": "/Data/Effect/blood01.OZT", "start": 332902, "end": 349334}, {"filename": "/Data/Effect/blur01.OZJ", "start": 349334, "end": 354638}, {"filename": "/Data/Effect/cloudLight.OZJ", "start": 354638, "end": 372372}, {"filename": "/Data/Effect/clouds.OZJ", "start": 372372, "end": 402036}, {"filename": "/Data/Effect/eye01.OZJ", "start": 402036, "end": 407166}, {"filename": "/Data/Effect/fi01.OZJ", "start": 407166, "end": 419685}, {"filename": "/Data/Effect/fi02.OZT", "start": 419685, "end": 681877}, {"filename": "/Data/Effect/flare01.OZJ", "start": 681877, "end": 687728}, {"filename": "/Data/Effect/flare02.OZJ", "start": 687728, "end": 691398}, {"filename": "/Data/Effect/flareBlue.OZJ", "start": 691398, "end": 696031}, {"filename": "/Data/Effect/lightning.OZJ", "start": 696031, "end": 754597}, {"filename": "/Data/Effect/lightning2.OZJ", "start": 754597, "end": 773981}, {"filename": "/Data/Effect/motion_blur.OZJ", "start": 773981, "end": 782715}, {"filename": "/Data/Effect/motion_blur_r.OZJ", "start": 782715, "end": 790085}, {"filename": "/Data/Effect/motion_blur_r2.OZJ", "start": 790085, "end": 802471}, {"filename": "/Data/Effect/ring.OZJ", "start": 802471, "end": 811559}, {"filename": "/Data/Effect/smoke01.OZJ", "start": 811559, "end": 818377}, {"filename": "/Data/Effect/smoke02.OZT", "start": 818377, "end": 834809}, {"filename": "/Data/Effect/spark.OZJ", "start": 834809, "end": 845280}, {"filename": "/Data/Enc1.dat", "start": 845280, "end": 845334}, {"filename": "/Data/Gate.bmd", "start": 845334, "end": 846234}, {"filename": "/Data/Interface/Accept_box01.OZJ", "start": 846234, "end": 852229}, {"filename": "/Data/Interface/Accept_box02.OZJ", "start": 852229, "end": 858400}, {"filename": "/Data/Interface/Back1.OZJ", "start": 858400, "end": 864417}, {"filename": "/Data/Interface/Back2.OZJ", "start": 864417, "end": 871038}, {"filename": "/Data/Interface/Back3.OZJ", "start": 871038, "end": 877610}, {"filename": "/Data/Interface/Bar.OZJ", "start": 877610, "end": 883380}, {"filename": "/Data/Interface/Buy_01.OZJ", "start": 883380, "end": 889312}, {"filename": "/Data/Interface/Buy_02.OZJ", "start": 889312, "end": 895200}, {"filename": "/Data/Interface/Cancel.OZJ", "start": 895200, "end": 902123}, {"filename": "/Data/Interface/Cancel2.OZJ", "start": 902123, "end": 909820}, {"filename": "/Data/Interface/Cursor.OZT", "start": 909820, "end": 913964}, {"filename": "/Data/Interface/Cursorattack.OZT", "start": 913964, "end": 918108}, {"filename": "/Data/Interface/Cursordontmove.OZT", "start": 918108, "end": 922252}, {"filename": "/Data/Interface/Cursoreye.OZT", "start": 922252, "end": 938684}, {"filename": "/Data/Interface/Cursorget.OZT", "start": 938684, "end": 942828}, {"filename": "/Data/Interface/Cursorleanagainst.OZT", "start": 942828, "end": 946972}, {"filename": "/Data/Interface/Cursorpush.OZT", "start": 946972, "end": 951116}, {"filename": "/Data/Interface/Cursorrepair.OZT", "start": 951116, "end": 955260}, {"filename": "/Data/Interface/Cursorsitdown.OZT", "start": 955260, "end": 959404}, {"filename": "/Data/Interface/Cursortalk.OZT", "start": 959404, "end": 975836}, {"filename": "/Data/Interface/Dialogue1.OZJ", "start": 975836, "end": 985884}, {"filename": "/Data/Interface/Dialogue2.OZJ", "start": 985884, "end": 995662}, {"filename": "/Data/Interface/Dialogue2_1.OZJ", "start": 995662, "end": 1000892}, {"filename": "/Data/Interface/Exit_01.OZJ", "start": 1000892, "end": 1006846}, {"filename": "/Data/Interface/Exit_02.OZJ", "start": 1006846, "end": 1012912}, {"filename": "/Data/Interface/Font.OZT", "start": 1012912, "end": 1275104}, {"filename": "/Data/Interface/Fontinput.OZT", "start": 1275104, "end": 1307920}, {"filename": "/Data/Interface/Fonttest.OZT", "start": 1307920, "end": 1340736}, {"filename": "/Data/Interface/Guild.OZJ", "start": 1340736, "end": 1347057}, {"filename": "/Data/Interface/Guild.OZT", "start": 1347057, "end": 1347361}, {"filename": "/Data/Interface/Inventorybox2.OZJ", "start": 1347361, "end": 1353231}, {"filename": "/Data/Interface/Item_Back02.OZJ", "start": 1353231, "end": 1387301}, {"filename": "/Data/Interface/Item_back01.OZJ", "start": 1387301, "end": 1434499}, {"filename": "/Data/Interface/Item_boots.OZJ", "start": 1434499, "end": 1440792}, {"filename": "/Data/Interface/Item_box.OZJ", "start": 1440792, "end": 1446292}, {"filename": "/Data/Interface/Item_cap.OZJ", "start": 1446292, "end": 1452604}, {"filename": "/Data/Interface/Item_fairy.OZJ", "start": 1452604, "end": 1458999}, {"filename": "/Data/Interface/Item_gloves.OZJ", "start": 1458999, "end": 1465440}, {"filename": "/Data/Interface/Item_lower.OZJ", "start": 1465440, "end": 1471919}, {"filename": "/Data/Interface/Item_money.OZJ", "start": 1471919, "end": 1478678}, {"filename": "/Data/Interface/Item_necklace.OZJ", "start": 1478678, "end": 1483929}, {"filename": "/Data/Interface/Item_ring.OZJ", "start": 1483929, "end": 1489159}, {"filename": "/Data/Interface/Item_upper.OZJ", "start": 1489159, "end": 1496572}, {"filename": "/Data/Interface/Item_weapon01.OZJ", "start": 1496572, "end": 1503953}, {"filename": "/Data/Interface/Item_weapon02.OZJ", "start": 1503953, "end": 1511205}, {"filename": "/Data/Interface/Item_wing.OZJ", "start": 1511205, "end": 1518182}, {"filename": "/Data/Interface/Level01.OZJ", "start": 1518182, "end": 1523229}, {"filename": "/Data/Interface/Level_01.OZJ", "start": 1523229, "end": 1529473}, {"filename": "/Data/Interface/Level_02.OZJ", "start": 1529473, "end": 1535695}, {"filename": "/Data/Interface/Level_box.OZJ", "start": 1535695, "end": 1542807}, {"filename": "/Data/Interface/Lock_01.OZJ", "start": 1542807, "end": 1548981}, {"filename": "/Data/Interface/Lock_02.OZJ", "start": 1548981, "end": 1555295}, {"filename": "/Data/Interface/Lock_03.OZJ", "start": 1555295, "end": 1561525}, {"filename": "/Data/Interface/Lock_04.OZJ", "start": 1561525, "end": 1567876}, {"filename": "/Data/Interface/Menu01_new.OZJ", "start": 1567876, "end": 1584577}, {"filename": "/Data/Interface/Menu02.OZJ", "start": 1584577, "end": 1599484}, {"filename": "/Data/Interface/Menu03_new.OZJ", "start": 1599484, "end": 1618522}, {"filename": "/Data/Interface/Menu03_new_ag.OZJ", "start": 1618522, "end": 1621397}, {"filename": "/Data/Interface/Menu04.OZT", "start": 1621397, "end": 1640885}, {"filename": "/Data/Interface/Menu_blue.OZJ", "start": 1640885, "end": 1651154}, {"filename": "/Data/Interface/Menu_character.OZJ", "start": 1651154, "end": 1656798}, {"filename": "/Data/Interface/Menu_green.OZJ", "start": 1656798, "end": 1666738}, {"filename": "/Data/Interface/Menu_inventory.OZJ", "start": 1666738, "end": 1672549}, {"filename": "/Data/Interface/Menu_party.OZJ", "start": 1672549, "end": 1678347}, {"filename": "/Data/Interface/Menu_red.OZJ", "start": 1678347, "end": 1688239}, {"filename": "/Data/Interface/Message_box.OZJ", "start": 1688239, "end": 1707054}, {"filename": "/Data/Interface/Message_box1.OZJ", "start": 1707054, "end": 1714847}, {"filename": "/Data/Interface/Message_box2.OZJ", "start": 1714847, "end": 1719759}, {"filename": "/Data/Interface/MiniMap.OZT", "start": 1719759, "end": 1824299}, {"filename": "/Data/Interface/Mix_button1.OZJ", "start": 1824299, "end": 1829339}, {"filename": "/Data/Interface/Mix_button2.OZJ", "start": 1829339, "end": 1834852}, {"filename": "/Data/Interface/Money_01.OZJ", "start": 1834852, "end": 1840736}, {"filename": "/Data/Interface/Money_02.OZJ", "start": 1840736, "end": 1846694}, {"filename": "/Data/Interface/Nis_back.OZJ", "start": 1846694, "end": 1848460}, {"filename": "/Data/Interface/Nis_bar.OZJ", "start": 1848460, "end": 1850223}, {"filename": "/Data/Interface/Nis_btnalpha.OZJ", "start": 1850223, "end": 1852615}, {"filename": "/Data/Interface/Nis_btnarrow.OZJ", "start": 1852615, "end": 1854984}, {"filename": "/Data/Interface/Nis_btnchat.OZJ", "start": 1854984, "end": 1857395}, {"filename": "/Data/Interface/Nis_btnend.OZJ", "start": 1857395, "end": 1859767}, {"filename": "/Data/Interface/Nis_btnmax.OZJ", "start": 1859767, "end": 1861827}, {"filename": "/Data/Interface/Nis_btnmin.OZJ", "start": 1861827, "end": 1863906}, {"filename": "/Data/Interface/Nis_btnsize.OZJ", "start": 1863906, "end": 1866306}, {"filename": "/Data/Interface/Nis_hframe.OZJ", "start": 1866306, "end": 1871548}, {"filename": "/Data/Interface/Nis_rsframe.OZJ", "start": 1871548, "end": 1874526}, {"filename": "/Data/Interface/Nis_rsframe.OZT", "start": 1874526, "end": 1875630}, {"filename": "/Data/Interface/Nis_vframe.OZJ", "start": 1875630, "end": 1878055}, {"filename": "/Data/Interface/Ok.OZJ", "start": 1878055, "end": 1884769}, {"filename": "/Data/Interface/Ok2.OZJ", "start": 1884769, "end": 1892121}, {"filename": "/Data/Interface/Progress.OZJ", "start": 1892121, "end": 1895763}, {"filename": "/Data/Interface/Progress_back.OZJ", "start": 1895763, "end": 1900137}, {"filename": "/Data/Interface/Repair_01.OZJ", "start": 1900137, "end": 1906096}, {"filename": "/Data/Interface/Repair_02.OZJ", "start": 1906096, "end": 1912096}, {"filename": "/Data/Interface/Sell_01.OZJ", "start": 1912096, "end": 1917949}, {"filename": "/Data/Interface/Sell_02.OZJ", "start": 1917949, "end": 1923794}, {"filename": "/Data/Interface/Skill.OZJ", "start": 1923794, "end": 2021659}, {"filename": "/Data/Interface/Trading_line.OZJ", "start": 2021659, "end": 2030467}, {"filename": "/Data/Item/Antidote01.bmd", "start": 2030467, "end": 2039031}, {"filename": "/Data/Item/Arrows01.bmd", "start": 2039031, "end": 2043188}, {"filename": "/Data/Item/Arrows02.bmd", "start": 2043188, "end": 2050718}, {"filename": "/Data/Item/Axe01.bmd", "start": 2050718, "end": 2055440}, {"filename": "/Data/Item/Axe02.bmd", "start": 2055440, "end": 2061294}, {"filename": "/Data/Item/Axe03.bmd", "start": 2061294, "end": 2067732}, {"filename": "/Data/Item/Axe04.bmd", "start": 2067732, "end": 2073566}, {"filename": "/Data/Item/Axe05.bmd", "start": 2073566, "end": 2077234}, {"filename": "/Data/Item/Axe06.bmd", "start": 2077234, "end": 2082736}, {"filename": "/Data/Item/Axe07.bmd", "start": 2082736, "end": 2089182}, {"filename": "/Data/Item/Axe08.bmd", "start": 2089182, "end": 2096404}, {"filename": "/Data/Item/Axe09.bmd", "start": 2096404, "end": 2106893}, {"filename": "/Data/Item/Axes02.OZJ", "start": 2106893, "end": 2113044}, {"filename": "/Data/Item/Axes03.OZJ", "start": 2113044, "end": 2119285}, {"filename": "/Data/Item/Axes04.OZJ", "start": 2119285, "end": 2130438}, {"filename": "/Data/Item/Axes05.OZJ", "start": 2130438, "end": 2141357}, {"filename": "/Data/Item/Axes06.OZJ", "start": 2141357, "end": 2146749}, {"filename": "/Data/Item/Axes06.OZT", "start": 2146749, "end": 2163181}, {"filename": "/Data/Item/Axes07.OZJ", "start": 2163181, "end": 2173949}, {"filename": "/Data/Item/Axes08.OZJ", "start": 2173949, "end": 2185030}, {"filename": "/Data/Item/Axes09.OZJ", "start": 2185030, "end": 2197242}, {"filename": "/Data/Item/Axes10.OZJ", "start": 2197242, "end": 2207992}, {"filename": "/Data/Item/Beer01.bmd", "start": 2207992, "end": 2211402}, {"filename": "/Data/Item/Beer02.bmd", "start": 2211402, "end": 2223912}, {"filename": "/Data/Item/Book01.bmd", "start": 2223912, "end": 2225574}, {"filename": "/Data/Item/Book02.bmd", "start": 2225574, "end": 2227236}, {"filename": "/Data/Item/Book03.bmd", "start": 2227236, "end": 2228898}, {"filename": "/Data/Item/Book04.bmd", "start": 2228898, "end": 2230560}, {"filename": "/Data/Item/Book05.bmd", "start": 2230560, "end": 2232222}, {"filename": "/Data/Item/Book06.bmd", "start": 2232222, "end": 2233884}, {"filename": "/Data/Item/Book07.bmd", "start": 2233884, "end": 2235546}, {"filename": "/Data/Item/Book08.bmd", "start": 2235546, "end": 2237208}, {"filename": "/Data/Item/Book09.bmd", "start": 2237208, "end": 2238870}, {"filename": "/Data/Item/Book10.bmd", "start": 2238870, "end": 2240532}, {"filename": "/Data/Item/Book11.bmd", "start": 2240532, "end": 2242194}, {"filename": "/Data/Item/Book12.bmd", "start": 2242194, "end": 2243856}, {"filename": "/Data/Item/Book13.bmd", "start": 2243856, "end": 2245518}, {"filename": "/Data/Item/Book14.bmd", "start": 2245518, "end": 2247180}, {"filename": "/Data/Item/Book15.bmd", "start": 2247180, "end": 2248842}, {"filename": "/Data/Item/Book16.bmd", "start": 2248842, "end": 2250504}, {"filename": "/Data/Item/Book17.bmd", "start": 2250504, "end": 2252166}, {"filename": "/Data/Item/Book18.bmd", "start": 2252166, "end": 2253828}, {"filename": "/Data/Item/Book19.bmd", "start": 2253828, "end": 2255490}, {"filename": "/Data/Item/Bow01.bmd", "start": 2255490, "end": 2263714}, {"filename": "/Data/Item/Bow02.bmd", "start": 2263714, "end": 2273888}, {"filename": "/Data/Item/Bow03.bmd", "start": 2273888, "end": 2284698}, {"filename": "/Data/Item/Bow04.bmd", "start": 2284698, "end": 2296864}, {"filename": "/Data/Item/Bow05.bmd", "start": 2296864, "end": 2318310}, {"filename": "/Data/Item/Bow06.bmd", "start": 2318310, "end": 2331202}, {"filename": "/Data/Item/Bow07.bmd", "start": 2331202, "end": 2362398}, {"filename": "/Data/Item/Bow18.bmd", "start": 2362398, "end": 2432796}, {"filename": "/Data/Item/Bow19.bmd", "start": 2432796, "end": 2453944}, {"filename": "/Data/Item/Bow20.bmd", "start": 2453944, "end": 2514311}, {"filename": "/Data/Item/ConChip00.bmd", "start": 2514311, "end": 2518513}, {"filename": "/Data/Item/CrossBow01.bmd", "start": 2518513, "end": 2530650}, {"filename": "/Data/Item/CrossBow02.bmd", "start": 2530650, "end": 2543015}, {"filename": "/Data/Item/CrossBow03.bmd", "start": 2543015, "end": 2558800}, {"filename": "/Data/Item/CrossBow04.bmd", "start": 2558800, "end": 2571133}, {"filename": "/Data/Item/CrossBow05.bmd", "start": 2571133, "end": 2589966}, {"filename": "/Data/Item/CrossBow06.bmd", "start": 2589966, "end": 2610466}, {"filename": "/Data/Item/CrossBow07.bmd", "start": 2610466, "end": 2631966}, {"filename": "/Data/Item/CrossBow17.bmd", "start": 2631966, "end": 2664318}, {"filename": "/Data/Item/CrossBow20.bmd", "start": 2664318, "end": 2695907}, {"filename": "/Data/Item/Custom/20/nks01.OZJ", "start": 2695907, "end": 2706686}, {"filename": "/Data/Item/Custom/20/nks02.OZJ", "start": 2706686, "end": 2724156}, {"filename": "/Data/Item/Custom/20/nks03.OZJ", "start": 2724156, "end": 2733452}, {"filename": "/Data/Item/Custom/20/nks04.OZJ", "start": 2733452, "end": 2744327}, {"filename": "/Data/Item/Custom/20/sword21.bmd", "start": 2744327, "end": 2767045}, {"filename": "/Data/Item/Custom/72/Mace72.bmd", "start": 2767045, "end": 2805814}, {"filename": "/Data/Item/Custom/72/nfm01.OZJ", "start": 2805814, "end": 2835905}, {"filename": "/Data/Item/Custom/72/nfm02.OZT", "start": 2835905, "end": 2868721}, {"filename": "/Data/Item/Custom/72/nfm03.OZJ", "start": 2868721, "end": 2877470}, {"filename": "/Data/Item/Custom/Rudolph/flareRed.OZJ", "start": 2877470, "end": 2887841}, {"filename": "/Data/Item/Custom/Rudolph/gold_tree.OZJ", "start": 2887841, "end": 2901100}, {"filename": "/Data/Item/Custom/Rudolph/xmas_deer.bmd", "start": 2901100, "end": 2993289}, {"filename": "/Data/Item/Custom/Rudolph/xmassasum02.OZJ", "start": 2993289, "end": 3011714}, {"filename": "/Data/Item/DarkHorseHorn.bmd", "start": 3011714, "end": 3014886}, {"filename": "/Data/Item/DarkHorseSoul.bmd", "start": 3014886, "end": 3019032}, {"filename": "/Data/Item/DarkLordRobe.OZT", "start": 3019032, "end": 3150152}, {"filename": "/Data/Item/DarkLordRobe.bmd", "start": 3150152, "end": 3151986}, {"filename": "/Data/Item/DarkLordSign.OZJ", "start": 3151986, "end": 3163421}, {"filename": "/Data/Item/DarkLordSleeve.OZT", "start": 3163421, "end": 3171661}, {"filename": "/Data/Item/DarkLordSleeve.bmd", "start": 3171661, "end": 3172507}, {"filename": "/Data/Item/Devil00.bmd", "start": 3172507, "end": 3178259}, {"filename": "/Data/Item/Devil01.bmd", "start": 3178259, "end": 3185671}, {"filename": "/Data/Item/Devil02.bmd", "start": 3185671, "end": 3202881}, {"filename": "/Data/Item/Drax.OZJ", "start": 3202881, "end": 3217118}, {"filename": "/Data/Item/Drax_N.OZJ", "start": 3217118, "end": 3220148}, {"filename": "/Data/Item/Drax_R.OZJ", "start": 3220148, "end": 3226766}, {"filename": "/Data/Item/Drink00.bmd", "start": 3226766, "end": 3239856}, {"filename": "/Data/Item/Ds_B.OZJ", "start": 3239856, "end": 3241868}, {"filename": "/Data/Item/Ds_R.OZJ", "start": 3241868, "end": 3243880}, {"filename": "/Data/Item/Dstic.OZJ", "start": 3243880, "end": 3259980}, {"filename": "/Data/Item/Ebow4.OZJ", "start": 3259980, "end": 3273404}, {"filename": "/Data/Item/Ebow_R.OZJ", "start": 3273404, "end": 3275890}, {"filename": "/Data/Item/Eccross.OZJ", "start": 3275890, "end": 3315256}, {"filename": "/Data/Item/Eccross.OZT", "start": 3315256, "end": 3446376}, {"filename": "/Data/Item/Eldobox.OZJ", "start": 3446376, "end": 3450550}, {"filename": "/Data/Item/Elf_E.OZJ", "start": 3450550, "end": 3455762}, {"filename": "/Data/Item/Esh.OZJ", "start": 3455762, "end": 3462458}, {"filename": "/Data/Item/Esh.OZT", "start": 3462458, "end": 3470698}, {"filename": "/Data/Item/Esh2.OZJ", "start": 3470698, "end": 3474055}, {"filename": "/Data/Item/Estic.OZJ", "start": 3474055, "end": 3478194}, {"filename": "/Data/Item/Estic2.OZJ", "start": 3478194, "end": 3481300}, {"filename": "/Data/Item/Estic2_R.OZJ", "start": 3481300, "end": 3488785}, {"filename": "/Data/Item/Event01.bmd", "start": 3488785, "end": 3497082}, {"filename": "/Data/Item/Event02.bmd", "start": 3497082, "end": 3500076}, {"filename": "/Data/Item/Event03.bmd", "start": 3500076, "end": 3512742}, {"filename": "/Data/Item/EventBloodCastle00.bmd", "start": 3512742, "end": 3514635}, {"filename": "/Data/Item/EventBloodCastle01.bmd", "start": 3514635, "end": 3518269}, {"filename": "/Data/Item/EventBloodCastle02.bmd", "start": 3518269, "end": 3526963}, {"filename": "/Data/Item/EventBloodCastle03.bmd", "start": 3526963, "end": 3529057}, {"filename": "/Data/Item/EventBloodCastle04.bmd", "start": 3529057, "end": 3534690}, {"filename": "/Data/Item/EventBloodCastle05.bmd", "start": 3534690, "end": 3540323}, {"filename": "/Data/Item/EventBloodCastle06.bmd", "start": 3540323, "end": 3545956}, {"filename": "/Data/Item/EventChaosCastle.bmd", "start": 3545956, "end": 3565958}, {"filename": "/Data/Item/Gem01.bmd", "start": 3565958, "end": 3570456}, {"filename": "/Data/Item/Gem02.bmd", "start": 3570456, "end": 3574954}, {"filename": "/Data/Item/Gem03.bmd", "start": 3574954, "end": 3579452}, {"filename": "/Data/Item/Gem04.bmd", "start": 3579452, "end": 3583950}, {"filename": "/Data/Item/Gem05.bmd", "start": 3583950, "end": 3588448}, {"filename": "/Data/Item/Gem06.bmd", "start": 3588448, "end": 3592946}, {"filename": "/Data/Item/Gem07.bmd", "start": 3592946, "end": 3597444}, {"filename": "/Data/Item/Gem08.bmd", "start": 3597444, "end": 3601942}, {"filename": "/Data/Item/Gem10.bmd", "start": 3601942, "end": 3606440}, {"filename": "/Data/Item/Gem11.bmd", "start": 3606440, "end": 3610938}, {"filename": "/Data/Item/Gem12.bmd", "start": 3610938, "end": 3615436}, {"filename": "/Data/Item/Gem13.bmd", "start": 3615436, "end": 3619934}, {"filename": "/Data/Item/Gem14.bmd", "start": 3619934, "end": 3624432}, {"filename": "/Data/Item/Gold01.bmd", "start": 3624432, "end": 3627426}, {"filename": "/Data/Item/HELLASITEM00.bmd", "start": 3627426, "end": 3640262}, {"filename": "/Data/Item/HELLASITEM01.bmd", "start": 3640262, "end": 3648272}, {"filename": "/Data/Item/Javelins01.OZJ", "start": 3648272, "end": 3654737}, {"filename": "/Data/Item/Javelins03.OZJ", "start": 3654737, "end": 3660658}, {"filename": "/Data/Item/Javelins04.OZJ", "start": 3660658, "end": 3666865}, {"filename": "/Data/Item/Javelins05.OZJ", "start": 3666865, "end": 3678447}, {"filename": "/Data/Item/Jewel01.bmd", "start": 3678447, "end": 3679761}, {"filename": "/Data/Item/Jewel02.bmd", "start": 3679761, "end": 3681863}, {"filename": "/Data/Item/Jewel03.bmd", "start": 3681863, "end": 3685985}, {"filename": "/Data/Item/Jewel15.bmd", "start": 3685985, "end": 3688827}, {"filename": "/Data/Item/Ksword.OZJ", "start": 3688827, "end": 3703634}, {"filename": "/Data/Item/Ksword2.OZJ", "start": 3703634, "end": 3706029}, {"filename": "/Data/Item/Ktext.OZJ", "start": 3706029, "end": 3719575}, {"filename": "/Data/Item/MMsS.OZJ", "start": 3719575, "end": 3722245}, {"filename": "/Data/Item/MMsS2.OZJ", "start": 3722245, "end": 3727208}, {"filename": "/Data/Item/MMsS_r.OZJ", "start": 3727208, "end": 3730398}, {"filename": "/Data/Item/MMsSs_r.OZJ", "start": 3730398, "end": 3743103}, {"filename": "/Data/Item/Mace01.bmd", "start": 3743103, "end": 3746893}, {"filename": "/Data/Item/Mace02.bmd", "start": 3746893, "end": 3758183}, {"filename": "/Data/Item/Mace03.bmd", "start": 3758183, "end": 3772745}, {"filename": "/Data/Item/Mace04.bmd", "start": 3772745, "end": 3778015}, {"filename": "/Data/Item/Mace05.bmd", "start": 3778015, "end": 3797295}, {"filename": "/Data/Item/Mace06.bmd", "start": 3797295, "end": 3814461}, {"filename": "/Data/Item/Mace07.bmd", "start": 3814461, "end": 3828257}, {"filename": "/Data/Item/Mace08.bmd", "start": 3828257, "end": 3853858}, {"filename": "/Data/Item/Mace09.bmd", "start": 3853858, "end": 3890641}, {"filename": "/Data/Item/Mace10.bmd", "start": 3890641, "end": 3926668}, {"filename": "/Data/Item/Mace11.bmd", "start": 3926668, "end": 3963660}, {"filename": "/Data/Item/Mace12.bmd", "start": 3963660, "end": 4010916}, {"filename": "/Data/Item/Mace13.bmd", "start": 4010916, "end": 4067923}, {"filename": "/Data/Item/Mace14.bmd", "start": 4067923, "end": 4106692}, {"filename": "/Data/Item/MagicBox01.bmd", "start": 4106692, "end": 4112524}, {"filename": "/Data/Item/MagicBox02.bmd", "start": 4112524, "end": 4114958}, {"filename": "/Data/Item/MagicBox03.bmd", "start": 4114958, "end": 4117312}, {"filename": "/Data/Item/MagicBox04.bmd", "start": 4117312, "end": 4129283}, {"filename": "/Data/Item/MagicBox05.bmd", "start": 4129283, "end": 4137580}, {"filename": "/Data/Item/MagicBox06.bmd", "start": 4137580, "end": 4145220}, {"filename": "/Data/Item/MagicBox07.bmd", "start": 4145220, "end": 4152860}, {"filename": "/Data/Item/MagicBox08.bmd", "start": 4152860, "end": 4157302}, {"filename": "/Data/Item/MagicRing.OZJ", "start": 4157302, "end": 4165869}, {"filename": "/Data/Item/MagicRing00.bmd", "start": 4165869, "end": 4171517}, {"filename": "/Data/Item/MagicRingPendant.OZJ", "start": 4171517, "end": 4179895}, {"filename": "/Data/Item/Msword.OZJ", "start": 4179895, "end": 4214390}, {"filename": "/Data/Item/NDEE.OZJ", "start": 4214390, "end": 4217207}, {"filename": "/Data/Item/NDEE.OZT", "start": 4217207, "end": 4225447}, {"filename": "/Data/Item/NDW.OZJ", "start": 4225447, "end": 4234821}, {"filename": "/Data/Item/NDW_R.OZJ", "start": 4234821, "end": 4241546}, {"filename": "/Data/Item/NEWWW.OZJ", "start": 4241546, "end": 4252353}, {"filename": "/Data/Item/NEWW_R.OZJ", "start": 4252353, "end": 4264248}, {"filename": "/Data/Item/Necklace01.bmd", "start": 4264248, "end": 4271370}, {"filename": "/Data/Item/Necklace02.bmd", "start": 4271370, "end": 4279180}, {"filename": "/Data/Item/NewingEl.OZJ", "start": 4279180, "end": 4298346}, {"filename": "/Data/Item/Polearms02.OZJ", "start": 4298346, "end": 4308444}, {"filename": "/Data/Item/Polearms03.OZJ", "start": 4308444, "end": 4318886}, {"filename": "/Data/Item/Polearms04.OZJ", "start": 4318886, "end": 4328783}, {"filename": "/Data/Item/Polearms05.OZJ", "start": 4328783, "end": 4340416}, {"filename": "/Data/Item/Potion01.bmd", "start": 4340416, "end": 4345096}, {"filename": "/Data/Item/Potion02.bmd", "start": 4345096, "end": 4347996}, {"filename": "/Data/Item/Potion03.bmd", "start": 4347996, "end": 4351776}, {"filename": "/Data/Item/Potion04.bmd", "start": 4351776, "end": 4358532}, {"filename": "/Data/Item/Potion05.bmd", "start": 4358532, "end": 4361432}, {"filename": "/Data/Item/Potion06.bmd", "start": 4361432, "end": 4365212}, {"filename": "/Data/Item/Potion07.bmd", "start": 4365212, "end": 4371976}, {"filename": "/Data/Item/Quest00.bmd", "start": 4371976, "end": 4377609}, {"filename": "/Data/Item/Quest01.bmd", "start": 4377609, "end": 4389002}, {"filename": "/Data/Item/Quest02.bmd", "start": 4389002, "end": 4394887}, {"filename": "/Data/Item/Quest03.bmd", "start": 4394887, "end": 4407596}, {"filename": "/Data/Item/Quest04.bmd", "start": 4407596, "end": 4409070}, {"filename": "/Data/Item/Quest05.bmd", "start": 4409070, "end": 4419812}, {"filename": "/Data/Item/QuestItem3rd00.bmd", "start": 4419812, "end": 4426213}, {"filename": "/Data/Item/QuestItem3rd01.bmd", "start": 4426213, "end": 4434359}, {"filename": "/Data/Item/RedDragonT.OZJ", "start": 4434359, "end": 4456438}, {"filename": "/Data/Item/Ring01.bmd", "start": 4456438, "end": 4461196}, {"filename": "/Data/Item/Ring02.bmd", "start": 4461196, "end": 4465694}, {"filename": "/Data/Item/RingOfLordEvent.OZJ", "start": 4465694, "end": 4474241}, {"filename": "/Data/Item/RingOfLordEvent00.bmd", "start": 4474241, "end": 4484601}, {"filename": "/Data/Item/RingPenOfLordEvent.OZJ", "start": 4484601, "end": 4493481}, {"filename": "/Data/Item/Scroll01.bmd", "start": 4493481, "end": 4500891}, {"filename": "/Data/Item/Shield01.bmd", "start": 4500891, "end": 4502861}, {"filename": "/Data/Item/Shield02.bmd", "start": 4502861, "end": 4505763}, {"filename": "/Data/Item/Shield03.bmd", "start": 4505763, "end": 4508305}, {"filename": "/Data/Item/Shield04.bmd", "start": 4508305, "end": 4512641}, {"filename": "/Data/Item/Shield05.bmd", "start": 4512641, "end": 4514883}, {"filename": "/Data/Item/Shield06.bmd", "start": 4514883, "end": 4517319}, {"filename": "/Data/Item/Shield07.bmd", "start": 4517319, "end": 4527439}, {"filename": "/Data/Item/Shield08.bmd", "start": 4527439, "end": 4532877}, {"filename": "/Data/Item/Shield09.bmd", "start": 4532877, "end": 4535283}, {"filename": "/Data/Item/Shield10.bmd", "start": 4535283, "end": 4537509}, {"filename": "/Data/Item/Shield11.bmd", "start": 4537509, "end": 4540831}, {"filename": "/Data/Item/Shield12.bmd", "start": 4540831, "end": 4548046}, {"filename": "/Data/Item/Shield13.bmd", "start": 4548046, "end": 4558945}, {"filename": "/Data/Item/Shield14.bmd", "start": 4558945, "end": 4575176}, {"filename": "/Data/Item/Shield15.bmd", "start": 4575176, "end": 4590251}, {"filename": "/Data/Item/SkillScroll01.bmd", "start": 4590251, "end": 4591913}, {"filename": "/Data/Item/SkillScroll02.bmd", "start": 4591913, "end": 4593575}, {"filename": "/Data/Item/SkillScroll03.bmd", "start": 4593575, "end": 4595237}, {"filename": "/Data/Item/SkillScroll04.bmd", "start": 4595237, "end": 4596899}, {"filename": "/Data/Item/Spear01.bmd", "start": 4596899, "end": 4608085}, {"filename": "/Data/Item/Spear02.bmd", "start": 4608085, "end": 4617501}, {"filename": "/Data/Item/Spear03.bmd", "start": 4617501, "end": 4621759}, {"filename": "/Data/Item/Spear04.bmd", "start": 4621759, "end": 4627729}, {"filename": "/Data/Item/Spear05.bmd", "start": 4627729, "end": 4638679}, {"filename": "/Data/Item/Spear06.bmd", "start": 4638679, "end": 4644833}, {"filename": "/Data/Item/Spear07.bmd", "start": 4644833, "end": 4650031}, {"filename": "/Data/Item/Spear08.bmd", "start": 4650031, "end": 4660485}, {"filename": "/Data/Item/Spear09.bmd", "start": 4660485, "end": 4673819}, {"filename": "/Data/Item/Spear10.bmd", "start": 4673819, "end": 4687393}, {"filename": "/Data/Item/Spear11.bmd", "start": 4687393, "end": 4703830}, {"filename": "/Data/Item/Staff01.bmd", "start": 4703830, "end": 4717144}, {"filename": "/Data/Item/Staff02.bmd", "start": 4717144, "end": 4721944}, {"filename": "/Data/Item/Staff03.bmd", "start": 4721944, "end": 4728466}, {"filename": "/Data/Item/Staff04.bmd", "start": 4728466, "end": 4738588}, {"filename": "/Data/Item/Staff05.bmd", "start": 4738588, "end": 4759530}, {"filename": "/Data/Item/Staff06.bmd", "start": 4759530, "end": 4787341}, {"filename": "/Data/Item/Staff07.bmd", "start": 4787341, "end": 4837673}, {"filename": "/Data/Item/Staff08.bmd", "start": 4837673, "end": 4888048}, {"filename": "/Data/Item/Staff09.bmd", "start": 4888048, "end": 4893789}, {"filename": "/Data/Item/Staff10.bmd", "start": 4893789, "end": 4934369}, {"filename": "/Data/Item/Staff11.bmd", "start": 4934369, "end": 4970709}, {"filename": "/Data/Item/Staff12.bmd", "start": 4970709, "end": 5051067}, {"filename": "/Data/Item/Stts.OZJ", "start": 5051067, "end": 5053305}, {"filename": "/Data/Item/Sword01.bmd", "start": 5053305, "end": 5060171}, {"filename": "/Data/Item/Sword02.bmd", "start": 5060171, "end": 5064821}, {"filename": "/Data/Item/Sword03.bmd", "start": 5064821, "end": 5069579}, {"filename": "/Data/Item/Sword04.bmd", "start": 5069579, "end": 5079269}, {"filename": "/Data/Item/Sword05.bmd", "start": 5079269, "end": 5085495}, {"filename": "/Data/Item/Sword06.bmd", "start": 5085495, "end": 5094939}, {"filename": "/Data/Item/Sword07.bmd", "start": 5094939, "end": 5101101}, {"filename": "/Data/Item/Sword08.bmd", "start": 5101101, "end": 5110371}, {"filename": "/Data/Item/Sword09.bmd", "start": 5110371, "end": 5118113}, {"filename": "/Data/Item/Sword10.bmd", "start": 5118113, "end": 5125809}, {"filename": "/Data/Item/Sword11.bmd", "start": 5125809, "end": 5131987}, {"filename": "/Data/Item/Sword12.bmd", "start": 5131987, "end": 5145489}, {"filename": "/Data/Item/Sword13.bmd", "start": 5145489, "end": 5163932}, {"filename": "/Data/Item/Sword14.bmd", "start": 5163932, "end": 5179972}, {"filename": "/Data/Item/Sword15.bmd", "start": 5179972, "end": 5188982}, {"filename": "/Data/Item/Sword16.bmd", "start": 5188982, "end": 5191540}, {"filename": "/Data/Item/Sword17.bmd", "start": 5191540, "end": 5214210}, {"filename": "/Data/Item/Sword18.bmd", "start": 5214210, "end": 5233742}, {"filename": "/Data/Item/Sword19.bmd", "start": 5233742, "end": 5250624}, {"filename": "/Data/Item/Sword20.bmd", "start": 5250624, "end": 5278332}, {"filename": "/Data/Item/Sword32.bmd", "start": 5278332, "end": 5312819}, {"filename": "/Data/Item/WDNN.OZJ", "start": 5312819, "end": 5317362}, {"filename": "/Data/Item/WD_R.OZJ", "start": 5317362, "end": 5319743}, {"filename": "/Data/Item/WD_a.OZJ", "start": 5319743, "end": 5325254}, {"filename": "/Data/Item/WD_t.OZJ", "start": 5325254, "end": 5327384}, {"filename": "/Data/Item/WDn.OZJ", "start": 5327384, "end": 5329428}, {"filename": "/Data/Item/WDn.OZT", "start": 5329428, "end": 5362244}, {"filename": "/Data/Item/W_S.OZJ", "start": 5362244, "end": 5367463}, {"filename": "/Data/Item/Wing01.bmd", "start": 5367463, "end": 5371507}, {"filename": "/Data/Item/Wing02.bmd", "start": 5371507, "end": 5378014}, {"filename": "/Data/Item/Wing03.bmd", "start": 5378014, "end": 5383385}, {"filename": "/Data/Item/Wing04.bmd", "start": 5383385, "end": 5396760}, {"filename": "/Data/Item/Wing05.bmd", "start": 5396760, "end": 5501146}, {"filename": "/Data/Item/Wing06.bmd", "start": 5501146, "end": 5564155}, {"filename": "/Data/Item/Wing07.bmd", "start": 5564155, "end": 5598978}, {"filename": "/Data/Item/a9.OZJ", "start": 5598978, "end": 5607991}, {"filename": "/Data/Item/a_2.OZJ", "start": 5607991, "end": 5612932}, {"filename": "/Data/Item/a_a.OZJ", "start": 5612932, "end": 5618724}, {"filename": "/Data/Item/af.OZT", "start": 5618724, "end": 5651540}, {"filename": "/Data/Item/agnecklace.OZJ", "start": 5651540, "end": 5662023}, {"filename": "/Data/Item/agnecklace.bmd", "start": 5662023, "end": 5672243}, {"filename": "/Data/Item/angel_wing.OZT", "start": 5672243, "end": 5737827}, {"filename": "/Data/Item/angelscroll01.OZT", "start": 5737827, "end": 5754259}, {"filename": "/Data/Item/apple.OZJ", "start": 5754259, "end": 5759375}, {"filename": "/Data/Item/bloodbone02.OZJ", "start": 5759375, "end": 5768118}, {"filename": "/Data/Item/blue_jewel.OZJ", "start": 5768118, "end": 5773022}, {"filename": "/Data/Item/bone02.OZT", "start": 5773022, "end": 5789454}, {"filename": "/Data/Item/book.OZJ", "start": 5789454, "end": 5801137}, {"filename": "/Data/Item/bottle.OZT", "start": 5801137, "end": 5805281}, {"filename": "/Data/Item/bow01.OZJ", "start": 5805281, "end": 5811409}, {"filename": "/Data/Item/bow02.OZJ", "start": 5811409, "end": 5821187}, {"filename": "/Data/Item/bow03.OZJ", "start": 5821187, "end": 5832886}, {"filename": "/Data/Item/bow04.OZJ", "start": 5832886, "end": 5845608}, {"filename": "/Data/Item/bow05.OZJ", "start": 5845608, "end": 5858918}, {"filename": "/Data/Item/bow05.OZT", "start": 5858918, "end": 5863062}, {"filename": "/Data/Item/bow06.OZJ", "start": 5863062, "end": 5875290}, {"filename": "/Data/Item/bow77.OZJ", "start": 5875290, "end": 5894128}, {"filename": "/Data/Item/bowbox.OZJ", "start": 5894128, "end": 5904683}, {"filename": "/Data/Item/box.OZJ", "start": 5904683, "end": 5911087}, {"filename": "/Data/Item/change.OZJ", "start": 5911087, "end": 5919798}, {"filename": "/Data/Item/chip.OZJ", "start": 5919798, "end": 5922227}, {"filename": "/Data/Item/crossbow01.OZJ", "start": 5922227, "end": 5928092}, {"filename": "/Data/Item/crossbow02.OZJ", "start": 5928092, "end": 5937303}, {"filename": "/Data/Item/crossbow03.OZJ", "start": 5937303, "end": 5947180}, {"filename": "/Data/Item/crossbow04.OZJ", "start": 5947180, "end": 5958593}, {"filename": "/Data/Item/crossbow05.OZJ", "start": 5958593, "end": 5985005}, {"filename": "/Data/Item/crossbow06.OZJ", "start": 5985005, "end": 5992510}, {"filename": "/Data/Item/crossbow06_2.OZJ", "start": 5992510, "end": 6000002}, {"filename": "/Data/Item/crossbow06_2.OZT", "start": 6000002, "end": 6008242}, {"filename": "/Data/Item/crossbow06_R.OZJ", "start": 6008242, "end": 6015645}, {"filename": "/Data/Item/crossbow_box.OZJ", "start": 6015645, "end": 6022004}, {"filename": "/Data/Item/darkhorn.OZJ", "start": 6022004, "end": 6033225}, {"filename": "/Data/Item/darksoul_r.OZJ", "start": 6033225, "end": 6042274}, {"filename": "/Data/Item/darkstone8.OZJ", "start": 6042274, "end": 6051046}, {"filename": "/Data/Item/darkstonered.OZJ", "start": 6051046, "end": 6059485}, {"filename": "/Data/Item/devil_wing.OZT", "start": 6059485, "end": 6125069}, {"filename": "/Data/Item/devileye.OZJ", "start": 6125069, "end": 6129625}, {"filename": "/Data/Item/devileye2.OZJ", "start": 6129625, "end": 6132370}, {"filename": "/Data/Item/devilkey.OZJ", "start": 6132370, "end": 6139011}, {"filename": "/Data/Item/dkScroll.OZJ", "start": 6139011, "end": 6145935}, {"filename": "/Data/Item/dkScroll2_R.OZJ", "start": 6145935, "end": 6150814}, {"filename": "/Data/Item/dkScroll_R.OZJ", "start": 6150814, "end": 6159287}, {"filename": "/Data/Item/du_shield1.OZJ", "start": 6159287, "end": 6166148}, {"filename": "/Data/Item/du_shield2.OZJ", "start": 6166148, "end": 6172621}, {"filename": "/Data/Item/elfin_wing.OZJ", "start": 6172621, "end": 6182303}, {"filename": "/Data/Item/etcring.OZJ", "start": 6182303, "end": 6194206}, {"filename": "/Data/Item/fairy.OZJ", "start": 6194206, "end": 6199200}, {"filename": "/Data/Item/fairy2.OZJ", "start": 6199200, "end": 6204714}, {"filename": "/Data/Item/firecracker.OZJ", "start": 6204714, "end": 6208162}, {"filename": "/Data/Item/firering.OZJ", "start": 6208162, "end": 6217239}, {"filename": "/Data/Item/firering.bmd", "start": 6217239, "end": 6224523}, {"filename": "/Data/Item/flail00.OZT", "start": 6224523, "end": 6225595}, {"filename": "/Data/Item/flail02.OZJ", "start": 6225595, "end": 6231862}, {"filename": "/Data/Item/ft6.OZJ", "start": 6231862, "end": 6249323}, {"filename": "/Data/Item/ft72.OZJ", "start": 6249323, "end": 6255133}, {"filename": "/Data/Item/gloryring.OZJ", "start": 6255133, "end": 6265812}, {"filename": "/Data/Item/godest01.OZJ", "start": 6265812, "end": 6276043}, {"filename": "/Data/Item/godest02.OZJ", "start": 6276043, "end": 6284552}, {"filename": "/Data/Item/godest03.OZJ", "start": 6284552, "end": 6293061}, {"filename": "/Data/Item/godesteel.bmd", "start": 6293061, "end": 6301387}, {"filename": "/Data/Item/godesteel.smd", "start": 6301387, "end": 6320796}, {"filename": "/Data/Item/gold.OZJ", "start": 6320796, "end": 6326042}, {"filename": "/Data/Item/goldmedal.OZJ", "start": 6326042, "end": 6331720}, {"filename": "/Data/Item/groundring.OZJ", "start": 6331720, "end": 6340363}, {"filename": "/Data/Item/groundring.bmd", "start": 6340363, "end": 6345887}, {"filename": "/Data/Item/hellasmap.OZT", "start": 6345887, "end": 6350031}, {"filename": "/Data/Item/hhj.OZJ", "start": 6350031, "end": 6354995}, {"filename": "/Data/Item/hound_shield1.OZT", "start": 6354995, "end": 6363235}, {"filename": "/Data/Item/hound_shield2.OZJ", "start": 6363235, "end": 6375466}, {"filename": "/Data/Item/hound_sword1.OZJ", "start": 6375466, "end": 6384954}, {"filename": "/Data/Item/icenecklace.OZJ", "start": 6384954, "end": 6395252}, {"filename": "/Data/Item/icenecklace.bmd", "start": 6395252, "end": 6404984}, {"filename": "/Data/Item/item.bmd", "start": 6404984, "end": 6433144}, {"filename": "/Data/Item/items.OZJ", "start": 6433144, "end": 6440530}, {"filename": "/Data/Item/jewel22.bmd", "start": 6440530, "end": 6444230}, {"filename": "/Data/Item/jh01.OZJ", "start": 6444230, "end": 6458717}, {"filename": "/Data/Item/jh02.OZJ", "start": 6458717, "end": 6465707}, {"filename": "/Data/Item/jh03.OZT", "start": 6465707, "end": 6498523}, {"filename": "/Data/Item/jk00.OZJ", "start": 6498523, "end": 6513585}, {"filename": "/Data/Item/jk01.OZJ", "start": 6513585, "end": 6520236}, {"filename": "/Data/Item/jo00.OZJ", "start": 6520236, "end": 6534817}, {"filename": "/Data/Item/jo01.OZJ", "start": 6534817, "end": 6542286}, {"filename": "/Data/Item/kmap.OZJ", "start": 6542286, "end": 6552871}, {"filename": "/Data/Item/kmap02.OZJ", "start": 6552871, "end": 6561628}, {"filename": "/Data/Item/ksing01.OZJ", "start": 6561628, "end": 6573300}, {"filename": "/Data/Item/ksing02.OZJ", "start": 6573300, "end": 6584985}, {"filename": "/Data/Item/ksing02.OZT", "start": 6584985, "end": 6589129}, {"filename": "/Data/Item/ksing03.OZJ", "start": 6589129, "end": 6597983}, {"filename": "/Data/Item/kundunStic.OZJ", "start": 6597983, "end": 6610890}, {"filename": "/Data/Item/kundunStic2.OZJ", "start": 6610890, "end": 6623540}, {"filename": "/Data/Item/kundunStic_R.OZJ", "start": 6623540, "end": 6629244}, {"filename": "/Data/Item/lopi00.OZJ", "start": 6629244, "end": 6635366}, {"filename": "/Data/Item/loveB.OZJ", "start": 6635366, "end": 6638402}, {"filename": "/Data/Item/lower_14m.OZT", "start": 6638402, "end": 6654834}, {"filename": "/Data/Item/mace.OZJ", "start": 6654834, "end": 6662634}, {"filename": "/Data/Item/mace02.OZJ", "start": 6662634, "end": 6668333}, {"filename": "/Data/Item/mace03.OZJ", "start": 6668333, "end": 6673327}, {"filename": "/Data/Item/maceB.OZJ", "start": 6673327, "end": 6677323}, {"filename": "/Data/Item/magictext.OZJ", "start": 6677323, "end": 6683704}, {"filename": "/Data/Item/manaring.OZJ", "start": 6683704, "end": 6692231}, {"filename": "/Data/Item/manaring.bmd", "start": 6692231, "end": 6698787}, {"filename": "/Data/Item/mangto04.OZJ", "start": 6698787, "end": 6714720}, {"filename": "/Data/Item/maul.OZJ", "start": 6714720, "end": 6735925}, {"filename": "/Data/Item/maul03.OZJ", "start": 6735925, "end": 6742928}, {"filename": "/Data/Item/maulB.OZJ", "start": 6742928, "end": 6760883}, {"filename": "/Data/Item/medal.OZJ", "start": 6760883, "end": 6767045}, {"filename": "/Data/Item/medal1.OZJ", "start": 6767045, "end": 6770480}, {"filename": "/Data/Item/medal2.OZJ", "start": 6770480, "end": 6775099}, {"filename": "/Data/Item/medicine1.OZJ", "start": 6775099, "end": 6781024}, {"filename": "/Data/Item/medicine2.OZJ", "start": 6781024, "end": 6786047}, {"filename": "/Data/Item/nds01.OZJ", "start": 6786047, "end": 6801732}, {"filename": "/Data/Item/nds02.OZJ", "start": 6801732, "end": 6814943}, {"filename": "/Data/Item/nds03.OZJ", "start": 6814943, "end": 6823737}, {"filename": "/Data/Item/nfb.OZJ", "start": 6823737, "end": 6858389}, {"filename": "/Data/Item/nfb01.OZJ", "start": 6858389, "end": 6890184}, {"filename": "/Data/Item/nfb02.OZJ", "start": 6890184, "end": 6911054}, {"filename": "/Data/Item/nfb2_R.OZJ", "start": 6911054, "end": 6923009}, {"filename": "/Data/Item/nfb4.OZT", "start": 6923009, "end": 6939441}, {"filename": "/Data/Item/nfb_R.OZJ", "start": 6939441, "end": 6947730}, {"filename": "/Data/Item/nfm01.OZJ", "start": 6947730, "end": 6977821}, {"filename": "/Data/Item/nfm02.OZT", "start": 6977821, "end": 7010637}, {"filename": "/Data/Item/nfm03.OZJ", "start": 7010637, "end": 7019386}, {"filename": "/Data/Item/ni99.OZJ", "start": 7019386, "end": 7035414}, {"filename": "/Data/Item/nks01.OZJ", "start": 7035414, "end": 7046193}, {"filename": "/Data/Item/nks02.OZJ", "start": 7046193, "end": 7063663}, {"filename": "/Data/Item/nks03.OZJ", "start": 7063663, "end": 7072959}, {"filename": "/Data/Item/nks04.OZJ", "start": 7072959, "end": 7083834}, {"filename": "/Data/Item/olive.OZJ", "start": 7083834, "end": 7086306}, {"filename": "/Data/Item/pe.OZJ", "start": 7086306, "end": 7092951}, {"filename": "/Data/Item/pearl.OZJ", "start": 7092951, "end": 7099023}, {"filename": "/Data/Item/poket.OZJ", "start": 7099023, "end": 7106261}, {"filename": "/Data/Item/pot3.OZT", "start": 7106261, "end": 7110405}, {"filename": "/Data/Item/power_a.OZT", "start": 7110405, "end": 7143221}, {"filename": "/Data/Item/power_a3.OZT", "start": 7143221, "end": 7159653}, {"filename": "/Data/Item/red.OZJ", "start": 7159653, "end": 7164548}, {"filename": "/Data/Item/red_jewel.OZJ", "start": 7164548, "end": 7169485}, {"filename": "/Data/Item/ring.OZJ", "start": 7169485, "end": 7181388}, {"filename": "/Data/Item/rok.OZT", "start": 7181388, "end": 7183484}, {"filename": "/Data/Item/satan.OZJ", "start": 7183484, "end": 7188590}, {"filename": "/Data/Item/satan2.OZT", "start": 7188590, "end": 7192734}, {"filename": "/Data/Item/sep01.OZJ", "start": 7192734, "end": 7204459}, {"filename": "/Data/Item/sep011.OZJ", "start": 7204459, "end": 7215464}, {"filename": "/Data/Item/sep02.OZJ", "start": 7215464, "end": 7237985}, {"filename": "/Data/Item/sep0202.OZJ", "start": 7237985, "end": 7259569}, {"filename": "/Data/Item/sep03.OZJ", "start": 7259569, "end": 7281745}, {"filename": "/Data/Item/sep0303.OZJ", "start": 7281745, "end": 7294235}, {"filename": "/Data/Item/sep03030303.OZJ", "start": 7294235, "end": 7303167}, {"filename": "/Data/Item/sep03_R.OZJ", "start": 7303167, "end": 7311636}, {"filename": "/Data/Item/sep04.OZJ", "start": 7311636, "end": 7323574}, {"filename": "/Data/Item/sep0404.OZJ", "start": 7323574, "end": 7335182}, {"filename": "/Data/Item/sep05.OZJ", "start": 7335182, "end": 7355368}, {"filename": "/Data/Item/sep055.OZJ", "start": 7355368, "end": 7365847}, {"filename": "/Data/Item/sep06.OZJ", "start": 7365847, "end": 7430735}, {"filename": "/Data/Item/sep0606.OZJ", "start": 7430735, "end": 7455795}, {"filename": "/Data/Item/sep062.OZJ", "start": 7455795, "end": 7478587}, {"filename": "/Data/Item/sep063.OZJ", "start": 7478587, "end": 7511151}, {"filename": "/Data/Item/sep064.OZJ", "start": 7511151, "end": 7520727}, {"filename": "/Data/Item/sep065.OZJ", "start": 7520727, "end": 7528993}, {"filename": "/Data/Item/sep06e_R.OZJ", "start": 7528993, "end": 7538500}, {"filename": "/Data/Item/sep06effe.OZJ", "start": 7538500, "end": 7548002}, {"filename": "/Data/Item/shield02.OZJ", "start": 7548002, "end": 7561732}, {"filename": "/Data/Item/shield03.OZJ", "start": 7561732, "end": 7573216}, {"filename": "/Data/Item/shield04.OZJ", "start": 7573216, "end": 7580183}, {"filename": "/Data/Item/shield04.OZT", "start": 7580183, "end": 7588423}, {"filename": "/Data/Item/shield05.OZJ", "start": 7588423, "end": 7600639}, {"filename": "/Data/Item/shield06.OZJ", "start": 7600639, "end": 7625396}, {"filename": "/Data/Item/shield07.OZJ", "start": 7625396, "end": 7633121}, {"filename": "/Data/Item/shield07.OZT", "start": 7633121, "end": 7641361}, {"filename": "/Data/Item/shield08.OZJ", "start": 7641361, "end": 7661041}, {"filename": "/Data/Item/shield082.OZJ", "start": 7661041, "end": 7665586}, {"filename": "/Data/Item/shield09.OZJ", "start": 7665586, "end": 7674772}, {"filename": "/Data/Item/shield092.OZJ", "start": 7674772, "end": 7679432}, {"filename": "/Data/Item/shield10.OZJ", "start": 7679432, "end": 7688430}, {"filename": "/Data/Item/shield102.OZJ", "start": 7688430, "end": 7693092}, {"filename": "/Data/Item/shield11.OZT", "start": 7693092, "end": 7709524}, {"filename": "/Data/Item/shield11_a.OZJ", "start": 7709524, "end": 7714986}, {"filename": "/Data/Item/shield16.bmd", "start": 7714986, "end": 7725031}, {"filename": "/Data/Item/shield17.bmd", "start": 7725031, "end": 7747279}, {"filename": "/Data/Item/shield_a_01.OZJ", "start": 7747279, "end": 7756161}, {"filename": "/Data/Item/shield_a_02.OZJ", "start": 7756161, "end": 7763979}, {"filename": "/Data/Item/skillScroll.bmd", "start": 7763979, "end": 7771516}, {"filename": "/Data/Item/spiritbill.bmd", "start": 7771516, "end": 7781486}, {"filename": "/Data/Item/star.OZJ", "start": 7781486, "end": 7783484}, {"filename": "/Data/Item/stone02.OZJ", "start": 7783484, "end": 7793903}, {"filename": "/Data/Item/sword015.OZJ", "start": 7793903, "end": 7807564}, {"filename": "/Data/Item/sword015_2.OZJ", "start": 7807564, "end": 7813798}, {"filename": "/Data/Item/sword02.OZJ", "start": 7813798, "end": 7820114}, {"filename": "/Data/Item/sword03.OZJ", "start": 7820114, "end": 7828973}, {"filename": "/Data/Item/sword04.OZJ", "start": 7828973, "end": 7835551}, {"filename": "/Data/Item/sword05.OZJ", "start": 7835551, "end": 7841899}, {"filename": "/Data/Item/sword05.OZT", "start": 7841899, "end": 7841963}, {"filename": "/Data/Item/sword06.OZJ", "start": 7841963, "end": 7849892}, {"filename": "/Data/Item/sword07.OZJ", "start": 7849892, "end": 7862943}, {"filename": "/Data/Item/sword077.OZJ", "start": 7862943, "end": 7870193}, {"filename": "/Data/Item/sword07_2.OZJ", "start": 7870193, "end": 7876537}, {"filename": "/Data/Item/sword08.OZJ", "start": 7876537, "end": 7885919}, {"filename": "/Data/Item/sword09.OZJ", "start": 7885919, "end": 7898902}, {"filename": "/Data/Item/sword11.OZJ", "start": 7898902, "end": 7905719}, {"filename": "/Data/Item/sword11.OZT", "start": 7905719, "end": 7907815}, {"filename": "/Data/Item/sword12.OZJ", "start": 7907815, "end": 7913392}, {"filename": "/Data/Item/sword12_2.OZJ", "start": 7913392, "end": 7918774}, {"filename": "/Data/Item/sword12_3.OZJ", "start": 7918774, "end": 7924267}, {"filename": "/Data/Item/sword13.OZJ", "start": 7924267, "end": 7937783}, {"filename": "/Data/Item/sword14.OZJ", "start": 7937783, "end": 7947119}, {"filename": "/Data/Item/sword14.OZT", "start": 7947119, "end": 7951263}, {"filename": "/Data/Item/sword15.OZJ", "start": 7951263, "end": 7964345}, {"filename": "/Data/Item/sword15_2.OZJ", "start": 7964345, "end": 7976725}, {"filename": "/Data/Item/sword16.OZJ", "start": 7976725, "end": 7983155}, {"filename": "/Data/Item/sword16_2.OZJ", "start": 7983155, "end": 7990290}, {"filename": "/Data/Item/sword17.OZJ", "start": 7990290, "end": 7997855}, {"filename": "/Data/Item/sword22.bmd", "start": 7997855, "end": 8034112}, {"filename": "/Data/Item/sword442.OZJ", "start": 8034112, "end": 8041329}, {"filename": "/Data/Item/sword44_R.OZJ", "start": 8041329, "end": 8047442}, {"filename": "/Data/Item/t_lower_14m.OZT", "start": 8047442, "end": 8063874}, {"filename": "/Data/Item/u2u.OZJ", "start": 8063874, "end": 8072943}, {"filename": "/Data/Item/u2u2.OZJ", "start": 8072943, "end": 8078088}, {"filename": "/Data/Item/u2u3.OZJ", "start": 8078088, "end": 8083201}, {"filename": "/Data/Item/unicon.OZJ", "start": 8083201, "end": 8110225}, {"filename": "/Data/Item/unicon01.OZT", "start": 8110225, "end": 8114369}, {"filename": "/Data/Item/visitor.OZJ", "start": 8114369, "end": 8121549}, {"filename": "/Data/Item/visitor2.OZJ", "start": 8121549, "end": 8124149}, {"filename": "/Data/Item/wand01.OZJ", "start": 8124149, "end": 8131071}, {"filename": "/Data/Item/wand02.OZJ", "start": 8131071, "end": 8145589}, {"filename": "/Data/Item/wand03.OZJ", "start": 8145589, "end": 8152297}, {"filename": "/Data/Item/wand03.OZT", "start": 8152297, "end": 8153369}, {"filename": "/Data/Item/wand04.OZJ", "start": 8153369, "end": 8164644}, {"filename": "/Data/Item/wand05.OZJ", "start": 8164644, "end": 8174644}, {"filename": "/Data/Item/wand06.OZJ", "start": 8174644, "end": 8186919}, {"filename": "/Data/Item/wand10.OZJ", "start": 8186919, "end": 8194044}, {"filename": "/Data/Item/wand10.OZT", "start": 8194044, "end": 8202284}, {"filename": "/Data/Item/wand10_2.OZJ", "start": 8202284, "end": 8208589}, {"filename": "/Data/Item/wand44.OZJ", "start": 8208589, "end": 8215988}, {"filename": "/Data/Item/wand44_R.OZJ", "start": 8215988, "end": 8223577}, {"filename": "/Data/Item/waternecklace.OZJ", "start": 8223577, "end": 8233613}, {"filename": "/Data/Item/waternecklace.bmd", "start": 8233613, "end": 8243393}, {"filename": "/Data/Item/waterring.bmd", "start": 8243393, "end": 8250677}, {"filename": "/Data/Item/wdn_R.OZJ", "start": 8250677, "end": 8253040}, {"filename": "/Data/Item/windnecklace.OZJ", "start": 8253040, "end": 8263218}, {"filename": "/Data/Item/windnecklace.bmd", "start": 8263218, "end": 8273866}, {"filename": "/Data/Item/windring.OZJ", "start": 8273866, "end": 8282972}, {"filename": "/Data/Item/windring.bmd", "start": 8282972, "end": 8289920}, {"filename": "/Data/Item/wolf02.OZJ", "start": 8289920, "end": 8294796}, {"filename": "/Data/Item/wwa.OZJ", "start": 8294796, "end": 8300057}, {"filename": "/Data/Item/wwe.OZJ", "start": 8300057, "end": 8311474}, {"filename": "/Data/Item/wwe00.OZJ", "start": 8311474, "end": 8319567}, {"filename": "/Data/Item/yellow_jewel.OZJ", "start": 8319567, "end": 8324508}, {"filename": "/Data/Local/Dialog.bmd", "start": 8324508, "end": 8529308}, {"filename": "/Data/Local/Dialog_Eng.bmd", "start": 8529308, "end": 8734108}, {"filename": "/Data/Local/Dialog_Por.bmd", "start": 8734108, "end": 8938908}, {"filename": "/Data/Local/Dialog_Spn.bmd", "start": 8938908, "end": 9143708}, {"filename": "/Data/Local/Everyone.OZJ", "start": 9143708, "end": 9169897}, {"filename": "/Data/Local/Filter.bmd", "start": 9169897, "end": 9189901}, {"filename": "/Data/Local/FilterName.bmd", "start": 9189901, "end": 9209905}, {"filename": "/Data/Local/Item.bmd", "start": 9209905, "end": 9242677}, {"filename": "/Data/Local/Loading01.OZJ", "start": 9242677, "end": 9268359}, {"filename": "/Data/Local/Loading02.OZJ", "start": 9268359, "end": 9320887}, {"filename": "/Data/Local/Loading03.OZJ", "start": 9320887, "end": 9346869}, {"filename": "/Data/Local/NPCName(kor).txt", "start": 9346869, "end": 9350178}, {"filename": "/Data/Local/NPCName.txt", "start": 9350178, "end": 9353659}, {"filename": "/Data/Local/Quest.bmd", "start": 9353659, "end": 9470459}, {"filename": "/Data/Local/Skill.bmd", "start": 9470459, "end": 9473023}, {"filename": "/Data/Local/Text.bmd", "start": 9473023, "end": 9773023}, {"filename": "/Data/Local/Text_Eng.bmd", "start": 9773023, "end": 10073023}, {"filename": "/Data/Local/Text_Por.bmd", "start": 10073023, "end": 10373023}, {"filename": "/Data/Local/Text_Spn.bmd", "start": 10373023, "end": 10673023}, {"filename": "/Data/Local/Webzenlogo.OZJ", "start": 10673023, "end": 10724411}, {"filename": "/Data/Logo/0account.OZT", "start": 10724411, "end": 10940459}, {"filename": "/Data/Logo/0account_new.OZT", "start": 10940459, "end": 11156507}, {"filename": "/Data/Logo/0box.OZJ", "start": 11156507, "end": 11165305}, {"filename": "/Data/Logo/0new_account01.OZT", "start": 11165305, "end": 11427497}, {"filename": "/Data/Logo/0new_account02.OZT", "start": 11427497, "end": 11506393}, {"filename": "/Data/Logo/0on_botton.OZJ", "start": 11506393, "end": 11512379}, {"filename": "/Data/Logo/0on_botton2.OZJ", "start": 11512379, "end": 11518597}, {"filename": "/Data/Logo/0text_box.OZJ", "start": 11518597, "end": 11524735}, {"filename": "/Data/Logo/Cface01.OZJ", "start": 11524735, "end": 11561546}, {"filename": "/Data/Logo/Cface02.OZJ", "start": 11561546, "end": 11574356}, {"filename": "/Data/Logo/Cface04.OZT", "start": 11574356, "end": 11575428}, {"filename": "/Data/Logo/Cface09.OZT", "start": 11575428, "end": 11583668}, {"filename": "/Data/Logo/Delete01.OZT", "start": 11583668, "end": 11655876}, {"filename": "/Data/Logo/Delete02.OZJ", "start": 11655876, "end": 11663144}, {"filename": "/Data/Logo/Face01.bmd", "start": 11663144, "end": 11802468}, {"filename": "/Data/Logo/Face02.bmd", "start": 11802468, "end": 11948328}, {"filename": "/Data/Logo/Face03.bmd", "start": 11948328, "end": 12125515}, {"filename": "/Data/Logo/Face04.bmd", "start": 12125515, "end": 12311007}, {"filename": "/Data/Logo/Fairy_back.OZJ", "start": 12311007, "end": 12323414}, {"filename": "/Data/Logo/Interface01.OZT", "start": 12323414, "end": 12411526}, {"filename": "/Data/Logo/Interface02.OZT", "start": 12411526, "end": 12477110}, {"filename": "/Data/Logo/Interface03.OZT", "start": 12477110, "end": 12534502}, {"filename": "/Data/Logo/Interface04.OZT", "start": 12534502, "end": 12567318}, {"filename": "/Data/Logo/Logo.OZJ", "start": 12567318, "end": 12601261}, {"filename": "/Data/Logo/Logo01.bmd", "start": 12601261, "end": 12603226}, {"filename": "/Data/Logo/Logo02.bmd", "start": 12603226, "end": 12609040}, {"filename": "/Data/Logo/Logo03.bmd", "start": 12609040, "end": 12682759}, {"filename": "/Data/Logo/Logo04.bmd", "start": 12682759, "end": 12689942}, {"filename": "/Data/Logo/Logo05.bmd", "start": 12689942, "end": 12842036}, {"filename": "/Data/Logo/Logo2.OZJ", "start": 12842036, "end": 12865741}, {"filename": "/Data/Logo/Magic_01.OZJ", "start": 12865741, "end": 12892688}, {"filename": "/Data/Logo/Magic_02.OZT", "start": 12892688, "end": 13023808}, {"filename": "/Data/Logo/Magic_03.OZJ", "start": 13023808, "end": 13036218}, {"filename": "/Data/Logo/Magic_09.OZJ", "start": 13036218, "end": 13072588}, {"filename": "/Data/Logo/Magic_09_2.OZJ", "start": 13072588, "end": 13083874}, {"filename": "/Data/Logo/Main_earth.OZJ", "start": 13083874, "end": 13161423}, {"filename": "/Data/Logo/Main_stone.OZJ", "start": 13161423, "end": 13170714}, {"filename": "/Data/Logo/Main_wood1.OZJ", "start": 13170714, "end": 13195029}, {"filename": "/Data/Logo/Main_wood2.OZJ", "start": 13195029, "end": 13206037}, {"filename": "/Data/Logo/Main_wood3.OZT", "start": 13206037, "end": 13222469}, {"filename": "/Data/Logo/Main_wood4.OZT", "start": 13222469, "end": 13226613}, {"filename": "/Data/Logo/Main_wood5.OZT", "start": 13226613, "end": 13243045}, {"filename": "/Data/Logo/Main_wood6.OZJ", "start": 13243045, "end": 13248313}, {"filename": "/Data/Logo/Main_wood6.OZT", "start": 13248313, "end": 13264745}, {"filename": "/Data/Logo/Mulogo_01.OZJ", "start": 13264745, "end": 13292116}, {"filename": "/Data/Logo/New_character001.OZJ", "start": 13292116, "end": 13297894}, {"filename": "/Data/Logo/New_character002.OZJ", "start": 13297894, "end": 13303707}, {"filename": "/Data/Logo/New_character003.OZJ", "start": 13303707, "end": 13309526}, {"filename": "/Data/Logo/New_character004.OZJ", "start": 13309526, "end": 13315344}, {"filename": "/Data/Logo/New_character01.OZT", "start": 13315344, "end": 13533504}, {"filename": "/Data/Logo/New_character02.OZT", "start": 13533504, "end": 13634940}, {"filename": "/Data/Logo/New_character201.OZT", "start": 13634940, "end": 13721752}, {"filename": "/Data/Logo/New_character202.OZJ", "start": 13721752, "end": 13730180}, {"filename": "/Data/Logo/New_character_cancel.OZJ", "start": 13730180, "end": 13737787}, {"filename": "/Data/Logo/New_character_ok.OZJ", "start": 13737787, "end": 13745147}, {"filename": "/Data/Logo/Ok01.OZT", "start": 13745147, "end": 13817355}, {"filename": "/Data/Logo/Ok02.OZJ", "start": 13817355, "end": 13824288}, {"filename": "/Data/Logo/Sky0.OZJ", "start": 13824288, "end": 13904653}, {"filename": "/Data/Logo/Sky2.OZJ", "start": 13904653, "end": 13911961}, {"filename": "/Data/Logo/Sky3.OZJ", "start": 13911961, "end": 13926752}, {"filename": "/Data/Logo/Sky4.OZJ", "start": 13926752, "end": 13933613}, {"filename": "/Data/Logo/Sky5.OZJ", "start": 13933613, "end": 13997424}, {"filename": "/Data/Logo/Titel01.OZJ", "start": 13997424, "end": 14004511}, {"filename": "/Data/Logo/Titel02.OZJ", "start": 14004511, "end": 14014091}, {"filename": "/Data/Logo/Warrior.OZJ", "start": 14014091, "end": 14041003}, {"filename": "/Data/Logo/Warrior02.OZJ", "start": 14041003, "end": 14053437}, {"filename": "/Data/Logo/Warrior03.OZT", "start": 14053437, "end": 14061677}, {"filename": "/Data/Logo/Warrior_back.OZJ", "start": 14061677, "end": 14070402}, {"filename": "/Data/Logo/Wave.OZJ", "start": 14070402, "end": 14089006}, {"filename": "/Data/Logo/back1.OZJ", "start": 14089006, "end": 14125708}, {"filename": "/Data/Logo/back2.OZJ", "start": 14125708, "end": 14168669}, {"filename": "/Data/Macro.txt", "start": 14168669, "end": 14168689}, {"filename": "/Data/Monster/BGcl.OZT", "start": 14168689, "end": 14185121}, {"filename": "/Data/Monster/Karane/Boss_Karane_body.OZJ", "start": 14185121, "end": 14195016}, {"filename": "/Data/Monster/Karane/Boss_Karane_cloth.OZT", "start": 14195016, "end": 14326136}, {"filename": "/Data/Monster/Karane/Boss_Karane_head.OZJ", "start": 14326136, "end": 14328749}, {"filename": "/Data/Monster/Karane/Boss_Karane_pants.OZJ", "start": 14328749, "end": 14336969}, {"filename": "/Data/Monster/Karane/Boss_Karane_r.OZJ", "start": 14336969, "end": 14337988}, {"filename": "/Data/Monster/Karane/Karane.bmd", "start": 14337988, "end": 14818525}, {"filename": "/Data/Monster/King11.OZJ", "start": 14818525, "end": 14885053}, {"filename": "/Data/Monster/Kni000.OZJ", "start": 14885053, "end": 14921956}, {"filename": "/Data/Monster/Kni011.OZJ", "start": 14921956, "end": 14941942}, {"filename": "/Data/Monster/Kni022.OZJ", "start": 14941942, "end": 14951950}, {"filename": "/Data/Monster/Ktutl.OZJ", "start": 14951950, "end": 15030003}, {"filename": "/Data/Monster/Monster01.bmd", "start": 15030003, "end": 15188559}, {"filename": "/Data/Monster/Monster02.bmd", "start": 15188559, "end": 15301948}, {"filename": "/Data/Monster/Monster03.bmd", "start": 15301948, "end": 15389942}, {"filename": "/Data/Monster/Monster04.bmd", "start": 15389942, "end": 15556007}, {"filename": "/Data/Monster/Monster05.bmd", "start": 15556007, "end": 15715552}, {"filename": "/Data/Monster/Monster06.bmd", "start": 15715552, "end": 15879827}, {"filename": "/Data/Monster/Monster07.bmd", "start": 15879827, "end": 15919999}, {"filename": "/Data/Monster/Monster08.bmd", "start": 15919999, "end": 15982181}, {"filename": "/Data/Monster/Monster09.bmd", "start": 15982181, "end": 16085868}, {"filename": "/Data/Monster/Monster10.bmd", "start": 16085868, "end": 16137544}, {"filename": "/Data/Monster/Monster11.bmd", "start": 16137544, "end": 16278231}, {"filename": "/Data/Monster/Monster12.bmd", "start": 16278231, "end": 16433375}, {"filename": "/Data/Monster/Monster13.bmd", "start": 16433375, "end": 16579556}, {"filename": "/Data/Monster/Monster14.bmd", "start": 16579556, "end": 16764824}, {"filename": "/Data/Monster/Monster15.bmd", "start": 16764824, "end": 16881450}, {"filename": "/Data/Monster/Monster16.bmd", "start": 16881450, "end": 16964051}, {"filename": "/Data/Monster/Monster17.bmd", "start": 16964051, "end": 17090685}, {"filename": "/Data/Monster/Monster18.bmd", "start": 17090685, "end": 17148462}, {"filename": "/Data/Monster/Monster19.bmd", "start": 17148462, "end": 17370974}, {"filename": "/Data/Monster/Monster20.bmd", "start": 17370974, "end": 17461088}, {"filename": "/Data/Monster/Monster21.bmd", "start": 17461088, "end": 17493100}, {"filename": "/Data/Monster/Monster22.bmd", "start": 17493100, "end": 17614239}, {"filename": "/Data/Monster/Monster23.bmd", "start": 17614239, "end": 17715773}, {"filename": "/Data/Monster/Monster24.bmd", "start": 17715773, "end": 17846319}, {"filename": "/Data/Monster/Monster25.bmd", "start": 17846319, "end": 17963637}, {"filename": "/Data/Monster/Monster26.bmd", "start": 17963637, "end": 18052545}, {"filename": "/Data/Monster/Monster27.bmd", "start": 18052545, "end": 18167603}, {"filename": "/Data/Monster/Monster28.bmd", "start": 18167603, "end": 18397660}, {"filename": "/Data/Monster/Monster29.bmd", "start": 18397660, "end": 18507415}, {"filename": "/Data/Monster/Monster30.bmd", "start": 18507415, "end": 18694151}, {"filename": "/Data/Monster/Monster31.bmd", "start": 18694151, "end": 18883705}, {"filename": "/Data/Monster/Monster32.bmd", "start": 18883705, "end": 19212155}, {"filename": "/Data/Monster/Monster33.bmd", "start": 19212155, "end": 19375219}, {"filename": "/Data/Monster/Monster34.bmd", "start": 19375219, "end": 19507069}, {"filename": "/Data/Monster/Monster35.bmd", "start": 19507069, "end": 19615669}, {"filename": "/Data/Monster/Monster36.bmd", "start": 19615669, "end": 19733217}, {"filename": "/Data/Monster/Monster37.bmd", "start": 19733217, "end": 19909831}, {"filename": "/Data/Monster/Monster38.bmd", "start": 19909831, "end": 20185483}, {"filename": "/Data/Monster/Monster39.bmd", "start": 20185483, "end": 20229256}, {"filename": "/Data/Monster/Monster40.bmd", "start": 20229256, "end": 20454828}, {"filename": "/Data/Monster/Monster41.bmd", "start": 20454828, "end": 20605243}, {"filename": "/Data/Monster/Monster42.bmd", "start": 20605243, "end": 20754141}, {"filename": "/Data/Monster/Monster43.bmd", "start": 20754141, "end": 20963106}, {"filename": "/Data/Monster/Monster44.bmd", "start": 20963106, "end": 21083152}, {"filename": "/Data/Monster/Monster45.bmd", "start": 21083152, "end": 21293769}, {"filename": "/Data/Monster/Monster46.bmd", "start": 21293769, "end": 21413748}, {"filename": "/Data/Monster/Monster47.bmd", "start": 21413748, "end": 21510355}, {"filename": "/Data/Monster/Monster48.bmd", "start": 21510355, "end": 21620049}, {"filename": "/Data/Monster/Monster49.bmd", "start": 21620049, "end": 21782742}, {"filename": "/Data/Monster/Monster51.bmd", "start": 21782742, "end": 21927438}, {"filename": "/Data/Monster/Monster52.bmd", "start": 21927438, "end": 22069524}, {"filename": "/Data/Monster/Monster53.bmd", "start": 22069524, "end": 22209650}, {"filename": "/Data/Monster/Monster54.bmd", "start": 22209650, "end": 22389230}, {"filename": "/Data/Monster/Monster55.bmd", "start": 22389230, "end": 22658116}, {"filename": "/Data/Monster/Monster56.bmd", "start": 22658116, "end": 22838312}, {"filename": "/Data/Monster/Monster57.bmd", "start": 22838312, "end": 22959177}, {"filename": "/Data/Monster/Monster58.bmd", "start": 22959177, "end": 23106321}, {"filename": "/Data/Monster/Monster59.bmd", "start": 23106321, "end": 23348113}, {"filename": "/Data/Monster/Monster60.bmd", "start": 23348113, "end": 23478544}, {"filename": "/Data/Monster/Monster61.bmd", "start": 23478544, "end": 23521371}, {"filename": "/Data/Monster/Monster62.bmd", "start": 23521371, "end": 23537038}, {"filename": "/Data/Monster/Monster63.bmd", "start": 23537038, "end": 23683200}, {"filename": "/Data/Monster/Monster64.bmd", "start": 23683200, "end": 23861978}, {"filename": "/Data/Monster/Monster66.bmd", "start": 23861978, "end": 24073047}, {"filename": "/Data/Monster/Monster67.bmd", "start": 24073047, "end": 24270153}, {"filename": "/Data/Monster/Monster70.bmd", "start": 24270153, "end": 24616362}, {"filename": "/Data/Monster/Monster71.bmd", "start": 24616362, "end": 24735550}, {"filename": "/Data/Monster/Monster72.bmd", "start": 24735550, "end": 24852578}, {"filename": "/Data/Monster/Monster73.bmd", "start": 24852578, "end": 24977166}, {"filename": "/Data/Monster/Monster74.bmd", "start": 24977166, "end": 24986422}, {"filename": "/Data/Monster/Pichula/Boss_Karane_body.OZJ", "start": 24986422, "end": 24996317}, {"filename": "/Data/Monster/Pichula/Boss_Karane_cloth.OZT", "start": 24996317, "end": 25127437}, {"filename": "/Data/Monster/Pichula/Boss_Karane_head.OZJ", "start": 25127437, "end": 25130050}, {"filename": "/Data/Monster/Pichula/Boss_Karane_pants.OZJ", "start": 25130050, "end": 25138270}, {"filename": "/Data/Monster/Pichula/Boss_Karane_r.OZJ", "start": 25138270, "end": 25139289}, {"filename": "/Data/Monster/Pichula/Pichula.bmd", "start": 25139289, "end": 25619826}, {"filename": "/Data/Monster/Pnix.OZJ", "start": 25619826, "end": 25744064}, {"filename": "/Data/Monster/Polearms03.OZJ", "start": 25744064, "end": 25754506}, {"filename": "/Data/Monster/Tamachan.bmd", "start": 25754506, "end": 25900668}, {"filename": "/Data/Monster/ar1.OZJ", "start": 25900668, "end": 25937678}, {"filename": "/Data/Monster/armor_lower2.OZJ", "start": 25937678, "end": 25962857}, {"filename": "/Data/Monster/armor_up2.OZJ", "start": 25962857, "end": 25990581}, {"filename": "/Data/Monster/as.OZJ", "start": 25990581, "end": 26074425}, {"filename": "/Data/Monster/as_1.OZJ", "start": 26074425, "end": 26081284}, {"filename": "/Data/Monster/b4.OZJ", "start": 26081284, "end": 26186866}, {"filename": "/Data/Monster/baron.OZT", "start": 26186866, "end": 26203298}, {"filename": "/Data/Monster/baron01.OZJ", "start": 26203298, "end": 26244533}, {"filename": "/Data/Monster/bbb01.OZT", "start": 26244533, "end": 26310117}, {"filename": "/Data/Monster/bbb02.OZT", "start": 26310117, "end": 26318357}, {"filename": "/Data/Monster/bbbb.OZJ", "start": 26318357, "end": 26362514}, {"filename": "/Data/Monster/bbbb00.OZJ", "start": 26362514, "end": 26414307}, {"filename": "/Data/Monster/bbbb02.OZJ", "start": 26414307, "end": 26419967}, {"filename": "/Data/Monster/bbbb03.OZJ", "start": 26419967, "end": 26424956}, {"filename": "/Data/Monster/bee03_r.OZJ", "start": 26424956, "end": 26438547}, {"filename": "/Data/Monster/big_spider.OZJ", "start": 26438547, "end": 26468734}, {"filename": "/Data/Monster/blast_r.OZJ", "start": 26468734, "end": 26488975}, {"filename": "/Data/Monster/bons.OZJ", "start": 26488975, "end": 26516774}, {"filename": "/Data/Monster/boots2.OZJ", "start": 26516774, "end": 26526663}, {"filename": "/Data/Monster/boss.OZJ", "start": 26526663, "end": 26611016}, {"filename": "/Data/Monster/boss_eye.OZJ", "start": 26611016, "end": 26616193}, {"filename": "/Data/Monster/boss_pattern1.OZJ", "start": 26616193, "end": 26634177}, {"filename": "/Data/Monster/boss_pattern2.OZJ", "start": 26634177, "end": 26648289}, {"filename": "/Data/Monster/bossblack.OZJ", "start": 26648289, "end": 26656543}, {"filename": "/Data/Monster/bossmap1.OZJ", "start": 26656543, "end": 26723623}, {"filename": "/Data/Monster/bossmap1_r.OZJ", "start": 26723623, "end": 26741901}, {"filename": "/Data/Monster/bossmap2.OZJ", "start": 26741901, "end": 26812942}, {"filename": "/Data/Monster/bossseptormap2.OZJ", "start": 26812942, "end": 26871659}, {"filename": "/Data/Monster/bosswing.OZJ", "start": 26871659, "end": 26876287}, {"filename": "/Data/Monster/bosswing.OZT", "start": 26876287, "end": 26892719}, {"filename": "/Data/Monster/bosswingbone.OZJ", "start": 26892719, "end": 26911842}, {"filename": "/Data/Monster/bow01.OZJ", "start": 26911842, "end": 26917970}, {"filename": "/Data/Monster/bow05.OZT", "start": 26917970, "end": 26922114}, {"filename": "/Data/Monster/branch.OZJ", "start": 26922114, "end": 26938742}, {"filename": "/Data/Monster/bsh01.OZJ", "start": 26938742, "end": 26976665}, {"filename": "/Data/Monster/bsh02.OZT", "start": 26976665, "end": 26984905}, {"filename": "/Data/Monster/bsh03.OZT", "start": 26984905, "end": 26989049}, {"filename": "/Data/Monster/bug.OZJ", "start": 26989049, "end": 27017324}, {"filename": "/Data/Monster/bug2.OZJ", "start": 27017324, "end": 27024184}, {"filename": "/Data/Monster/bug3.OZJ", "start": 27024184, "end": 27032812}, {"filename": "/Data/Monster/bulldug.OZJ", "start": 27032812, "end": 27091734}, {"filename": "/Data/Monster/bulldughair.OZT", "start": 27091734, "end": 27095878}, {"filename": "/Data/Monster/bv01.OZJ", "start": 27095878, "end": 27121023}, {"filename": "/Data/Monster/bv01_2.OZJ", "start": 27121023, "end": 27131603}, {"filename": "/Data/Monster/bv02.OZJ", "start": 27131603, "end": 27172166}, {"filename": "/Data/Monster/bv02_2.OZJ", "start": 27172166, "end": 27194943}, {"filename": "/Data/Monster/bv03.OZJ", "start": 27194943, "end": 27199775}, {"filename": "/Data/Monster/cannon.OZJ", "start": 27199775, "end": 27278535}, {"filename": "/Data/Monster/cd71a.bmd", "start": 27278535, "end": 27291205}, {"filename": "/Data/Monster/cd71b.bmd", "start": 27291205, "end": 27303875}, {"filename": "/Data/Monster/cd71c.bmd", "start": 27303875, "end": 27329531}, {"filename": "/Data/Monster/cd71d.bmd", "start": 27329531, "end": 27356499}, {"filename": "/Data/Monster/cd71e.bmd", "start": 27356499, "end": 27383467}, {"filename": "/Data/Monster/cd71f.bmd", "start": 27383467, "end": 27488932}, {"filename": "/Data/Monster/cd71g.bmd", "start": 27488932, "end": 27525434}, {"filename": "/Data/Monster/cd71h.bmd", "start": 27525434, "end": 27559132}, {"filename": "/Data/Monster/chain.OZT", "start": 27559132, "end": 27560204}, {"filename": "/Data/Monster/chest.OZJ", "start": 27560204, "end": 27587952}, {"filename": "/Data/Monster/chest_R.OZJ", "start": 27587952, "end": 27603625}, {"filename": "/Data/Monster/cloak.OZT", "start": 27603625, "end": 27734745}, {"filename": "/Data/Monster/cloak_R.OZJ", "start": 27734745, "end": 27747161}, {"filename": "/Data/Monster/cr_balgass.OZT", "start": 27747161, "end": 27878281}, {"filename": "/Data/Monster/cr_balgass02.OZT", "start": 27878281, "end": 28009401}, {"filename": "/Data/Monster/cr_werewolf01.OZJ", "start": 28009401, "end": 28120645}, {"filename": "/Data/Monster/cr_werewolf02.OZJ", "start": 28120645, "end": 28230174}, {"filename": "/Data/Monster/cundun1.OZJ", "start": 28230174, "end": 28296999}, {"filename": "/Data/Monster/cundun2.OZJ", "start": 28296999, "end": 28309491}, {"filename": "/Data/Monster/cundun3.OZJ", "start": 28309491, "end": 28348164}, {"filename": "/Data/Monster/cundun4.OZJ", "start": 28348164, "end": 28362303}, {"filename": "/Data/Monster/cundun4.OZT", "start": 28362303, "end": 28362863}, {"filename": "/Data/Monster/cundun5.OZJ", "start": 28362863, "end": 28383136}, {"filename": "/Data/Monster/cundunHead.OZJ", "start": 28383136, "end": 28411617}, {"filename": "/Data/Monster/cundun_gone.bmd", "start": 28411617, "end": 28615357}, {"filename": "/Data/Monster/cundunend.OZJ", "start": 28615357, "end": 28620031}, {"filename": "/Data/Monster/cundunend.OZT", "start": 28620031, "end": 28624175}, {"filename": "/Data/Monster/cundunskin.OZJ", "start": 28624175, "end": 28630397}, {"filename": "/Data/Monster/defencenpc_1_head.OZJ", "start": 28630397, "end": 28650941}, {"filename": "/Data/Monster/defencenpc_1_should.OZJ", "start": 28650941, "end": 28655272}, {"filename": "/Data/Monster/defencenpc_2_food.OZJ", "start": 28655272, "end": 28673693}, {"filename": "/Data/Monster/defencenpc_2_head.OZJ", "start": 28673693, "end": 28691991}, {"filename": "/Data/Monster/defencenpc_2_should.OZJ", "start": 28691991, "end": 28712762}, {"filename": "/Data/Monster/defencenpc_body.OZJ", "start": 28712762, "end": 28816877}, {"filename": "/Data/Monster/defencenpc_weapon.OZJ", "start": 28816877, "end": 28829232}, {"filename": "/Data/Monster/devil.OZJ", "start": 28829232, "end": 28884097}, {"filename": "/Data/Monster/devilhair.OZT", "start": 28884097, "end": 28888241}, {"filename": "/Data/Monster/devilwing.OZJ", "start": 28888241, "end": 28913214}, {"filename": "/Data/Monster/doorc01.OZJ", "start": 28913214, "end": 28955829}, {"filename": "/Data/Monster/drr_01.OZJ", "start": 28955829, "end": 29044904}, {"filename": "/Data/Monster/drr_02.OZJ", "start": 29044904, "end": 29116785}, {"filename": "/Data/Monster/drr_03.OZJ", "start": 29116785, "end": 29193971}, {"filename": "/Data/Monster/drt00.OZJ", "start": 29193971, "end": 29203947}, {"filename": "/Data/Monster/drt01.OZJ", "start": 29203947, "end": 29268618}, {"filename": "/Data/Monster/drt02.OZJ", "start": 29268618, "end": 29315277}, {"filename": "/Data/Monster/drt02.OZT", "start": 29315277, "end": 29331709}, {"filename": "/Data/Monster/drt03.OZJ", "start": 29331709, "end": 29338454}, {"filename": "/Data/Monster/drt03.OZT", "start": 29338454, "end": 29354886}, {"filename": "/Data/Monster/drt05.OZJ", "start": 29354886, "end": 29360315}, {"filename": "/Data/Monster/eagle.OZT", "start": 29360315, "end": 29368555}, {"filename": "/Data/Monster/eagle01.OZJ", "start": 29368555, "end": 29377087}, {"filename": "/Data/Monster/epiboss_armor.OZJ", "start": 29377087, "end": 29459524}, {"filename": "/Data/Monster/epibossskin.OZJ", "start": 29459524, "end": 29534180}, {"filename": "/Data/Monster/epibosswing.OZJ", "start": 29534180, "end": 29555656}, {"filename": "/Data/Monster/fireeffect.OZJ", "start": 29555656, "end": 29616429}, {"filename": "/Data/Monster/fmammor.OZJ", "start": 29616429, "end": 29722344}, {"filename": "/Data/Monster/fmbody_r.OZJ", "start": 29722344, "end": 29761839}, {"filename": "/Data/Monster/forestgost.OZJ", "start": 29761839, "end": 29900095}, {"filename": "/Data/Monster/forestgost_should.OZJ", "start": 29900095, "end": 29938711}, {"filename": "/Data/Monster/fr00.OZJ", "start": 29938711, "end": 30004932}, {"filename": "/Data/Monster/fs00.OZJ", "start": 30004932, "end": 30055744}, {"filename": "/Data/Monster/fs01.OZT", "start": 30055744, "end": 30121328}, {"filename": "/Data/Monster/fs02.OZJ", "start": 30121328, "end": 30126121}, {"filename": "/Data/Monster/garp.OZJ", "start": 30126121, "end": 30136700}, {"filename": "/Data/Monster/gate.OZJ", "start": 30136700, "end": 30178803}, {"filename": "/Data/Monster/gh1.OZJ", "start": 30178803, "end": 30243390}, {"filename": "/Data/Monster/gh2.OZJ", "start": 30243390, "end": 30313297}, {"filename": "/Data/Monster/gh3.OZJ", "start": 30313297, "end": 30318426}, {"filename": "/Data/Monster/gloves2.OZJ", "start": 30318426, "end": 30338632}, {"filename": "/Data/Monster/gp01.OZJ", "start": 30338632, "end": 30394189}, {"filename": "/Data/Monster/gp02.OZT", "start": 30394189, "end": 30410621}, {"filename": "/Data/Monster/h_r.OZT", "start": 30410621, "end": 30443437}, {"filename": "/Data/Monster/head.OZJ", "start": 30443437, "end": 30453016}, {"filename": "/Data/Monster/helmat_01.OZJ", "start": 30453016, "end": 30458803}, {"filename": "/Data/Monster/helmat_02.OZJ", "start": 30458803, "end": 30463995}, {"filename": "/Data/Monster/helmet2.OZJ", "start": 30463995, "end": 30474048}, {"filename": "/Data/Monster/ho9_11.OZJ", "start": 30474048, "end": 30581100}, {"filename": "/Data/Monster/ho9_2.OZJ", "start": 30581100, "end": 30592423}, {"filename": "/Data/Monster/hop01.OZJ", "start": 30592423, "end": 30665230}, {"filename": "/Data/Monster/hound_head01.OZJ", "start": 30665230, "end": 30676937}, {"filename": "/Data/Monster/hound_head02.OZJ", "start": 30676937, "end": 30688614}, {"filename": "/Data/Monster/hound_lower.OZJ", "start": 30688614, "end": 30720190}, {"filename": "/Data/Monster/hp00.OZJ", "start": 30720190, "end": 30756283}, {"filename": "/Data/Monster/hp01.OZT", "start": 30756283, "end": 30821867}, {"filename": "/Data/Monster/ice_m.OZJ", "start": 30821867, "end": 30843266}, {"filename": "/Data/Monster/it.OZJ", "start": 30843266, "end": 30872137}, {"filename": "/Data/Monster/iui01.OZT", "start": 30872137, "end": 31134329}, {"filename": "/Data/Monster/iui02.OZJ", "start": 31134329, "end": 31146155}, {"filename": "/Data/Monster/iui02.OZT", "start": 31146155, "end": 31154395}, {"filename": "/Data/Monster/iui03.OZJ", "start": 31154395, "end": 31178815}, {"filename": "/Data/Monster/iui03.OZT", "start": 31178815, "end": 31187055}, {"filename": "/Data/Monster/iui06.OZJ", "start": 31187055, "end": 31189662}, {"filename": "/Data/Monster/king01.OZJ", "start": 31189662, "end": 31209770}, {"filename": "/Data/Monster/king08.OZT", "start": 31209770, "end": 31211866}, {"filename": "/Data/Monster/king09.OZJ", "start": 31211866, "end": 31271868}, {"filename": "/Data/Monster/kni00.OZJ", "start": 31271868, "end": 31314328}, {"filename": "/Data/Monster/kni01.OZJ", "start": 31314328, "end": 31338362}, {"filename": "/Data/Monster/kni02.OZJ", "start": 31338362, "end": 31348431}, {"filename": "/Data/Monster/kuo00.OZJ", "start": 31348431, "end": 31409042}, {"filename": "/Data/Monster/kuo01.OZJ", "start": 31409042, "end": 31422482}, {"filename": "/Data/Monster/kuo02.OZJ", "start": 31422482, "end": 31450217}, {"filename": "/Data/Monster/leaves.OZT", "start": 31450217, "end": 31466649}, {"filename": "/Data/Monster/legs.OZJ", "start": 31466649, "end": 31490600}, {"filename": "/Data/Monster/legs_R.OZJ", "start": 31490600, "end": 31507225}, {"filename": "/Data/Monster/lobfur.OZT", "start": 31507225, "end": 31511369}, {"filename": "/Data/Monster/lobster.OZJ", "start": 31511369, "end": 31561843}, {"filename": "/Data/Monster/lpo01.OZT", "start": 31561843, "end": 31824035}, {"filename": "/Data/Monster/m1.OZT", "start": 31824035, "end": 31955155}, {"filename": "/Data/Monster/ma001.OZT", "start": 31955155, "end": 31963395}, {"filename": "/Data/Monster/ma002.OZJ", "start": 31963395, "end": 31964192}, {"filename": "/Data/Monster/ma1.OZJ", "start": 31964192, "end": 31978789}, {"filename": "/Data/Monster/ma2.OZJ", "start": 31978789, "end": 31979461}, {"filename": "/Data/Monster/ma_1.OZJ", "start": 31979461, "end": 32019362}, {"filename": "/Data/Monster/magic_BB.OZT", "start": 32019362, "end": 32035794}, {"filename": "/Data/Monster/magic_H.OZT", "start": 32035794, "end": 32039938}, {"filename": "/Data/Monster/manto.OZT", "start": 32039938, "end": 32171058}, {"filename": "/Data/Monster/mon2_01.OZJ", "start": 32171058, "end": 32254397}, {"filename": "/Data/Monster/mon2_02.OZJ", "start": 32254397, "end": 32298856}, {"filename": "/Data/Monster/mon3_03.OZJ", "start": 32298856, "end": 32333801}, {"filename": "/Data/Monster/mon_01.OZJ", "start": 32333801, "end": 32363431}, {"filename": "/Data/Monster/mon_05.OZJ", "start": 32363431, "end": 32374626}, {"filename": "/Data/Monster/mono3.OZJ", "start": 32374626, "end": 32471709}, {"filename": "/Data/Monster/mono3eye.OZJ", "start": 32471709, "end": 32482208}, {"filename": "/Data/Monster/monster(1).bmd", "start": 32482208, "end": 32723298}, {"filename": "/Data/Monster/monster.bmd", "start": 32723298, "end": 32894985}, {"filename": "/Data/Monster/monster101.bmd", "start": 32894985, "end": 33197232}, {"filename": "/Data/Monster/monster102.bmd", "start": 33197232, "end": 33373904}, {"filename": "/Data/Monster/monster103.bmd", "start": 33373904, "end": 33608050}, {"filename": "/Data/Monster/monster104.bmd", "start": 33608050, "end": 33810976}, {"filename": "/Data/Monster/monster105.bmd", "start": 33810976, "end": 33986777}, {"filename": "/Data/Monster/monster106.bmd", "start": 33986777, "end": 34354101}, {"filename": "/Data/Monster/monster65.bmd", "start": 34354101, "end": 34868777}, {"filename": "/Data/Monster/monster68.bmd", "start": 34868777, "end": 35045270}, {"filename": "/Data/Monster/monster69.bmd", "start": 35045270, "end": 35212233}, {"filename": "/Data/Monster/monster75.bmd", "start": 35212233, "end": 35292590}, {"filename": "/Data/Monster/monster77.bmd", "start": 35292590, "end": 35441327}, {"filename": "/Data/Monster/monster78.bmd", "start": 35441327, "end": 35594075}, {"filename": "/Data/Monster/monster79.bmd", "start": 35594075, "end": 35601667}, {"filename": "/Data/Monster/monster80.bmd", "start": 35601667, "end": 35675605}, {"filename": "/Data/Monster/monster81.OZJ", "start": 35675605, "end": 35690027}, {"filename": "/Data/Monster/monster81_r.OZJ", "start": 35690027, "end": 35702465}, {"filename": "/Data/Monster/monster81_r2.OZJ", "start": 35702465, "end": 35714535}, {"filename": "/Data/Monster/monster82.bmd", "start": 35714535, "end": 35889174}, {"filename": "/Data/Monster/monster83.bmd", "start": 35889174, "end": 36094315}, {"filename": "/Data/Monster/monster84.bmd", "start": 36094315, "end": 36290943}, {"filename": "/Data/Monster/monster85.bmd", "start": 36290943, "end": 36523870}, {"filename": "/Data/Monster/monster86.bmd", "start": 36523870, "end": 36680727}, {"filename": "/Data/Monster/monster87.bmd", "start": 36680727, "end": 36701944}, {"filename": "/Data/Monster/monster88.bmd", "start": 36701944, "end": 37084795}, {"filename": "/Data/Monster/monster90.bmd", "start": 37084795, "end": 37304851}, {"filename": "/Data/Monster/monster91.bmd", "start": 37304851, "end": 37538133}, {"filename": "/Data/Monster/monster92.bmd", "start": 37538133, "end": 37803855}, {"filename": "/Data/Monster/monster93.bmd", "start": 37803855, "end": 37997396}, {"filename": "/Data/Monster/monster94.bmd", "start": 37997396, "end": 38197505}, {"filename": "/Data/Monster/monster95.bmd", "start": 38197505, "end": 38385519}, {"filename": "/Data/Monster/monster96.bmd", "start": 38385519, "end": 38633315}, {"filename": "/Data/Monster/monster97.bmd", "start": 38633315, "end": 38843191}, {"filename": "/Data/Monster/monster98.bmd", "start": 38843191, "end": 39035385}, {"filename": "/Data/Monster/monster99.bmd", "start": 39035385, "end": 39267995}, {"filename": "/Data/Monster/monster_wolf_weapon.OZJ", "start": 39267995, "end": 39307295}, {"filename": "/Data/Monster/monster_worlf.OZJ", "start": 39307295, "end": 39395866}, {"filename": "/Data/Monster/monx01.OZJ", "start": 39395866, "end": 39497359}, {"filename": "/Data/Monster/monx02.OZT", "start": 39497359, "end": 39562943}, {"filename": "/Data/Monster/mop01.OZJ", "start": 39562943, "end": 39602854}, {"filename": "/Data/Monster/mop02.OZJ", "start": 39602854, "end": 39685996}, {"filename": "/Data/Monster/mop03.OZJ", "start": 39685996, "end": 39695816}, {"filename": "/Data/Monster/mop03.OZT", "start": 39695816, "end": 39728632}, {"filename": "/Data/Monster/mopmop.OZJ", "start": 39728632, "end": 39755255}, {"filename": "/Data/Monster/mopmop.OZT", "start": 39755255, "end": 39788071}, {"filename": "/Data/Monster/mopmop02.OZJ", "start": 39788071, "end": 39812874}, {"filename": "/Data/Monster/mopmop03.OZJ", "start": 39812874, "end": 39826520}, {"filename": "/Data/Monster/npc_a_01.OZJ", "start": 39826520, "end": 39837269}, {"filename": "/Data/Monster/npc_a_02.OZJ", "start": 39837269, "end": 39847663}, {"filename": "/Data/Monster/npc_a_03.OZJ", "start": 39847663, "end": 39853610}, {"filename": "/Data/Monster/npc_a_04.OZJ", "start": 39853610, "end": 39861498}, {"filename": "/Data/Monster/npc_a_05.OZJ", "start": 39861498, "end": 39868934}, {"filename": "/Data/Monster/npc_a_06.OZJ", "start": 39868934, "end": 39874285}, {"filename": "/Data/Monster/npc_a_07.OZJ", "start": 39874285, "end": 39880701}, {"filename": "/Data/Monster/npc_a_08_01.OZJ", "start": 39880701, "end": 39890859}, {"filename": "/Data/Monster/npc_a_08_02.OZJ", "start": 39890859, "end": 39901005}, {"filename": "/Data/Monster/npc_a_09_01.OZJ", "start": 39901005, "end": 39911294}, {"filename": "/Data/Monster/npc_a_09_02.OZJ", "start": 39911294, "end": 39921608}, {"filename": "/Data/Monster/npc_a_clothes.OZT", "start": 39921608, "end": 39925752}, {"filename": "/Data/Monster/npc_b1.OZJ", "start": 39925752, "end": 39952037}, {"filename": "/Data/Monster/npc_g.OZJ", "start": 39952037, "end": 39979216}, {"filename": "/Data/Monster/ob2.OZJ", "start": 39979216, "end": 40003816}, {"filename": "/Data/Monster/ogre.OZJ", "start": 40003816, "end": 40032199}, {"filename": "/Data/Monster/p_d.OZJ", "start": 40032199, "end": 40059245}, {"filename": "/Data/Monster/p_d.OZT", "start": 40059245, "end": 40075677}, {"filename": "/Data/Monster/poisongolem.OZT", "start": 40075677, "end": 40337869}, {"filename": "/Data/Monster/poisongolem01.OZJ", "start": 40337869, "end": 40349703}, {"filename": "/Data/Monster/prizm.OZJ", "start": 40349703, "end": 40364111}, {"filename": "/Data/Monster/pt.OZJ", "start": 40364111, "end": 40407845}, {"filename": "/Data/Monster/pt2.OZJ", "start": 40407845, "end": 40451074}, {"filename": "/Data/Monster/pt3.OZJ", "start": 40451074, "end": 40483043}, {"filename": "/Data/Monster/remonelf.OZJ", "start": 40483043, "end": 40590972}, {"filename": "/Data/Monster/rt03.OZJ", "start": 40590972, "end": 40670503}, {"filename": "/Data/Monster/sander.OZJ", "start": 40670503, "end": 40718175}, {"filename": "/Data/Monster/sander.OZT", "start": 40718175, "end": 40722319}, {"filename": "/Data/Monster/sander2.OZJ", "start": 40722319, "end": 40737921}, {"filename": "/Data/Monster/satan_a.OZT", "start": 40737921, "end": 41000113}, {"filename": "/Data/Monster/seta.OZJ", "start": 41000113, "end": 41100556}, {"filename": "/Data/Monster/setb.OZT", "start": 41100556, "end": 41166140}, {"filename": "/Data/Monster/shadow_a.OZJ", "start": 41166140, "end": 41173647}, {"filename": "/Data/Monster/shadow_b.OZJ", "start": 41173647, "end": 41178929}, {"filename": "/Data/Monster/shadow_c.OZJ", "start": 41178929, "end": 41188180}, {"filename": "/Data/Monster/skR.OZJ", "start": 41188180, "end": 41228819}, {"filename": "/Data/Monster/smoke04.OZJ", "start": 41228819, "end": 41240186}, {"filename": "/Data/Monster/snake.OZJ", "start": 41240186, "end": 41247655}, {"filename": "/Data/Monster/snake02.OZT", "start": 41247655, "end": 41251799}, {"filename": "/Data/Monster/snow_queen01.OZJ", "start": 41251799, "end": 41272832}, {"filename": "/Data/Monster/snow_queen02.OZJ", "start": 41272832, "end": 41280503}, {"filename": "/Data/Monster/snow_queen03.OZJ", "start": 41280503, "end": 41286430}, {"filename": "/Data/Monster/snowking.OZJ", "start": 41286430, "end": 41307691}, {"filename": "/Data/Monster/snowman.OZJ", "start": 41307691, "end": 41332956}, {"filename": "/Data/Monster/snowman02.OZJ", "start": 41332956, "end": 41359499}, {"filename": "/Data/Monster/soram01.OZJ", "start": 41359499, "end": 41474710}, {"filename": "/Data/Monster/soram02.OZJ", "start": 41474710, "end": 41515418}, {"filename": "/Data/Monster/spider01.OZT", "start": 41515418, "end": 41523658}, {"filename": "/Data/Monster/spider02.OZJ", "start": 41523658, "end": 41533254}, {"filename": "/Data/Monster/st091.OZJ", "start": 41533254, "end": 41573056}, {"filename": "/Data/Monster/starp00.OZJ", "start": 41573056, "end": 41634894}, {"filename": "/Data/Monster/stmop01.OZJ", "start": 41634894, "end": 41712060}, {"filename": "/Data/Monster/stmop02.OZJ", "start": 41712060, "end": 41733425}, {"filename": "/Data/Monster/stmop03.OZJ", "start": 41733425, "end": 41749049}, {"filename": "/Data/Monster/ston1.OZJ", "start": 41749049, "end": 41761593}, {"filename": "/Data/Monster/stonegolem.OZJ", "start": 41761593, "end": 41892521}, {"filename": "/Data/Monster/sword05.OZJ", "start": 41892521, "end": 41898869}, {"filename": "/Data/Monster/tgh03.OZT", "start": 41898869, "end": 41907109}, {"filename": "/Data/Monster/towergate_r.OZJ", "start": 41907109, "end": 41909751}, {"filename": "/Data/Monster/treemonster01.OZT", "start": 41909751, "end": 41975335}, {"filename": "/Data/Monster/treemonster02.OZJ", "start": 41975335, "end": 42096871}, {"filename": "/Data/Monster/uo00.OZJ", "start": 42096871, "end": 42112006}, {"filename": "/Data/Monster/uo01.OZT", "start": 42112006, "end": 42120246}, {"filename": "/Data/Monster/w.OZJ", "start": 42120246, "end": 42179499}, {"filename": "/Data/Monster/w_merchant_a.OZJ", "start": 42179499, "end": 42213827}, {"filename": "/Data/Monster/wa1.OZJ", "start": 42213827, "end": 42249922}, {"filename": "/Data/Monster/wa2.OZJ", "start": 42249922, "end": 42290329}, {"filename": "/Data/Monster/wa3.OZJ", "start": 42290329, "end": 42335181}, {"filename": "/Data/Monster/weapon64.bmd", "start": 42335181, "end": 42366731}, {"filename": "/Data/Monster/wheel.OZJ", "start": 42366731, "end": 42436311}, {"filename": "/Data/Monster/wizard_gloves_02.OZJ", "start": 42436311, "end": 42444717}, {"filename": "/Data/Monster/wizard_head_02.OZJ", "start": 42444717, "end": 42457007}, {"filename": "/Data/Monster/wizard_lower_02.OZJ", "start": 42457007, "end": 42468844}, {"filename": "/Data/Monster/wizard_upper_02.OZJ", "start": 42468844, "end": 42478052}, {"filename": "/Data/Monster/wolf01.OZJ", "start": 42478052, "end": 42521276}, {"filename": "/Data/Monster/wolf03.OZT", "start": 42521276, "end": 42586860}, {"filename": "/Data/Monster/wolfa01.OZJ", "start": 42586860, "end": 42626762}, {"filename": "/Data/Monster/wolfa02.OZJ", "start": 42626762, "end": 42666079}, {"filename": "/Data/Monster/wolfa02.OZT", "start": 42666079, "end": 42715279}, {"filename": "/Data/Monster/wolfbody.OZJ", "start": 42715279, "end": 42756161}, {"filename": "/Data/Monster/wwo.OZJ", "start": 42756161, "end": 42785068}, {"filename": "/Data/Music/Atlans.mp3", "start": 42785068, "end": 47311464}, {"filename": "/Data/Music/Cathedral.mp3", "start": 47311464, "end": 52330864}, {"filename": "/Data/Music/Devias.mp3", "start": 52330864, "end": 58620442}, {"filename": "/Data/Music/DuelArena.mp3", "start": 58620442, "end": 59506414}, {"filename": "/Data/Music/Dungeon.mp3", "start": 59506414, "end": 65336446}, {"filename": "/Data/Music/Icarus.mp3", "start": 65336446, "end": 68629445}, {"filename": "/Data/Music/Lorencia.mp3", "start": 68629445, "end": 73657622}, {"filename": "/Data/Music/MuTheme.mp3", "start": 73657622, "end": 78685799}, {"filename": "/Data/Music/Noria.mp3", "start": 78685799, "end": 83222199}, {"filename": "/Data/Music/PK_Field.mp3", "start": 83222199, "end": 84054672}, {"filename": "/Data/Music/Pub.mp3", "start": 84054672, "end": 87347226}, {"filename": "/Data/Music/devil_square_intro.mp3", "start": 87347226, "end": 88277501}, {"filename": "/Data/Music/devil_square_outro.mp3", "start": 88277501, "end": 90125197}, {"filename": "/Data/Music/login_theme.mp3", "start": 90125197, "end": 92944829}, {"filename": "/Data/Music/lost_tower_a.mp3", "start": 92944829, "end": 96979705}, {"filename": "/Data/Music/lost_tower_b.mp3", "start": 96979705, "end": 100067486}, {"filename": "/Data/Music/main_theme.mp3", "start": 100067486, "end": 102217784}, {"filename": "/Data/Music/tarkan.mp3", "start": 102217784, "end": 105267112}, {"filename": "/Data/NPC/BloodCastle01.bmd", "start": 105267112, "end": 105352618}, {"filename": "/Data/NPC/BloodCastle02.bmd", "start": 105352618, "end": 105441353}, {"filename": "/Data/NPC/Breeder.bmd", "start": 105441353, "end": 105568569}, {"filename": "/Data/NPC/DeviasTrader01.bmd", "start": 105568569, "end": 105663825}, {"filename": "/Data/NPC/DevilNpc01.bmd", "start": 105663825, "end": 105713117}, {"filename": "/Data/NPC/Elf01.bmd", "start": 105713117, "end": 105780549}, {"filename": "/Data/NPC/ElfMerchant01.bmd", "start": 105780549, "end": 105847981}, {"filename": "/Data/NPC/ElfWizard01.bmd", "start": 105847981, "end": 105942176}, {"filename": "/Data/NPC/Female01.bmd", "start": 105942176, "end": 105984994}, {"filename": "/Data/NPC/FemaleBoots01.bmd", "start": 105984994, "end": 105999218}, {"filename": "/Data/NPC/FemaleBoots02.bmd", "start": 105999218, "end": 106012010}, {"filename": "/Data/NPC/FemaleHead01.bmd", "start": 106012010, "end": 106023642}, {"filename": "/Data/NPC/FemaleHead02.bmd", "start": 106023642, "end": 106035274}, {"filename": "/Data/NPC/FemaleLower01.bmd", "start": 106035274, "end": 106045968}, {"filename": "/Data/NPC/FemaleLower02.bmd", "start": 106045968, "end": 106059182}, {"filename": "/Data/NPC/FemaleUpper01.bmd", "start": 106059182, "end": 106084420}, {"filename": "/Data/NPC/FemaleUpper02.bmd", "start": 106084420, "end": 106108104}, {"filename": "/Data/NPC/Girl01.bmd", "start": 106108104, "end": 106141533}, {"filename": "/Data/NPC/GirlHead01.bmd", "start": 106141533, "end": 106151643}, {"filename": "/Data/NPC/GirlHead02.bmd", "start": 106151643, "end": 106161753}, {"filename": "/Data/NPC/GirlLower01.bmd", "start": 106161753, "end": 106179523}, {"filename": "/Data/NPC/GirlLower02.bmd", "start": 106179523, "end": 106187805}, {"filename": "/Data/NPC/GirlUpper01.bmd", "start": 106187805, "end": 106210757}, {"filename": "/Data/NPC/GirlUpper02.bmd", "start": 106210757, "end": 106232395}, {"filename": "/Data/NPC/Man01.bmd", "start": 106232395, "end": 106252930}, {"filename": "/Data/NPC/ManBoots01.bmd", "start": 106252930, "end": 106264788}, {"filename": "/Data/NPC/ManBoots02.bmd", "start": 106264788, "end": 106277174}, {"filename": "/Data/NPC/ManGloves01.bmd", "start": 106277174, "end": 106291179}, {"filename": "/Data/NPC/ManGloves02.bmd", "start": 106291179, "end": 106305136}, {"filename": "/Data/NPC/ManHead01.bmd", "start": 106305136, "end": 106315594}, {"filename": "/Data/NPC/ManHead02.bmd", "start": 106315594, "end": 106326256}, {"filename": "/Data/NPC/ManUpper01.bmd", "start": 106326256, "end": 106351098}, {"filename": "/Data/NPC/ManUpper02.bmd", "start": 106351098, "end": 106378492}, {"filename": "/Data/NPC/Master01.bmd", "start": 106378492, "end": 106479795}, {"filename": "/Data/NPC/MixNpc01.bmd", "start": 106479795, "end": 106544932}, {"filename": "/Data/NPC/Sevina01.bmd", "start": 106544932, "end": 106627640}, {"filename": "/Data/NPC/Smith01.bmd", "start": 106627640, "end": 106743092}, {"filename": "/Data/NPC/SnowMerchant01.bmd", "start": 106743092, "end": 106836108}, {"filename": "/Data/NPC/SnowSmith01.bmd", "start": 106836108, "end": 106936733}, {"filename": "/Data/NPC/SnowWizard01.bmd", "start": 106936733, "end": 107015640}, {"filename": "/Data/NPC/Storage01.bmd", "start": 107015640, "end": 107184075}, {"filename": "/Data/NPC/Tournament01.bmd", "start": 107184075, "end": 107301221}, {"filename": "/Data/NPC/Wizard01.bmd", "start": 107301221, "end": 107401737}, {"filename": "/Data/NPC/agic_shop01.OZT", "start": 107401737, "end": 107409977}, {"filename": "/Data/NPC/birdnpc.OZJ", "start": 107409977, "end": 107450205}, {"filename": "/Data/NPC/blackhole.OZJ", "start": 107450205, "end": 107469487}, {"filename": "/Data/NPC/bnpc01.OZT", "start": 107469487, "end": 107502303}, {"filename": "/Data/NPC/bnpc02.OZT", "start": 107502303, "end": 107506447}, {"filename": "/Data/NPC/boots_07.OZJ", "start": 107506447, "end": 107515938}, {"filename": "/Data/NPC/boots_12.OZJ", "start": 107515938, "end": 107526516}, {"filename": "/Data/NPC/caterf.OZJ", "start": 107526516, "end": 107598817}, {"filename": "/Data/NPC/caterf2.OZJ", "start": 107598817, "end": 107677245}, {"filename": "/Data/NPC/crown.OZJ", "start": 107677245, "end": 107685508}, {"filename": "/Data/NPC/dksbody.OZT", "start": 107685508, "end": 107751092}, {"filename": "/Data/NPC/dkshelmet.OZJ", "start": 107751092, "end": 107761393}, {"filename": "/Data/NPC/dkswing.OZJ", "start": 107761393, "end": 107773537}, {"filename": "/Data/NPC/elder.OZJ", "start": 107773537, "end": 107869199}, {"filename": "/Data/NPC/fire_02.OZJ", "start": 107869199, "end": 107875038}, {"filename": "/Data/NPC/fire_03.OZJ", "start": 107875038, "end": 107882558}, {"filename": "/Data/NPC/foot.OZJ", "start": 107882558, "end": 107892373}, {"filename": "/Data/NPC/gggi01.OZJ", "start": 107892373, "end": 107909014}, {"filename": "/Data/NPC/gggi02.OZJ", "start": 107909014, "end": 107952578}, {"filename": "/Data/NPC/girl_a.OZJ", "start": 107952578, "end": 107975956}, {"filename": "/Data/NPC/girl_b.OZJ", "start": 107975956, "end": 108005473}, {"filename": "/Data/NPC/gloves_07.OZJ", "start": 108005473, "end": 108015624}, {"filename": "/Data/NPC/gloves_12.OZJ", "start": 108015624, "end": 108027144}, {"filename": "/Data/NPC/guard_gold2.OZJ", "start": 108027144, "end": 108093680}, {"filename": "/Data/NPC/guard_hair.OZT", "start": 108093680, "end": 108097824}, {"filename": "/Data/NPC/head_02.OZJ", "start": 108097824, "end": 108110108}, {"filename": "/Data/NPC/head_07.OZJ", "start": 108110108, "end": 108119059}, {"filename": "/Data/NPC/head_12.OZJ", "start": 108119059, "end": 108128833}, {"filename": "/Data/NPC/hide.OZJ", "start": 108128833, "end": 108133373}, {"filename": "/Data/NPC/hound_sword1.OZJ", "start": 108133373, "end": 108142861}, {"filename": "/Data/NPC/hpp.OZJ", "start": 108142861, "end": 108183348}, {"filename": "/Data/NPC/hugerock02.OZJ", "start": 108183348, "end": 108212742}, {"filename": "/Data/NPC/ju01_R.OZJ", "start": 108212742, "end": 108227151}, {"filename": "/Data/NPC/knifestone.OZJ", "start": 108227151, "end": 108246363}, {"filename": "/Data/NPC/lnn01.OZT", "start": 108246363, "end": 108279179}, {"filename": "/Data/NPC/lower_12.OZJ", "start": 108279179, "end": 108307592}, {"filename": "/Data/NPC/lplower.OZJ", "start": 108307592, "end": 108322454}, {"filename": "/Data/NPC/lptgq.OZT", "start": 108322454, "end": 108355270}, {"filename": "/Data/NPC/lpwing.OZJ", "start": 108355270, "end": 108365816}, {"filename": "/Data/NPC/magic_shop012.OZT", "start": 108365816, "end": 108374056}, {"filename": "/Data/NPC/magic_shop01a.OZJ", "start": 108374056, "end": 108399040}, {"filename": "/Data/NPC/magic_shop01b.OZJ", "start": 108399040, "end": 108424197}, {"filename": "/Data/NPC/magic_shop02.OZT", "start": 108424197, "end": 108428341}, {"filename": "/Data/NPC/magic_shop022.OZT", "start": 108428341, "end": 108432485}, {"filename": "/Data/NPC/man.OZJ", "start": 108432485, "end": 108474042}, {"filename": "/Data/NPC/merchant_moster_b01.OZJ", "start": 108474042, "end": 108514526}, {"filename": "/Data/NPC/model_npc_catapult_att.bmd", "start": 108514526, "end": 108773247}, {"filename": "/Data/NPC/model_npc_catapult_def.bmd", "start": 108773247, "end": 109035779}, {"filename": "/Data/NPC/mon_01.OZJ", "start": 109035779, "end": 109097847}, {"filename": "/Data/NPC/mon_011.OZJ", "start": 109097847, "end": 109155853}, {"filename": "/Data/NPC/mon_02.OZJ", "start": 109155853, "end": 109170573}, {"filename": "/Data/NPC/mon_022.OZJ", "start": 109170573, "end": 109184830}, {"filename": "/Data/NPC/ng01.OZJ", "start": 109184830, "end": 109265482}, {"filename": "/Data/NPC/npc.OZJ", "start": 109265482, "end": 109310366}, {"filename": "/Data/NPC/npc_mulyak.bmd", "start": 109310366, "end": 109374340}, {"filename": "/Data/NPC/npc_mulyak01.OZJ", "start": 109374340, "end": 109478626}, {"filename": "/Data/NPC/npcbarrier.bmd", "start": 109478626, "end": 109482076}, {"filename": "/Data/NPC/npccheckfloor.OZJ", "start": 109482076, "end": 109507491}, {"filename": "/Data/NPC/npccheckfloor.bmd", "start": 109507491, "end": 109539963}, {"filename": "/Data/NPC/npccheckfloor_r.OZJ", "start": 109539963, "end": 109548139}, {"filename": "/Data/NPC/npcclerk.bmd", "start": 109548139, "end": 109673166}, {"filename": "/Data/NPC/npccrown.bmd", "start": 109673166, "end": 109693692}, {"filename": "/Data/NPC/npcgateswitch.OZJ", "start": 109693692, "end": 109717929}, {"filename": "/Data/NPC/npcgateswitch.bmd", "start": 109717929, "end": 109733375}, {"filename": "/Data/NPC/npcsenatus.bmd", "start": 109733375, "end": 109864228}, {"filename": "/Data/NPC/ob.OZJ", "start": 109864228, "end": 109888891}, {"filename": "/Data/NPC/ob3.OZJ", "start": 109888891, "end": 109917003}, {"filename": "/Data/NPC/obj_donkey.bmd", "start": 109917003, "end": 110004431}, {"filename": "/Data/NPC/obj_flag.bmd", "start": 110004431, "end": 110009185}, {"filename": "/Data/NPC/receiptnpc_1.OZJ", "start": 110009185, "end": 110113155}, {"filename": "/Data/NPC/receiptnpc_2.OZT", "start": 110113155, "end": 110145971}, {"filename": "/Data/NPC/science.OZJ", "start": 110145971, "end": 110171857}, {"filename": "/Data/NPC/science02.OZT", "start": 110171857, "end": 110176001}, {"filename": "/Data/NPC/sebina.OZJ", "start": 110176001, "end": 110205013}, {"filename": "/Data/NPC/skin_barbarian_01.OZJ", "start": 110205013, "end": 110263303}, {"filename": "/Data/NPC/skin_special_01.OZJ", "start": 110263303, "end": 110337482}, {"filename": "/Data/NPC/smith.OZJ", "start": 110337482, "end": 110363429}, {"filename": "/Data/NPC/snow_girl.OZJ", "start": 110363429, "end": 110397022}, {"filename": "/Data/NPC/snow_girl02.OZT", "start": 110397022, "end": 110401166}, {"filename": "/Data/NPC/snows.OZJ", "start": 110401166, "end": 110426621}, {"filename": "/Data/NPC/tile_02.OZJ", "start": 110426621, "end": 110436993}, {"filename": "/Data/NPC/tile_03.OZJ", "start": 110436993, "end": 110446741}, {"filename": "/Data/NPC/towergate_r2.OZJ", "start": 110446741, "end": 110455004}, {"filename": "/Data/NPC/treasure_chest.OZJ", "start": 110455004, "end": 110484761}, {"filename": "/Data/NPC/twlight.OZJ", "start": 110484761, "end": 110528041}, {"filename": "/Data/NPC/twlight2.OZJ", "start": 110528041, "end": 110581669}, {"filename": "/Data/NPC/upper_02_m.OZJ", "start": 110581669, "end": 110604076}, {"filename": "/Data/NPC/upper_02b_m.OZT", "start": 110604076, "end": 110608220}, {"filename": "/Data/NPC/upper_12.OZJ", "start": 110608220, "end": 110633677}, {"filename": "/Data/NPC/w_merchant_a.OZJ", "start": 110633677, "end": 110665435}, {"filename": "/Data/NPC/w_merchant_b.OZJ", "start": 110665435, "end": 110695627}, {"filename": "/Data/NPC/warp01.bmd", "start": 110695627, "end": 110704557}, {"filename": "/Data/NPC/warp02.bmd", "start": 110704557, "end": 110713487}, {"filename": "/Data/NPC/warp03.bmd", "start": 110713487, "end": 110713881}, {"filename": "/Data/NPC/yellow_jewel.OZJ", "start": 110713881, "end": 110718822}, {"filename": "/Data/Object1/Beer01.bmd", "start": 110718822, "end": 110739888}, {"filename": "/Data/Object1/Beer02.bmd", "start": 110739888, "end": 110761201}, {"filename": "/Data/Object1/Beer03.bmd", "start": 110761201, "end": 110770951}, {"filename": "/Data/Object1/Bird01.bmd", "start": 110770951, "end": 110784193}, {"filename": "/Data/Object1/Bonfire01.bmd", "start": 110784193, "end": 110795698}, {"filename": "/Data/Object1/Bridge01.bmd", "start": 110795698, "end": 110813209}, {"filename": "/Data/Object1/BridgeStone01.bmd", "start": 110813209, "end": 110820984}, {"filename": "/Data/Object1/Butterfly.OZT", "start": 110820984, "end": 110825128}, {"filename": "/Data/Object1/Butterfly01.bmd", "start": 110825128, "end": 110828536}, {"filename": "/Data/Object1/Candle01.bmd", "start": 110828536, "end": 110841252}, {"filename": "/Data/Object1/Cannon01.bmd", "start": 110841252, "end": 110857102}, {"filename": "/Data/Object1/Cannon02.bmd", "start": 110857102, "end": 110870952}, {"filename": "/Data/Object1/Cannon03.bmd", "start": 110870952, "end": 110877898}, {"filename": "/Data/Object1/Carriage01.bmd", "start": 110877898, "end": 110910765}, {"filename": "/Data/Object1/Carriage02.bmd", "start": 110910765, "end": 110934382}, {"filename": "/Data/Object1/Carriage03.bmd", "start": 110934382, "end": 110965735}, {"filename": "/Data/Object1/Carriage04.bmd", "start": 110965735, "end": 111000371}, {"filename": "/Data/Object1/Curtain01.bmd", "start": 111000371, "end": 111011593}, {"filename": "/Data/Object1/DoungeonGate01.bmd", "start": 111011593, "end": 111042129}, {"filename": "/Data/Object1/Fence01.bmd", "start": 111042129, "end": 111045719}, {"filename": "/Data/Object1/Fence02.bmd", "start": 111045719, "end": 111047413}, {"filename": "/Data/Object1/Fence03.bmd", "start": 111047413, "end": 111048523}, {"filename": "/Data/Object1/Fence04.bmd", "start": 111048523, "end": 111049633}, {"filename": "/Data/Object1/FireLight01.bmd", "start": 111049633, "end": 111054843}, {"filename": "/Data/Object1/FireLight02.bmd", "start": 111054843, "end": 111058520}, {"filename": "/Data/Object1/Fish01.bmd", "start": 111058520, "end": 111070869}, {"filename": "/Data/Object1/Furniture01.bmd", "start": 111070869, "end": 111095484}, {"filename": "/Data/Object1/Furniture02.bmd", "start": 111095484, "end": 111133880}, {"filename": "/Data/Object1/Furniture03.bmd", "start": 111133880, "end": 111137838}, {"filename": "/Data/Object1/Furniture04.bmd", "start": 111137838, "end": 111141792}, {"filename": "/Data/Object1/Furniture05.bmd", "start": 111141792, "end": 111144990}, {"filename": "/Data/Object1/Furniture06.bmd", "start": 111144990, "end": 111150066}, {"filename": "/Data/Object1/Furniture07.bmd", "start": 111150066, "end": 111154544}, {"filename": "/Data/Object1/Grass01.bmd", "start": 111154544, "end": 111167758}, {"filename": "/Data/Object1/Grass02.bmd", "start": 111167758, "end": 111180972}, {"filename": "/Data/Object1/Grass03.bmd", "start": 111180972, "end": 111195633}, {"filename": "/Data/Object1/Grass04.bmd", "start": 111195633, "end": 111210294}, {"filename": "/Data/Object1/Grass05.bmd", "start": 111210294, "end": 111223013}, {"filename": "/Data/Object1/Grass06.bmd", "start": 111223013, "end": 111235732}, {"filename": "/Data/Object1/Grass07.bmd", "start": 111235732, "end": 111249308}, {"filename": "/Data/Object1/Grass08.bmd", "start": 111249308, "end": 111255248}, {"filename": "/Data/Object1/Hanging01.bmd", "start": 111255248, "end": 111272487}, {"filename": "/Data/Object1/House01.bmd", "start": 111272487, "end": 111287862}, {"filename": "/Data/Object1/House02.bmd", "start": 111287862, "end": 111303262}, {"filename": "/Data/Object1/House03.bmd", "start": 111303262, "end": 111328286}, {"filename": "/Data/Object1/House04.bmd", "start": 111328286, "end": 111371956}, {"filename": "/Data/Object1/House05.bmd", "start": 111371956, "end": 111406033}, {"filename": "/Data/Object1/HouseEtc01.bmd", "start": 111406033, "end": 111409417}, {"filename": "/Data/Object1/HouseEtc02.bmd", "start": 111409417, "end": 111430783}, {"filename": "/Data/Object1/HouseEtc03.bmd", "start": 111430783, "end": 111432487}, {"filename": "/Data/Object1/HouseWall01.bmd", "start": 111432487, "end": 111436177}, {"filename": "/Data/Object1/HouseWall02.bmd", "start": 111436177, "end": 111443129}, {"filename": "/Data/Object1/HouseWall03.bmd", "start": 111443129, "end": 111445007}, {"filename": "/Data/Object1/HouseWall04.bmd", "start": 111445007, "end": 111450813}, {"filename": "/Data/Object1/HouseWall05.bmd", "start": 111450813, "end": 111453885}, {"filename": "/Data/Object1/HouseWall06.bmd", "start": 111453885, "end": 111456713}, {"filename": "/Data/Object1/Light01.bmd", "start": 111456713, "end": 111457907}, {"filename": "/Data/Object1/Light02.bmd", "start": 111457907, "end": 111459101}, {"filename": "/Data/Object1/Light03.bmd", "start": 111459101, "end": 111460295}, {"filename": "/Data/Object1/MerchantAnimal01.bmd", "start": 111460295, "end": 111597580}, {"filename": "/Data/Object1/MerchantAnimal02.bmd", "start": 111597580, "end": 111668620}, {"filename": "/Data/Object1/PoseBox01.bmd", "start": 111668620, "end": 111669422}, {"filename": "/Data/Object1/Ship01.bmd", "start": 111669422, "end": 111756853}, {"filename": "/Data/Object1/Sign01.bmd", "start": 111756853, "end": 111762296}, {"filename": "/Data/Object1/Sign02.bmd", "start": 111762296, "end": 111765122}, {"filename": "/Data/Object1/Stair01.bmd", "start": 111765122, "end": 111771764}, {"filename": "/Data/Object1/SteelDoor01.bmd", "start": 111771764, "end": 111777372}, {"filename": "/Data/Object1/SteelStatue01.bmd", "start": 111777372, "end": 111783506}, {"filename": "/Data/Object1/SteelWall01.bmd", "start": 111783506, "end": 111788866}, {"filename": "/Data/Object1/SteelWall02.bmd", "start": 111788866, "end": 111795427}, {"filename": "/Data/Object1/SteelWall03.bmd", "start": 111795427, "end": 111797395}, {"filename": "/Data/Object1/Stone01.bmd", "start": 111797395, "end": 111813519}, {"filename": "/Data/Object1/Stone02.bmd", "start": 111813519, "end": 111829575}, {"filename": "/Data/Object1/Stone03.bmd", "start": 111829575, "end": 111836689}, {"filename": "/Data/Object1/Stone04.bmd", "start": 111836689, "end": 111840991}, {"filename": "/Data/Object1/Stone05.bmd", "start": 111840991, "end": 111852073}, {"filename": "/Data/Object1/StoneMuWall01.bmd", "start": 111852073, "end": 111880183}, {"filename": "/Data/Object1/StoneMuWall02.bmd", "start": 111880183, "end": 111885545}, {"filename": "/Data/Object1/StoneMuWall03.bmd", "start": 111885545, "end": 111891185}, {"filename": "/Data/Object1/StoneMuWall04.bmd", "start": 111891185, "end": 111917433}, {"filename": "/Data/Object1/StoneStatue01.bmd", "start": 111917433, "end": 111925955}, {"filename": "/Data/Object1/StoneStatue02.bmd", "start": 111925955, "end": 111935661}, {"filename": "/Data/Object1/StoneStatue03.bmd", "start": 111935661, "end": 111958189}, {"filename": "/Data/Object1/StoneWall01.bmd", "start": 111958189, "end": 111985333}, {"filename": "/Data/Object1/StoneWall02.bmd", "start": 111985333, "end": 112012477}, {"filename": "/Data/Object1/StoneWall03.bmd", "start": 112012477, "end": 112038816}, {"filename": "/Data/Object1/StoneWall04.bmd", "start": 112038816, "end": 112047681}, {"filename": "/Data/Object1/StoneWall05.bmd", "start": 112047681, "end": 112053412}, {"filename": "/Data/Object1/StoneWall06.bmd", "start": 112053412, "end": 112064782}, {"filename": "/Data/Object1/Straw01.bmd", "start": 112064782, "end": 112075846}, {"filename": "/Data/Object1/Straw02.bmd", "start": 112075846, "end": 112107045}, {"filename": "/Data/Object1/StreetLight01.bmd", "start": 112107045, "end": 112119569}, {"filename": "/Data/Object1/Tent01.bmd", "start": 112119569, "end": 112129018}, {"filename": "/Data/Object1/TileGround03.OZJ", "start": 112129018, "end": 112154352}, {"filename": "/Data/Object1/Tomb01.bmd", "start": 112154352, "end": 112158657}, {"filename": "/Data/Object1/Tomb02.bmd", "start": 112158657, "end": 112162459}, {"filename": "/Data/Object1/Tomb03.bmd", "start": 112162459, "end": 112165413}, {"filename": "/Data/Object1/TreasureChest01.bmd", "start": 112165413, "end": 112172472}, {"filename": "/Data/Object1/TreasureDrum01.bmd", "start": 112172472, "end": 112178066}, {"filename": "/Data/Object1/Tree01.bmd", "start": 112178066, "end": 112228157}, {"filename": "/Data/Object1/Tree02.bmd", "start": 112228157, "end": 112318790}, {"filename": "/Data/Object1/Tree03.bmd", "start": 112318790, "end": 112344620}, {"filename": "/Data/Object1/Tree04.bmd", "start": 112344620, "end": 112370810}, {"filename": "/Data/Object1/Tree05.bmd", "start": 112370810, "end": 112379128}, {"filename": "/Data/Object1/Tree06.bmd", "start": 112379128, "end": 112388566}, {"filename": "/Data/Object1/Tree07.bmd", "start": 112388566, "end": 112397302}, {"filename": "/Data/Object1/Tree08.bmd", "start": 112397302, "end": 112413760}, {"filename": "/Data/Object1/Tree09.bmd", "start": 112413760, "end": 112436206}, {"filename": "/Data/Object1/Tree10.bmd", "start": 112436206, "end": 112477187}, {"filename": "/Data/Object1/Tree11.bmd", "start": 112477187, "end": 112500466}, {"filename": "/Data/Object1/Tree12.bmd", "start": 112500466, "end": 112546666}, {"filename": "/Data/Object1/Tree13.bmd", "start": 112546666, "end": 112593685}, {"filename": "/Data/Object1/Tree_a.OZT", "start": 112593685, "end": 112659269}, {"filename": "/Data/Object1/Waterspout01.bmd", "start": 112659269, "end": 112722415}, {"filename": "/Data/Object1/Well01.bmd", "start": 112722415, "end": 112760085}, {"filename": "/Data/Object1/Well02.bmd", "start": 112760085, "end": 112771775}, {"filename": "/Data/Object1/Well03.bmd", "start": 112771775, "end": 112790022}, {"filename": "/Data/Object1/Well04.bmd", "start": 112790022, "end": 112825201}, {"filename": "/Data/Object1/angel_stone_statue.OZJ", "start": 112825201, "end": 112844437}, {"filename": "/Data/Object1/apple.OZJ", "start": 112844437, "end": 112849553}, {"filename": "/Data/Object1/badge_01.OZJ", "start": 112849553, "end": 112855188}, {"filename": "/Data/Object1/badge_02.OZT", "start": 112855188, "end": 112863428}, {"filename": "/Data/Object1/badge_03.OZT", "start": 112863428, "end": 112879860}, {"filename": "/Data/Object1/bird.OZT", "start": 112879860, "end": 112888100}, {"filename": "/Data/Object1/bookshelf.OZJ", "start": 112888100, "end": 112926486}, {"filename": "/Data/Object1/bottle.OZT", "start": 112926486, "end": 112930630}, {"filename": "/Data/Object1/bridge_01.OZJ", "start": 112930630, "end": 112976985}, {"filename": "/Data/Object1/bridge_shadow01.OZT", "start": 112976985, "end": 112977289}, {"filename": "/Data/Object1/c_wall04.OZJ", "start": 112977289, "end": 113005087}, {"filename": "/Data/Object1/c_wall05.OZJ", "start": 113005087, "end": 113037648}, {"filename": "/Data/Object1/c_wall06.OZJ", "start": 113037648, "end": 113070693}, {"filename": "/Data/Object1/candle.OZJ", "start": 113070693, "end": 113078321}, {"filename": "/Data/Object1/candle2.OZJ", "start": 113078321, "end": 113083734}, {"filename": "/Data/Object1/chair2.OZT", "start": 113083734, "end": 113087878}, {"filename": "/Data/Object1/copra_gate.OZJ", "start": 113087878, "end": 113108771}, {"filename": "/Data/Object1/desk_big.OZJ", "start": 113108771, "end": 113148799}, {"filename": "/Data/Object1/doorknob.OZT", "start": 113148799, "end": 113149871}, {"filename": "/Data/Object1/drum.OZJ", "start": 113149871, "end": 113174924}, {"filename": "/Data/Object1/fire_01.OZJ", "start": 113174924, "end": 113181137}, {"filename": "/Data/Object1/fire_02.OZJ", "start": 113181137, "end": 113186976}, {"filename": "/Data/Object1/fire_light_01.OZT", "start": 113186976, "end": 113189328}, {"filename": "/Data/Object1/fish.OZT", "start": 113189328, "end": 113197568}, {"filename": "/Data/Object1/grass_01.OZT", "start": 113197568, "end": 113205808}, {"filename": "/Data/Object1/grave_01.OZJ", "start": 113205808, "end": 113228127}, {"filename": "/Data/Object1/grave_02.OZJ", "start": 113228127, "end": 113256844}, {"filename": "/Data/Object1/horse_drawn_01.OZJ", "start": 113256844, "end": 113329900}, {"filename": "/Data/Object1/horse_drawn_02.OZT", "start": 113329900, "end": 113334044}, {"filename": "/Data/Object1/horse_drawn_03.OZJ", "start": 113334044, "end": 113343179}, {"filename": "/Data/Object1/jar_01.OZJ", "start": 113343179, "end": 113362231}, {"filename": "/Data/Object1/joint.OZJ", "start": 113362231, "end": 113368773}, {"filename": "/Data/Object1/light.OZT", "start": 113368773, "end": 113385205}, {"filename": "/Data/Object1/light2.OZJ", "start": 113385205, "end": 113390674}, {"filename": "/Data/Object1/light3.OZJ", "start": 113390674, "end": 113396252}, {"filename": "/Data/Object1/light_02.OZJ", "start": 113396252, "end": 113401262}, {"filename": "/Data/Object1/merchant_moster_a01.OZJ", "start": 113401262, "end": 113445547}, {"filename": "/Data/Object1/merchant_moster_a02.OZT", "start": 113445547, "end": 113461979}, {"filename": "/Data/Object1/merchant_moster_b01.OZJ", "start": 113461979, "end": 113489208}, {"filename": "/Data/Object1/mushroom.OZJ", "start": 113489208, "end": 113495470}, {"filename": "/Data/Object1/notice.OZJ", "start": 113495470, "end": 113507342}, {"filename": "/Data/Object1/plate.OZJ", "start": 113507342, "end": 113513738}, {"filename": "/Data/Object1/plate2.OZJ", "start": 113513738, "end": 113520535}, {"filename": "/Data/Object1/pot.OZJ", "start": 113520535, "end": 113527793}, {"filename": "/Data/Object1/pot2.OZJ", "start": 113527793, "end": 113534817}, {"filename": "/Data/Object1/pot3.OZT", "start": 113534817, "end": 113538961}, {"filename": "/Data/Object1/reagon_waterspout.OZJ", "start": 113538961, "end": 113558169}, {"filename": "/Data/Object1/ship01.OZJ", "start": 113558169, "end": 113591277}, {"filename": "/Data/Object1/ship03.OZJ", "start": 113591277, "end": 113601064}, {"filename": "/Data/Object1/ship04.OZJ", "start": 113601064, "end": 113617078}, {"filename": "/Data/Object1/ship05.OZJ", "start": 113617078, "end": 113623132}, {"filename": "/Data/Object1/ship05.OZT", "start": 113623132, "end": 113631372}, {"filename": "/Data/Object1/ship06.OZJ", "start": 113631372, "end": 113636659}, {"filename": "/Data/Object1/ship06.OZT", "start": 113636659, "end": 113636963}, {"filename": "/Data/Object1/ship07.OZJ", "start": 113636963, "end": 113676988}, {"filename": "/Data/Object1/ship07.OZT", "start": 113676988, "end": 113678060}, {"filename": "/Data/Object1/signboard.OZT", "start": 113678060, "end": 113686300}, {"filename": "/Data/Object1/steel.OZJ", "start": 113686300, "end": 113691405}, {"filename": "/Data/Object1/steel_barred_a.OZT", "start": 113691405, "end": 113724221}, {"filename": "/Data/Object1/steel_barred_b.OZJ", "start": 113724221, "end": 113730581}, {"filename": "/Data/Object1/steel_barred_door.OZT", "start": 113730581, "end": 113763397}, {"filename": "/Data/Object1/ston01.OZJ", "start": 113763397, "end": 113785724}, {"filename": "/Data/Object1/ston02.OZJ", "start": 113785724, "end": 113816349}, {"filename": "/Data/Object1/ston02.OZT", "start": 113816349, "end": 113820493}, {"filename": "/Data/Object1/ston03.OZJ", "start": 113820493, "end": 113825033}, {"filename": "/Data/Object1/stone_statue01.OZJ", "start": 113825033, "end": 113842947}, {"filename": "/Data/Object1/stone_statue02.OZJ", "start": 113842947, "end": 113862711}, {"filename": "/Data/Object1/streetlight.OZJ", "start": 113862711, "end": 113876471}, {"filename": "/Data/Object1/streetlight_brightness2.OZJ", "start": 113876471, "end": 113882344}, {"filename": "/Data/Object1/tile_01.OZJ", "start": 113882344, "end": 113892142}, {"filename": "/Data/Object1/tile_02.OZJ", "start": 113892142, "end": 113902514}, {"filename": "/Data/Object1/tile_03.OZJ", "start": 113902514, "end": 113912262}, {"filename": "/Data/Object1/tile_house01.OZJ", "start": 113912262, "end": 113950394}, {"filename": "/Data/Object1/tile_space01.OZJ", "start": 113950394, "end": 113956492}, {"filename": "/Data/Object1/tile_ston01.OZJ", "start": 113956492, "end": 113983319}, {"filename": "/Data/Object1/tile_ston04.OZJ", "start": 113983319, "end": 114008953}, {"filename": "/Data/Object1/tile_ston05.OZJ", "start": 114008953, "end": 114032443}, {"filename": "/Data/Object1/tile_ston06.OZJ", "start": 114032443, "end": 114068706}, {"filename": "/Data/Object1/tile_ston07.OZT", "start": 114068706, "end": 114134290}, {"filename": "/Data/Object1/tile_windows01.OZJ", "start": 114134290, "end": 114146358}, {"filename": "/Data/Object1/tile_wood01.OZJ", "start": 114146358, "end": 114180099}, {"filename": "/Data/Object1/tile_wood02.OZJ", "start": 114180099, "end": 114210953}, {"filename": "/Data/Object1/tile_wood03.OZJ", "start": 114210953, "end": 114233129}, {"filename": "/Data/Object1/tombstone.OZJ", "start": 114233129, "end": 114255310}, {"filename": "/Data/Object1/tombstone_big.OZJ", "start": 114255310, "end": 114281158}, {"filename": "/Data/Object1/treasure_chest.OZJ", "start": 114281158, "end": 114310915}, {"filename": "/Data/Object1/tree.OZJ", "start": 114310915, "end": 114326245}, {"filename": "/Data/Object1/tree_01.OZJ", "start": 114326245, "end": 114342146}, {"filename": "/Data/Object1/tree_01.OZT", "start": 114342146, "end": 114346290}, {"filename": "/Data/Object1/tree_02.OZJ", "start": 114346290, "end": 114367505}, {"filename": "/Data/Object1/tree_02.OZT", "start": 114367505, "end": 114371649}, {"filename": "/Data/Object1/tree_03.OZJ", "start": 114371649, "end": 114386358}, {"filename": "/Data/Object1/tree_04.OZJ", "start": 114386358, "end": 114392497}, {"filename": "/Data/Object1/tree_04.OZT", "start": 114392497, "end": 114408929}, {"filename": "/Data/Object1/tree_05.OZT", "start": 114408929, "end": 114425361}, {"filename": "/Data/Object1/tree_06.OZT", "start": 114425361, "end": 114490945}, {"filename": "/Data/Object1/tree_07.OZT", "start": 114490945, "end": 114495089}, {"filename": "/Data/Object1/tree_08.OZT", "start": 114495089, "end": 114499233}, {"filename": "/Data/Object1/tree_09.OZT", "start": 114499233, "end": 114507473}, {"filename": "/Data/Object1/tub.OZJ", "start": 114507473, "end": 114522252}, {"filename": "/Data/Object1/well.OZJ", "start": 114522252, "end": 114558525}, {"filename": "/Data/Object1/winecup.OZJ", "start": 114558525, "end": 114564873}, {"filename": "/Data/Object10/Javelins03.OZJ", "start": 114564873, "end": 114570794}, {"filename": "/Data/Object10/Object01.bmd", "start": 114570794, "end": 114594880}, {"filename": "/Data/Object10/Object02.bmd", "start": 114594880, "end": 114604990}, {"filename": "/Data/Object10/Object03.bmd", "start": 114604990, "end": 114664419}, {"filename": "/Data/Object10/Object04.bmd", "start": 114664419, "end": 114740389}, {"filename": "/Data/Object10/Object05.bmd", "start": 114740389, "end": 114741655}, {"filename": "/Data/Object10/Object06.bmd", "start": 114741655, "end": 114744679}, {"filename": "/Data/Object10/Object07.bmd", "start": 114744679, "end": 114746407}, {"filename": "/Data/Object10/bacc00.OZJ", "start": 114746407, "end": 114808599}, {"filename": "/Data/Object10/bacc01.OZJ", "start": 114808599, "end": 114832225}, {"filename": "/Data/Object10/boots_11.OZJ", "start": 114832225, "end": 114845369}, {"filename": "/Data/Object10/gloves_11.OZJ", "start": 114845369, "end": 114859337}, {"filename": "/Data/Object10/guard_hair.OZT", "start": 114859337, "end": 114863481}, {"filename": "/Data/Object10/head_11.OZJ", "start": 114863481, "end": 114874563}, {"filename": "/Data/Object10/hide.OZJ", "start": 114874563, "end": 114879103}, {"filename": "/Data/Object10/kni00.OZJ", "start": 114879103, "end": 114919946}, {"filename": "/Data/Object10/kni01.OZJ", "start": 114919946, "end": 114943764}, {"filename": "/Data/Object10/lower_11.OZJ", "start": 114943764, "end": 114978611}, {"filename": "/Data/Object10/shield06.OZJ", "start": 114978611, "end": 115003368}, {"filename": "/Data/Object10/upper_11.OZJ", "start": 115003368, "end": 115040275}, {"filename": "/Data/Object11/Object01.bmd", "start": 115040275, "end": 115041469}, {"filename": "/Data/Object11/Object02.bmd", "start": 115041469, "end": 115042663}, {"filename": "/Data/Object11/Object03.bmd", "start": 115042663, "end": 115043857}, {"filename": "/Data/Object11/Object04.bmd", "start": 115043857, "end": 115045051}, {"filename": "/Data/Object11/Object05.bmd", "start": 115045051, "end": 115046245}, {"filename": "/Data/Object11/Object06.bmd", "start": 115046245, "end": 115047439}, {"filename": "/Data/Object11/Object07.bmd", "start": 115047439, "end": 115048517}, {"filename": "/Data/Object11/Object08.bmd", "start": 115048517, "end": 115053513}, {"filename": "/Data/Object11/Object09.bmd", "start": 115053513, "end": 115059373}, {"filename": "/Data/Object11/Object10.bmd", "start": 115059373, "end": 115065233}, {"filename": "/Data/Object11/Object11.bmd", "start": 115065233, "end": 115081524}, {"filename": "/Data/Object11/Object13.bmd", "start": 115081524, "end": 115116158}, {"filename": "/Data/Object11/Object14.bmd", "start": 115116158, "end": 115125792}, {"filename": "/Data/Object11/Object15.bmd", "start": 115125792, "end": 115175119}, {"filename": "/Data/Object11/Object16.bmd", "start": 115175119, "end": 115176197}, {"filename": "/Data/Object11/cloud.OZJ", "start": 115176197, "end": 115185461}, {"filename": "/Data/Object11/cloud.bmd", "start": 115185461, "end": 115188275}, {"filename": "/Data/Object11/gyg_R.OZJ", "start": 115188275, "end": 115230011}, {"filename": "/Data/Object11/test12_H.OZJ", "start": 115230011, "end": 115231927}, {"filename": "/Data/Object11/top02_R.OZJ", "start": 115231927, "end": 115254934}, {"filename": "/Data/Object11/top03_B.OZJ", "start": 115254934, "end": 115266301}, {"filename": "/Data/Object11/top04_B.OZJ", "start": 115266301, "end": 115278306}, {"filename": "/Data/Object12/Crow01.bmd", "start": 115278306, "end": 115285884}, {"filename": "/Data/Object12/Gate01.bmd", "start": 115285884, "end": 115291410}, {"filename": "/Data/Object12/Gate02.bmd", "start": 115291410, "end": 115294404}, {"filename": "/Data/Object12/Object01.bmd", "start": 115294404, "end": 115299902}, {"filename": "/Data/Object12/Object02.bmd", "start": 115299902, "end": 115304968}, {"filename": "/Data/Object12/Object03.bmd", "start": 115304968, "end": 115309682}, {"filename": "/Data/Object12/Object04.bmd", "start": 115309682, "end": 115314748}, {"filename": "/Data/Object12/Object05.bmd", "start": 115314748, "end": 115320246}, {"filename": "/Data/Object12/Object06.bmd", "start": 115320246, "end": 115320636}, {"filename": "/Data/Object12/Object07.bmd", "start": 115320636, "end": 115321246}, {"filename": "/Data/Object12/Object08.bmd", "start": 115321246, "end": 115322178}, {"filename": "/Data/Object12/Object09.bmd", "start": 115322178, "end": 115356762}, {"filename": "/Data/Object12/Object10.bmd", "start": 115356762, "end": 115357952}, {"filename": "/Data/Object12/Object11.bmd", "start": 115357952, "end": 115429575}, {"filename": "/Data/Object12/Object12.bmd", "start": 115429575, "end": 115436410}, {"filename": "/Data/Object12/Object13.bmd", "start": 115436410, "end": 115438185}, {"filename": "/Data/Object12/Object14.bmd", "start": 115438185, "end": 115477059}, {"filename": "/Data/Object12/Object15.bmd", "start": 115477059, "end": 115490559}, {"filename": "/Data/Object12/Object16.bmd", "start": 115490559, "end": 115513515}, {"filename": "/Data/Object12/Object17.bmd", "start": 115513515, "end": 115641107}, {"filename": "/Data/Object12/Object18.bmd", "start": 115641107, "end": 115646213}, {"filename": "/Data/Object12/Object19.bmd", "start": 115646213, "end": 115647871}, {"filename": "/Data/Object12/Object20.bmd", "start": 115647871, "end": 115649045}, {"filename": "/Data/Object12/Object21.bmd", "start": 115649045, "end": 115651892}, {"filename": "/Data/Object12/Object22.bmd", "start": 115651892, "end": 115659034}, {"filename": "/Data/Object12/Object23.bmd", "start": 115659034, "end": 115661896}, {"filename": "/Data/Object12/Object24.bmd", "start": 115661896, "end": 115668840}, {"filename": "/Data/Object12/Object25.bmd", "start": 115668840, "end": 115669772}, {"filename": "/Data/Object12/Object26.bmd", "start": 115669772, "end": 115676869}, {"filename": "/Data/Object12/Object27.bmd", "start": 115676869, "end": 115710771}, {"filename": "/Data/Object12/Object28.bmd", "start": 115710771, "end": 115716173}, {"filename": "/Data/Object12/Object29.bmd", "start": 115716173, "end": 115800663}, {"filename": "/Data/Object12/Object30.bmd", "start": 115800663, "end": 115878707}, {"filename": "/Data/Object12/Object31.bmd", "start": 115878707, "end": 115943366}, {"filename": "/Data/Object12/Object32.bmd", "start": 115943366, "end": 116013662}, {"filename": "/Data/Object12/Object33.bmd", "start": 116013662, "end": 116014594}, {"filename": "/Data/Object12/Object34.bmd", "start": 116014594, "end": 116016468}, {"filename": "/Data/Object12/Object35.bmd", "start": 116016468, "end": 116017250}, {"filename": "/Data/Object12/Object36.bmd", "start": 116017250, "end": 116020868}, {"filename": "/Data/Object12/Object37.bmd", "start": 116020868, "end": 116029166}, {"filename": "/Data/Object12/Shine01.bmd", "start": 116029166, "end": 116029556}, {"filename": "/Data/Object12/StoneCoffin01.bmd", "start": 116029556, "end": 116032566}, {"filename": "/Data/Object12/StoneCoffin02.bmd", "start": 116032566, "end": 116034120}, {"filename": "/Data/Object12/bird.OZT", "start": 116034120, "end": 116050552}, {"filename": "/Data/Object12/br001.OZJ", "start": 116050552, "end": 116120204}, {"filename": "/Data/Object12/br002.OZT", "start": 116120204, "end": 116120508}, {"filename": "/Data/Object12/bro01.OZJ", "start": 116120508, "end": 116190058}, {"filename": "/Data/Object12/cs001.OZJ", "start": 116190058, "end": 116253203}, {"filename": "/Data/Object12/doorc01.OZJ", "start": 116253203, "end": 116295818}, {"filename": "/Data/Object12/hop01.OZJ", "start": 116295818, "end": 116368625}, {"filename": "/Data/Object12/ju01.OZJ", "start": 116368625, "end": 116447982}, {"filename": "/Data/Object12/ju01_R.OZJ", "start": 116447982, "end": 116462391}, {"filename": "/Data/Object12/king01.OZJ", "start": 116462391, "end": 116482499}, {"filename": "/Data/Object12/light01.OZJ", "start": 116482499, "end": 116488241}, {"filename": "/Data/Object12/light2_R.OZJ", "start": 116488241, "end": 116496085}, {"filename": "/Data/Object12/light_R.OZJ", "start": 116496085, "end": 116502275}, {"filename": "/Data/Object12/lnn01.OZT", "start": 116502275, "end": 116535091}, {"filename": "/Data/Object12/ng01.OZJ", "start": 116535091, "end": 116615743}, {"filename": "/Data/Object12/pan01_B.OZJ", "start": 116615743, "end": 116621157}, {"filename": "/Data/Object12/pan_B.OZJ", "start": 116621157, "end": 116626571}, {"filename": "/Data/Object12/pan_R.OZJ", "start": 116626571, "end": 116632058}, {"filename": "/Data/Object12/pant01.OZJ", "start": 116632058, "end": 116702159}, {"filename": "/Data/Object12/pant01_R.OZJ", "start": 116702159, "end": 116710885}, {"filename": "/Data/Object12/ses.OZJ", "start": 116710885, "end": 116715877}, {"filename": "/Data/Object12/st09.OZJ", "start": 116715877, "end": 116755679}, {"filename": "/Data/Object12/wcd.OZJ", "start": 116755679, "end": 116781250}, {"filename": "/Data/Object12/woodc01.OZJ", "start": 116781250, "end": 116810763}, {"filename": "/Data/Object2/Bat01.bmd", "start": 116810763, "end": 116815700}, {"filename": "/Data/Object2/DungeonStone01.bmd", "start": 116815700, "end": 116816710}, {"filename": "/Data/Object2/Object01.bmd", "start": 116816710, "end": 116822026}, {"filename": "/Data/Object2/Object02.bmd", "start": 116822026, "end": 116823080}, {"filename": "/Data/Object2/Object03.bmd", "start": 116823080, "end": 116835736}, {"filename": "/Data/Object2/Object04.bmd", "start": 116835736, "end": 116844400}, {"filename": "/Data/Object2/Object05.bmd", "start": 116844400, "end": 116849726}, {"filename": "/Data/Object2/Object06.bmd", "start": 116849726, "end": 116855160}, {"filename": "/Data/Object2/Object07.bmd", "start": 116855160, "end": 116862036}, {"filename": "/Data/Object2/Object08.bmd", "start": 116862036, "end": 116870284}, {"filename": "/Data/Object2/Object09.bmd", "start": 116870284, "end": 116877544}, {"filename": "/Data/Object2/Object10.bmd", "start": 116877544, "end": 116890848}, {"filename": "/Data/Object2/Object11.bmd", "start": 116890848, "end": 116903326}, {"filename": "/Data/Object2/Object12.bmd", "start": 116903326, "end": 116923457}, {"filename": "/Data/Object2/Object13.bmd", "start": 116923457, "end": 116929177}, {"filename": "/Data/Object2/Object14.bmd", "start": 116929177, "end": 116933029}, {"filename": "/Data/Object2/Object15.bmd", "start": 116933029, "end": 116934147}, {"filename": "/Data/Object2/Object16.bmd", "start": 116934147, "end": 116973751}, {"filename": "/Data/Object2/Object17.bmd", "start": 116973751, "end": 117012704}, {"filename": "/Data/Object2/Object18.bmd", "start": 117012704, "end": 117013758}, {"filename": "/Data/Object2/Object19.bmd", "start": 117013758, "end": 117076213}, {"filename": "/Data/Object2/Object20.bmd", "start": 117076213, "end": 117096143}, {"filename": "/Data/Object2/Object21.bmd", "start": 117096143, "end": 117100053}, {"filename": "/Data/Object2/Object22.bmd", "start": 117100053, "end": 117102199}, {"filename": "/Data/Object2/Object23.bmd", "start": 117102199, "end": 117122585}, {"filename": "/Data/Object2/Object24.bmd", "start": 117122585, "end": 117142971}, {"filename": "/Data/Object2/Object25.bmd", "start": 117142971, "end": 117167425}, {"filename": "/Data/Object2/Object26.bmd", "start": 117167425, "end": 117170333}, {"filename": "/Data/Object2/Object27.bmd", "start": 117170333, "end": 117173225}, {"filename": "/Data/Object2/Object28.bmd", "start": 117173225, "end": 117218977}, {"filename": "/Data/Object2/Object29.bmd", "start": 117218977, "end": 117226381}, {"filename": "/Data/Object2/Object30.bmd", "start": 117226381, "end": 117253133}, {"filename": "/Data/Object2/Object31.bmd", "start": 117253133, "end": 117257517}, {"filename": "/Data/Object2/Object32.bmd", "start": 117257517, "end": 117300107}, {"filename": "/Data/Object2/Object33.bmd", "start": 117300107, "end": 117342677}, {"filename": "/Data/Object2/Object34.bmd", "start": 117342677, "end": 117343919}, {"filename": "/Data/Object2/Object35.bmd", "start": 117343919, "end": 117351065}, {"filename": "/Data/Object2/Object36.bmd", "start": 117351065, "end": 117360340}, {"filename": "/Data/Object2/Object37.bmd", "start": 117360340, "end": 117368830}, {"filename": "/Data/Object2/Object38.bmd", "start": 117368830, "end": 117372062}, {"filename": "/Data/Object2/Object39.bmd", "start": 117372062, "end": 117390588}, {"filename": "/Data/Object2/Object40.bmd", "start": 117390588, "end": 117392874}, {"filename": "/Data/Object2/Object41.bmd", "start": 117392874, "end": 117396794}, {"filename": "/Data/Object2/Object42.bmd", "start": 117396794, "end": 117401270}, {"filename": "/Data/Object2/Object43.bmd", "start": 117401270, "end": 117407878}, {"filename": "/Data/Object2/Object44.bmd", "start": 117407878, "end": 117459125}, {"filename": "/Data/Object2/Object45.bmd", "start": 117459125, "end": 117501715}, {"filename": "/Data/Object2/Object46.bmd", "start": 117501715, "end": 117544305}, {"filename": "/Data/Object2/Object47.bmd", "start": 117544305, "end": 117583859}, {"filename": "/Data/Object2/Object48.bmd", "start": 117583859, "end": 117608477}, {"filename": "/Data/Object2/Object49.bmd", "start": 117608477, "end": 117643627}, {"filename": "/Data/Object2/Object50.bmd", "start": 117643627, "end": 117678777}, {"filename": "/Data/Object2/Object51.bmd", "start": 117678777, "end": 117683867}, {"filename": "/Data/Object2/Object52.bmd", "start": 117683867, "end": 117689845}, {"filename": "/Data/Object2/Object53.bmd", "start": 117689845, "end": 117690491}, {"filename": "/Data/Object2/Object54.bmd", "start": 117690491, "end": 117753863}, {"filename": "/Data/Object2/Object55.bmd", "start": 117753863, "end": 117769163}, {"filename": "/Data/Object2/Object56.bmd", "start": 117769163, "end": 117783399}, {"filename": "/Data/Object2/Object57.bmd", "start": 117783399, "end": 117784509}, {"filename": "/Data/Object2/Object58.bmd", "start": 117784509, "end": 117787899}, {"filename": "/Data/Object2/Object59.bmd", "start": 117787899, "end": 117789009}, {"filename": "/Data/Object2/Object60.bmd", "start": 117789009, "end": 117790119}, {"filename": "/Data/Object2/Rat01.bmd", "start": 117790119, "end": 117794368}, {"filename": "/Data/Object2/TileRock01.OZJ", "start": 117794368, "end": 117866323}, {"filename": "/Data/Object2/bat01.OZJ", "start": 117866323, "end": 117873304}, {"filename": "/Data/Object2/bat02.OZT", "start": 117873304, "end": 117881544}, {"filename": "/Data/Object2/bons.OZJ", "start": 117881544, "end": 117909343}, {"filename": "/Data/Object2/cobweb.OZJ", "start": 117909343, "end": 117930478}, {"filename": "/Data/Object2/cobweb.OZT", "start": 117930478, "end": 117996062}, {"filename": "/Data/Object2/deep_dragon.OZJ", "start": 117996062, "end": 118014620}, {"filename": "/Data/Object2/deep_wall01.OZJ", "start": 118014620, "end": 118050653}, {"filename": "/Data/Object2/deep_wall02.OZJ", "start": 118050653, "end": 118095247}, {"filename": "/Data/Object2/deep_wall03.OZJ", "start": 118095247, "end": 118119255}, {"filename": "/Data/Object2/deep_wall04.OZJ", "start": 118119255, "end": 118148039}, {"filename": "/Data/Object2/deep_wall05.OZJ", "start": 118148039, "end": 118179539}, {"filename": "/Data/Object2/deep_wall06.OZJ", "start": 118179539, "end": 118204112}, {"filename": "/Data/Object2/deep_wall07.OZJ", "start": 118204112, "end": 118235255}, {"filename": "/Data/Object2/deep_wall08.OZJ", "start": 118235255, "end": 118253800}, {"filename": "/Data/Object2/deep_wall09.OZJ", "start": 118253800, "end": 118281930}, {"filename": "/Data/Object2/deep_wall10.OZJ", "start": 118281930, "end": 118310704}, {"filename": "/Data/Object2/deep_wall11.OZJ", "start": 118310704, "end": 118323510}, {"filename": "/Data/Object2/deep_wall12.OZJ", "start": 118323510, "end": 118401172}, {"filename": "/Data/Object2/fire0a.OZJ", "start": 118401172, "end": 118407078}, {"filename": "/Data/Object2/flower_vase.OZJ", "start": 118407078, "end": 118416261}, {"filename": "/Data/Object2/logo01.OZT", "start": 118416261, "end": 118449077}, {"filename": "/Data/Object2/mouse.OZJ", "start": 118449077, "end": 118456063}, {"filename": "/Data/Object2/squid01.OZJ", "start": 118456063, "end": 118489963}, {"filename": "/Data/Object2/squid02.OZJ", "start": 118489963, "end": 118496677}, {"filename": "/Data/Object2/steel_01.OZT", "start": 118496677, "end": 118504917}, {"filename": "/Data/Object2/steel_02.OZT", "start": 118504917, "end": 118570501}, {"filename": "/Data/Object2/wire_netting01.OZJ", "start": 118570501, "end": 118581110}, {"filename": "/Data/Object2/wood01.OZJ", "start": 118581110, "end": 118645585}, {"filename": "/Data/Object3/Javelins03.OZJ", "start": 118645585, "end": 118651506}, {"filename": "/Data/Object3/Object01.bmd", "start": 118651506, "end": 118674843}, {"filename": "/Data/Object3/Object02.bmd", "start": 118674843, "end": 118679015}, {"filename": "/Data/Object3/Object03.bmd", "start": 118679015, "end": 118709633}, {"filename": "/Data/Object3/Object04.bmd", "start": 118709633, "end": 118715187}, {"filename": "/Data/Object3/Object05.bmd", "start": 118715187, "end": 118730613}, {"filename": "/Data/Object3/Object06.bmd", "start": 118730613, "end": 118733274}, {"filename": "/Data/Object3/Object07.bmd", "start": 118733274, "end": 118735139}, {"filename": "/Data/Object3/Object08.bmd", "start": 118735139, "end": 118738125}, {"filename": "/Data/Object3/Object09.bmd", "start": 118738125, "end": 118740039}, {"filename": "/Data/Object3/Object10.bmd", "start": 118740039, "end": 118744795}, {"filename": "/Data/Object3/Object100.bmd", "start": 118744795, "end": 118752275}, {"filename": "/Data/Object3/Object101.bmd", "start": 118752275, "end": 118752961}, {"filename": "/Data/Object3/Object102.bmd", "start": 118752961, "end": 118834117}, {"filename": "/Data/Object3/Object103.bmd", "start": 118834117, "end": 118840507}, {"filename": "/Data/Object3/Object104.bmd", "start": 118840507, "end": 118901488}, {"filename": "/Data/Object3/Object106.bmd", "start": 118901488, "end": 118905598}, {"filename": "/Data/Object3/Object107.bmd", "start": 118905598, "end": 118985062}, {"filename": "/Data/Object3/Object108.bmd", "start": 118985062, "end": 119014994}, {"filename": "/Data/Object3/Object109.bmd", "start": 119014994, "end": 119044926}, {"filename": "/Data/Object3/Object11.bmd", "start": 119044926, "end": 119049754}, {"filename": "/Data/Object3/Object110.bmd", "start": 119049754, "end": 119062550}, {"filename": "/Data/Object3/Object111.bmd", "start": 119062550, "end": 119092482}, {"filename": "/Data/Object3/Object112.bmd", "start": 119092482, "end": 119098791}, {"filename": "/Data/Object3/Object113.bmd", "start": 119098791, "end": 119107275}, {"filename": "/Data/Object3/Object12.bmd", "start": 119107275, "end": 119122701}, {"filename": "/Data/Object3/Object13.bmd", "start": 119122701, "end": 119136743}, {"filename": "/Data/Object3/Object14.bmd", "start": 119136743, "end": 119142921}, {"filename": "/Data/Object3/Object15.bmd", "start": 119142921, "end": 119147555}, {"filename": "/Data/Object3/Object16.bmd", "start": 119147555, "end": 119151539}, {"filename": "/Data/Object3/Object17.bmd", "start": 119151539, "end": 119157671}, {"filename": "/Data/Object3/Object18.bmd", "start": 119157671, "end": 119164431}, {"filename": "/Data/Object3/Object19.bmd", "start": 119164431, "end": 119171815}, {"filename": "/Data/Object3/Object20.bmd", "start": 119171815, "end": 119178531}, {"filename": "/Data/Object3/Object21.bmd", "start": 119178531, "end": 119196578}, {"filename": "/Data/Object3/Object22.bmd", "start": 119196578, "end": 119203040}, {"filename": "/Data/Object3/Object23.bmd", "start": 119203040, "end": 119211218}, {"filename": "/Data/Object3/Object24.bmd", "start": 119211218, "end": 119214416}, {"filename": "/Data/Object3/Object25.bmd", "start": 119214416, "end": 119214458}, {"filename": "/Data/Object3/Object26.bmd", "start": 119214458, "end": 119221088}, {"filename": "/Data/Object3/Object27.bmd", "start": 119221088, "end": 119221130}, {"filename": "/Data/Object3/Object28.bmd", "start": 119221130, "end": 119224876}, {"filename": "/Data/Object3/Object29.bmd", "start": 119224876, "end": 119231182}, {"filename": "/Data/Object3/Object30.bmd", "start": 119231182, "end": 119236776}, {"filename": "/Data/Object3/Object31.bmd", "start": 119236776, "end": 119241986}, {"filename": "/Data/Object3/Object32.bmd", "start": 119241986, "end": 119249316}, {"filename": "/Data/Object3/Object33.bmd", "start": 119249316, "end": 119249358}, {"filename": "/Data/Object3/Object34.bmd", "start": 119249358, "end": 119253464}, {"filename": "/Data/Object3/Object35.bmd", "start": 119253464, "end": 119259702}, {"filename": "/Data/Object3/Object36.bmd", "start": 119259702, "end": 119265760}, {"filename": "/Data/Object3/Object37.bmd", "start": 119265760, "end": 119274381}, {"filename": "/Data/Object3/Object38.bmd", "start": 119274381, "end": 119285035}, {"filename": "/Data/Object3/Object39.bmd", "start": 119285035, "end": 119296091}, {"filename": "/Data/Object3/Object40.bmd", "start": 119296091, "end": 119302574}, {"filename": "/Data/Object3/Object41.bmd", "start": 119302574, "end": 119307666}, {"filename": "/Data/Object3/Object42.bmd", "start": 119307666, "end": 119311624}, {"filename": "/Data/Object3/Object43.bmd", "start": 119311624, "end": 119314280}, {"filename": "/Data/Object3/Object44.bmd", "start": 119314280, "end": 119317690}, {"filename": "/Data/Object3/Object45.bmd", "start": 119317690, "end": 119321392}, {"filename": "/Data/Object3/Object46.bmd", "start": 119321392, "end": 119325854}, {"filename": "/Data/Object3/Object47.bmd", "start": 119325854, "end": 119329808}, {"filename": "/Data/Object3/Object48.bmd", "start": 119329808, "end": 119350874}, {"filename": "/Data/Object3/Object49.bmd", "start": 119350874, "end": 119372187}, {"filename": "/Data/Object3/Object50.bmd", "start": 119372187, "end": 119381937}, {"filename": "/Data/Object3/Object51.bmd", "start": 119381937, "end": 119422059}, {"filename": "/Data/Object3/Object52.bmd", "start": 119422059, "end": 119460455}, {"filename": "/Data/Object3/Object53.bmd", "start": 119460455, "end": 119485070}, {"filename": "/Data/Object3/Object54.bmd", "start": 119485070, "end": 119487259}, {"filename": "/Data/Object3/Object55.bmd", "start": 119487259, "end": 119499975}, {"filename": "/Data/Object3/Object56.bmd", "start": 119499975, "end": 119505067}, {"filename": "/Data/Object3/Object57.bmd", "start": 119505067, "end": 119517807}, {"filename": "/Data/Object3/Object58.bmd", "start": 119517807, "end": 119528802}, {"filename": "/Data/Object3/Object59.bmd", "start": 119528802, "end": 119533734}, {"filename": "/Data/Object3/Object60.bmd", "start": 119533734, "end": 119538666}, {"filename": "/Data/Object3/Object61.bmd", "start": 119538666, "end": 119543792}, {"filename": "/Data/Object3/Object62.bmd", "start": 119543792, "end": 119551778}, {"filename": "/Data/Object3/Object63.bmd", "start": 119551778, "end": 119558724}, {"filename": "/Data/Object3/Object64.bmd", "start": 119558724, "end": 119566214}, {"filename": "/Data/Object3/Object65.bmd", "start": 119566214, "end": 119572668}, {"filename": "/Data/Object3/Object66.bmd", "start": 119572668, "end": 119590715}, {"filename": "/Data/Object3/Object67.bmd", "start": 119590715, "end": 119602220}, {"filename": "/Data/Object3/Object68.bmd", "start": 119602220, "end": 119622333}, {"filename": "/Data/Object3/Object69.bmd", "start": 119622333, "end": 119631322}, {"filename": "/Data/Object3/Object70.bmd", "start": 119631322, "end": 119639175}, {"filename": "/Data/Object3/Object71.bmd", "start": 119639175, "end": 119646297}, {"filename": "/Data/Object3/Object72.bmd", "start": 119646297, "end": 119650185}, {"filename": "/Data/Object3/Object73.bmd", "start": 119650185, "end": 119680441}, {"filename": "/Data/Object3/Object74.bmd", "start": 119680441, "end": 119683043}, {"filename": "/Data/Object3/Object75.bmd", "start": 119683043, "end": 119708893}, {"filename": "/Data/Object3/Object76.bmd", "start": 119708893, "end": 119732210}, {"filename": "/Data/Object3/Object77.bmd", "start": 119732210, "end": 119737838}, {"filename": "/Data/Object3/Object78.bmd", "start": 119737838, "end": 119741426}, {"filename": "/Data/Object3/Object79.bmd", "start": 119741426, "end": 119748256}, {"filename": "/Data/Object3/Object80.bmd", "start": 119748256, "end": 119750214}, {"filename": "/Data/Object3/Object81.bmd", "start": 119750214, "end": 119756933}, {"filename": "/Data/Object3/Object82.bmd", "start": 119756933, "end": 119760141}, {"filename": "/Data/Object3/Object83.bmd", "start": 119760141, "end": 119763129}, {"filename": "/Data/Object3/Object84.bmd", "start": 119763129, "end": 119772358}, {"filename": "/Data/Object3/Object85.bmd", "start": 119772358, "end": 119781395}, {"filename": "/Data/Object3/Object86.bmd", "start": 119781395, "end": 119790432}, {"filename": "/Data/Object3/Object87.bmd", "start": 119790432, "end": 119799710}, {"filename": "/Data/Object3/Object88.bmd", "start": 119799710, "end": 119871278}, {"filename": "/Data/Object3/Object89.bmd", "start": 119871278, "end": 119889325}, {"filename": "/Data/Object3/Object90.bmd", "start": 119889325, "end": 119889367}, {"filename": "/Data/Object3/Object91.bmd", "start": 119889367, "end": 119897911}, {"filename": "/Data/Object3/Object92.bmd", "start": 119897911, "end": 119898597}, {"filename": "/Data/Object3/Object93.bmd", "start": 119898597, "end": 119919669}, {"filename": "/Data/Object3/Object94.bmd", "start": 119919669, "end": 119933938}, {"filename": "/Data/Object3/Object95.bmd", "start": 119933938, "end": 119941400}, {"filename": "/Data/Object3/Object96.bmd", "start": 119941400, "end": 119953747}, {"filename": "/Data/Object3/Object97.bmd", "start": 119953747, "end": 119956857}, {"filename": "/Data/Object3/Object98.bmd", "start": 119956857, "end": 119958857}, {"filename": "/Data/Object3/Object99.bmd", "start": 119958857, "end": 119966337}, {"filename": "/Data/Object3/apple.OZJ", "start": 119966337, "end": 119971453}, {"filename": "/Data/Object3/art.OZJ", "start": 119971453, "end": 119985008}, {"filename": "/Data/Object3/aurora.OZJ", "start": 119985008, "end": 119997368}, {"filename": "/Data/Object3/badge_01.OZT", "start": 119997368, "end": 120013800}, {"filename": "/Data/Object3/badge_02.OZT", "start": 120013800, "end": 120030232}, {"filename": "/Data/Object3/badge_03.OZT", "start": 120030232, "end": 120046664}, {"filename": "/Data/Object3/blockhead.OZJ", "start": 120046664, "end": 120054036}, {"filename": "/Data/Object3/books.OZJ", "start": 120054036, "end": 120061431}, {"filename": "/Data/Object3/bookshelf.OZJ", "start": 120061431, "end": 120093194}, {"filename": "/Data/Object3/boots_11.OZJ", "start": 120093194, "end": 120106338}, {"filename": "/Data/Object3/bottle.OZT", "start": 120106338, "end": 120110482}, {"filename": "/Data/Object3/bridge01.OZJ", "start": 120110482, "end": 120118226}, {"filename": "/Data/Object3/candle.OZJ", "start": 120118226, "end": 120125854}, {"filename": "/Data/Object3/candle2.OZJ", "start": 120125854, "end": 120131267}, {"filename": "/Data/Object3/chair.OZJ", "start": 120131267, "end": 120142857}, {"filename": "/Data/Object3/chair2.OZT", "start": 120142857, "end": 120147001}, {"filename": "/Data/Object3/deer.OZJ", "start": 120147001, "end": 120165257}, {"filename": "/Data/Object3/desk.OZJ", "start": 120165257, "end": 120193144}, {"filename": "/Data/Object3/desk_big.OZJ", "start": 120193144, "end": 120221328}, {"filename": "/Data/Object3/dog_g99.OZJ", "start": 120221328, "end": 120242816}, {"filename": "/Data/Object3/dog_g991.OZJ", "start": 120242816, "end": 120273577}, {"filename": "/Data/Object3/drum.OZJ", "start": 120273577, "end": 120298030}, {"filename": "/Data/Object3/drum2.OZJ", "start": 120298030, "end": 120317842}, {"filename": "/Data/Object3/drums.OZJ", "start": 120317842, "end": 120342865}, {"filename": "/Data/Object3/feather.OZT", "start": 120342865, "end": 120343937}, {"filename": "/Data/Object3/fire_01.OZJ", "start": 120343937, "end": 120353550}, {"filename": "/Data/Object3/fire_02.OZJ", "start": 120353550, "end": 120359391}, {"filename": "/Data/Object3/fireplace.OZT", "start": 120359391, "end": 120375823}, {"filename": "/Data/Object3/fireplace_down.OZT", "start": 120375823, "end": 120441407}, {"filename": "/Data/Object3/giftbox_blue.OZJ", "start": 120441407, "end": 120479231}, {"filename": "/Data/Object3/giftbox_green.OZJ", "start": 120479231, "end": 120519571}, {"filename": "/Data/Object3/giftbox_red.OZJ", "start": 120519571, "end": 120564636}, {"filename": "/Data/Object3/gloves_11.OZJ", "start": 120564636, "end": 120578604}, {"filename": "/Data/Object3/gold.OZJ", "start": 120578604, "end": 120589383}, {"filename": "/Data/Object3/guard_hair.OZT", "start": 120589383, "end": 120593527}, {"filename": "/Data/Object3/han_ax1.OZJ", "start": 120593527, "end": 120608568}, {"filename": "/Data/Object3/han_ax2.OZT", "start": 120608568, "end": 120641384}, {"filename": "/Data/Object3/han_ctreeax2.OZJ", "start": 120641384, "end": 120658800}, {"filename": "/Data/Object3/han_ctreeax4.OZT", "start": 120658800, "end": 120724384}, {"filename": "/Data/Object3/han_misle.OZT", "start": 120724384, "end": 120789968}, {"filename": "/Data/Object3/han_mistl2.OZJ", "start": 120789968, "end": 120813679}, {"filename": "/Data/Object3/han_xtree.OZT", "start": 120813679, "end": 121075871}, {"filename": "/Data/Object3/head_11.OZJ", "start": 121075871, "end": 121086953}, {"filename": "/Data/Object3/hide.OZJ", "start": 121086953, "end": 121091493}, {"filename": "/Data/Object3/house_stone_out.OZJ", "start": 121091493, "end": 121123696}, {"filename": "/Data/Object3/ice.OZJ", "start": 121123696, "end": 121152578}, {"filename": "/Data/Object3/ice01.OZJ", "start": 121152578, "end": 121167949}, {"filename": "/Data/Object3/ice_block01.OZJ", "start": 121167949, "end": 121250414}, {"filename": "/Data/Object3/ice_block07.OZJ", "start": 121250414, "end": 121328403}, {"filename": "/Data/Object3/leaf.OZT", "start": 121328403, "end": 121344835}, {"filename": "/Data/Object3/light.OZT", "start": 121344835, "end": 121361267}, {"filename": "/Data/Object3/light2.OZJ", "start": 121361267, "end": 121366736}, {"filename": "/Data/Object3/light3.OZJ", "start": 121366736, "end": 121372314}, {"filename": "/Data/Object3/light_02.OZJ", "start": 121372314, "end": 121377324}, {"filename": "/Data/Object3/lower_11.OZJ", "start": 121377324, "end": 121412171}, {"filename": "/Data/Object3/plate.OZJ", "start": 121412171, "end": 121421183}, {"filename": "/Data/Object3/plate2.OZJ", "start": 121421183, "end": 121433330}, {"filename": "/Data/Object3/pot.OZJ", "start": 121433330, "end": 121440588}, {"filename": "/Data/Object3/pot2.OZJ", "start": 121440588, "end": 121447612}, {"filename": "/Data/Object3/pot3.OZT", "start": 121447612, "end": 121451756}, {"filename": "/Data/Object3/sdoorknob.OZT", "start": 121451756, "end": 121452828}, {"filename": "/Data/Object3/shield02.OZJ", "start": 121452828, "end": 121466558}, {"filename": "/Data/Object3/shield03.OZJ", "start": 121466558, "end": 121478042}, {"filename": "/Data/Object3/show_ston01.OZJ", "start": 121478042, "end": 121500162}, {"filename": "/Data/Object3/sky.OZJ", "start": 121500162, "end": 121522799}, {"filename": "/Data/Object3/sky.OZT", "start": 121522799, "end": 121524895}, {"filename": "/Data/Object3/snotice.OZJ", "start": 121524895, "end": 121537029}, {"filename": "/Data/Object3/snotice02.OZJ", "start": 121537029, "end": 121548851}, {"filename": "/Data/Object3/snotice03.OZJ", "start": 121548851, "end": 121556735}, {"filename": "/Data/Object3/snow_ston.OZJ", "start": 121556735, "end": 121575813}, {"filename": "/Data/Object3/snowmachine2.OZJ", "start": 121575813, "end": 121610314}, {"filename": "/Data/Object3/ssignboard.OZT", "start": 121610314, "end": 121618554}, {"filename": "/Data/Object3/sston.OZJ", "start": 121618554, "end": 121642607}, {"filename": "/Data/Object3/sston2.OZJ", "start": 121642607, "end": 121647414}, {"filename": "/Data/Object3/stree.OZJ", "start": 121647414, "end": 121654936}, {"filename": "/Data/Object3/stree.OZT", "start": 121654936, "end": 121720520}, {"filename": "/Data/Object3/sword04.OZJ", "start": 121720520, "end": 121727098}, {"filename": "/Data/Object3/sword08.OZJ", "start": 121727098, "end": 121736480}, {"filename": "/Data/Object3/ti01.OZJ", "start": 121736480, "end": 121757855}, {"filename": "/Data/Object3/ti02.OZJ", "start": 121757855, "end": 121772179}, {"filename": "/Data/Object3/ti03.OZJ", "start": 121772179, "end": 121778864}, {"filename": "/Data/Object3/ti05.OZJ", "start": 121778864, "end": 121800685}, {"filename": "/Data/Object3/ti06.OZJ", "start": 121800685, "end": 121812132}, {"filename": "/Data/Object3/tile_02.OZJ", "start": 121812132, "end": 121822504}, {"filename": "/Data/Object3/tile_wood04.OZJ", "start": 121822504, "end": 121845798}, {"filename": "/Data/Object3/titel_a03.OZJ", "start": 121845798, "end": 121866621}, {"filename": "/Data/Object3/titel_a04.OZJ", "start": 121866621, "end": 121889264}, {"filename": "/Data/Object3/titel_a05.OZJ", "start": 121889264, "end": 121908237}, {"filename": "/Data/Object3/titel_a06.OZJ", "start": 121908237, "end": 121918061}, {"filename": "/Data/Object3/titel_b01.OZJ", "start": 121918061, "end": 121923961}, {"filename": "/Data/Object3/titel_b03.OZJ", "start": 121923961, "end": 121944752}, {"filename": "/Data/Object3/titel_b04.OZJ", "start": 121944752, "end": 121965981}, {"filename": "/Data/Object3/titel_b05.OZJ", "start": 121965981, "end": 121989094}, {"filename": "/Data/Object3/titel_b06.OZJ", "start": 121989094, "end": 122012838}, {"filename": "/Data/Object3/treasure_chest.OZJ", "start": 122012838, "end": 122025431}, {"filename": "/Data/Object3/tree_03.OZJ", "start": 122025431, "end": 122041075}, {"filename": "/Data/Object3/upper_11.OZJ", "start": 122041075, "end": 122077982}, {"filename": "/Data/Object3/wall_door01.OZJ", "start": 122077982, "end": 122099477}, {"filename": "/Data/Object3/wall_door02.OZJ", "start": 122099477, "end": 122109387}, {"filename": "/Data/Object3/wall_door03.OZJ", "start": 122109387, "end": 122132004}, {"filename": "/Data/Object3/winecup.OZJ", "start": 122132004, "end": 122138352}, {"filename": "/Data/Object4/Object01.bmd", "start": 122138352, "end": 122155592}, {"filename": "/Data/Object4/Object02.bmd", "start": 122155592, "end": 122167933}, {"filename": "/Data/Object4/Object03.bmd", "start": 122167933, "end": 122191699}, {"filename": "/Data/Object4/Object04.bmd", "start": 122191699, "end": 122205619}, {"filename": "/Data/Object4/Object05.bmd", "start": 122205619, "end": 122224771}, {"filename": "/Data/Object4/Object06.bmd", "start": 122224771, "end": 122238331}, {"filename": "/Data/Object4/Object07.bmd", "start": 122238331, "end": 122242675}, {"filename": "/Data/Object4/Object08.bmd", "start": 122242675, "end": 122246517}, {"filename": "/Data/Object4/Object09.bmd", "start": 122246517, "end": 122249699}, {"filename": "/Data/Object4/Object10.bmd", "start": 122249699, "end": 122263720}, {"filename": "/Data/Object4/Object11.bmd", "start": 122263720, "end": 122268764}, {"filename": "/Data/Object4/Object12.bmd", "start": 122268764, "end": 122281173}, {"filename": "/Data/Object4/Object13.bmd", "start": 122281173, "end": 122289753}, {"filename": "/Data/Object4/Object14.bmd", "start": 122289753, "end": 122298373}, {"filename": "/Data/Object4/Object15.bmd", "start": 122298373, "end": 122304265}, {"filename": "/Data/Object4/Object16.bmd", "start": 122304265, "end": 122311541}, {"filename": "/Data/Object4/Object17.bmd", "start": 122311541, "end": 122320121}, {"filename": "/Data/Object4/Object18.bmd", "start": 122320121, "end": 122460305}, {"filename": "/Data/Object4/Object19.bmd", "start": 122460305, "end": 122546664}, {"filename": "/Data/Object4/Object20.bmd", "start": 122546664, "end": 122557386}, {"filename": "/Data/Object4/Object21.bmd", "start": 122557386, "end": 122619036}, {"filename": "/Data/Object4/Object22.bmd", "start": 122619036, "end": 122624220}, {"filename": "/Data/Object4/Object23.bmd", "start": 122624220, "end": 122666333}, {"filename": "/Data/Object4/Object24.bmd", "start": 122666333, "end": 122708726}, {"filename": "/Data/Object4/Object25.bmd", "start": 122708726, "end": 122763376}, {"filename": "/Data/Object4/Object26.bmd", "start": 122763376, "end": 122837518}, {"filename": "/Data/Object4/Object27.bmd", "start": 122837518, "end": 122886937}, {"filename": "/Data/Object4/Object28.bmd", "start": 122886937, "end": 122915641}, {"filename": "/Data/Object4/Object29.bmd", "start": 122915641, "end": 122952311}, {"filename": "/Data/Object4/Object30.bmd", "start": 122952311, "end": 122971981}, {"filename": "/Data/Object4/Object31.bmd", "start": 122971981, "end": 123001809}, {"filename": "/Data/Object4/Object32.bmd", "start": 123001809, "end": 123009235}, {"filename": "/Data/Object4/Object33.bmd", "start": 123009235, "end": 123016669}, {"filename": "/Data/Object4/Object34.bmd", "start": 123016669, "end": 123018767}, {"filename": "/Data/Object4/Object35.bmd", "start": 123018767, "end": 123026072}, {"filename": "/Data/Object4/Object36.bmd", "start": 123026072, "end": 123036576}, {"filename": "/Data/Object4/Object37.bmd", "start": 123036576, "end": 123059691}, {"filename": "/Data/Object4/Object38.bmd", "start": 123059691, "end": 123060623}, {"filename": "/Data/Object4/Object39.bmd", "start": 123060623, "end": 123061309}, {"filename": "/Data/Object4/Object40.bmd", "start": 123061309, "end": 123192275}, {"filename": "/Data/Object4/Object41.bmd", "start": 123192275, "end": 123234287}, {"filename": "/Data/Object4/Object42.bmd", "start": 123234287, "end": 123250583}, {"filename": "/Data/Object4/Object43.bmd", "start": 123250583, "end": 123255543}, {"filename": "/Data/Object4/filling_up02.OZJ", "start": 123255543, "end": 123260334}, {"filename": "/Data/Object4/filling_up03.OZJ", "start": 123260334, "end": 123266417}, {"filename": "/Data/Object4/filling_up04.OZT", "start": 123266417, "end": 123270561}, {"filename": "/Data/Object4/filling_up05.OZT", "start": 123270561, "end": 123278801}, {"filename": "/Data/Object4/flower.OZT", "start": 123278801, "end": 123295233}, {"filename": "/Data/Object4/flower02.OZT", "start": 123295233, "end": 123311665}, {"filename": "/Data/Object4/flower03.OZT", "start": 123311665, "end": 123328097}, {"filename": "/Data/Object4/flower05.OZT", "start": 123328097, "end": 123332241}, {"filename": "/Data/Object4/flower10.OZJ", "start": 123332241, "end": 123338422}, {"filename": "/Data/Object4/flower2.OZJ", "start": 123338422, "end": 123368202}, {"filename": "/Data/Object4/flower3.OZJ", "start": 123368202, "end": 123375836}, {"filename": "/Data/Object4/flower4.OZJ", "start": 123375836, "end": 123385066}, {"filename": "/Data/Object4/flower5.OZJ", "start": 123385066, "end": 123394188}, {"filename": "/Data/Object4/flower6.OZJ", "start": 123394188, "end": 123417744}, {"filename": "/Data/Object4/flower7.OZJ", "start": 123417744, "end": 123447873}, {"filename": "/Data/Object4/flower9.OZJ", "start": 123447873, "end": 123482448}, {"filename": "/Data/Object4/htht01.OZJ", "start": 123482448, "end": 123550446}, {"filename": "/Data/Object4/itp01.OZT", "start": 123550446, "end": 123552542}, {"filename": "/Data/Object4/itp02.OZT", "start": 123552542, "end": 123554638}, {"filename": "/Data/Object4/light01.OZJ", "start": 123554638, "end": 123560575}, {"filename": "/Data/Object4/metal01.OZJ", "start": 123560575, "end": 123566876}, {"filename": "/Data/Object4/ob3.OZJ", "start": 123566876, "end": 123594988}, {"filename": "/Data/Object4/ston001.OZJ", "start": 123594988, "end": 123629841}, {"filename": "/Data/Object4/treea00.OZJ", "start": 123629841, "end": 123666204}, {"filename": "/Data/Object4/treea01.OZT", "start": 123666204, "end": 123674444}, {"filename": "/Data/Object4/treea02.OZJ", "start": 123674444, "end": 123690812}, {"filename": "/Data/Object4/treea03.OZJ", "start": 123690812, "end": 123734429}, {"filename": "/Data/Object4/u2u3.OZJ", "start": 123734429, "end": 123739542}, {"filename": "/Data/Object4/wd.OZJ", "start": 123739542, "end": 123750580}, {"filename": "/Data/Object4/wood001.OZJ", "start": 123750580, "end": 123785484}, {"filename": "/Data/Object4/wood002.OZJ", "start": 123785484, "end": 123821259}, {"filename": "/Data/Object4/wood01.OZJ", "start": 123821259, "end": 123838520}, {"filename": "/Data/Object4/wood02.OZJ", "start": 123838520, "end": 123844460}, {"filename": "/Data/Object4/wood03.OZJ", "start": 123844460, "end": 123862004}, {"filename": "/Data/Object4/yellow_jewel.OZJ", "start": 123862004, "end": 123866945}, {"filename": "/Data/Object5/Bug01.bmd", "start": 123866945, "end": 123882388}, {"filename": "/Data/Object5/Object01.bmd", "start": 123882388, "end": 123914002}, {"filename": "/Data/Object5/Object02.bmd", "start": 123914002, "end": 123933048}, {"filename": "/Data/Object5/Object03.bmd", "start": 123933048, "end": 123969866}, {"filename": "/Data/Object5/Object04.bmd", "start": 123969866, "end": 123983632}, {"filename": "/Data/Object5/Object05.bmd", "start": 123983632, "end": 123988868}, {"filename": "/Data/Object5/Object06.bmd", "start": 123988868, "end": 124001830}, {"filename": "/Data/Object5/Object07.bmd", "start": 124001830, "end": 124007500}, {"filename": "/Data/Object5/Object08.bmd", "start": 124007500, "end": 124015669}, {"filename": "/Data/Object5/Object09.bmd", "start": 124015669, "end": 124019222}, {"filename": "/Data/Object5/Object10.bmd", "start": 124019222, "end": 124021480}, {"filename": "/Data/Object5/Object11.bmd", "start": 124021480, "end": 124088699}, {"filename": "/Data/Object5/Object12.bmd", "start": 124088699, "end": 124160345}, {"filename": "/Data/Object5/Object13.bmd", "start": 124160345, "end": 124220220}, {"filename": "/Data/Object5/Object14.bmd", "start": 124220220, "end": 124225666}, {"filename": "/Data/Object5/Object15.bmd", "start": 124225666, "end": 124229996}, {"filename": "/Data/Object5/Object16.bmd", "start": 124229996, "end": 124234510}, {"filename": "/Data/Object5/Object17.bmd", "start": 124234510, "end": 124274064}, {"filename": "/Data/Object5/Object18.bmd", "start": 124274064, "end": 124298682}, {"filename": "/Data/Object5/Object19.bmd", "start": 124298682, "end": 124319792}, {"filename": "/Data/Object5/Object20.bmd", "start": 124319792, "end": 124360629}, {"filename": "/Data/Object5/Object21.bmd", "start": 124360629, "end": 124401466}, {"filename": "/Data/Object5/Object22.bmd", "start": 124401466, "end": 124408012}, {"filename": "/Data/Object5/Object23.bmd", "start": 124408012, "end": 124414558}, {"filename": "/Data/Object5/Object24.bmd", "start": 124414558, "end": 124425391}, {"filename": "/Data/Object5/Object25.bmd", "start": 124425391, "end": 124426585}, {"filename": "/Data/Object5/Object26.bmd", "start": 124426585, "end": 124427195}, {"filename": "/Data/Object5/Object27.bmd", "start": 124427195, "end": 124491325}, {"filename": "/Data/Object5/Object28.bmd", "start": 124491325, "end": 124626287}, {"filename": "/Data/Object5/Object29.bmd", "start": 124626287, "end": 124684769}, {"filename": "/Data/Object5/Object30.bmd", "start": 124684769, "end": 124766355}, {"filename": "/Data/Object5/Object31.bmd", "start": 124766355, "end": 124775877}, {"filename": "/Data/Object5/Object32.bmd", "start": 124775877, "end": 124785399}, {"filename": "/Data/Object5/Object33.bmd", "start": 124785399, "end": 124798409}, {"filename": "/Data/Object5/Object34.bmd", "start": 124798409, "end": 124807931}, {"filename": "/Data/Object5/Object35.bmd", "start": 124807931, "end": 124858706}, {"filename": "/Data/Object5/Object36.bmd", "start": 124858706, "end": 124909481}, {"filename": "/Data/Object5/Object37.bmd", "start": 124909481, "end": 124960256}, {"filename": "/Data/Object5/Object38.bmd", "start": 124960256, "end": 125011031}, {"filename": "/Data/Object5/Object39.bmd", "start": 125011031, "end": 125018225}, {"filename": "/Data/Object5/Object40.bmd", "start": 125018225, "end": 125019483}, {"filename": "/Data/Object5/bons.OZJ", "start": 125019483, "end": 125047282}, {"filename": "/Data/Object5/d_003.OZJ", "start": 125047282, "end": 125126693}, {"filename": "/Data/Object5/guard_gold2.OZJ", "start": 125126693, "end": 125196125}, {"filename": "/Data/Object5/light01.OZJ", "start": 125196125, "end": 125203705}, {"filename": "/Data/Object5/re02.OZT", "start": 125203705, "end": 125236521}, {"filename": "/Data/Object5/re_008.OZJ", "start": 125236521, "end": 125245706}, {"filename": "/Data/Object5/re_02.OZJ", "start": 125245706, "end": 125291852}, {"filename": "/Data/Object5/re_04.OZJ", "start": 125291852, "end": 125308317}, {"filename": "/Data/Object5/re_05.OZJ", "start": 125308317, "end": 125331330}, {"filename": "/Data/Object5/re_06_2.OZJ", "start": 125331330, "end": 125337296}, {"filename": "/Data/Object5/re_06_3.OZJ", "start": 125337296, "end": 125342088}, {"filename": "/Data/Object5/re_07.OZJ", "start": 125342088, "end": 125377238}, {"filename": "/Data/Object5/re_08.OZJ", "start": 125377238, "end": 125387557}, {"filename": "/Data/Object5/t17.OZJ", "start": 125387557, "end": 125397317}, {"filename": "/Data/Object5/t18.OZJ", "start": 125397317, "end": 125404864}, {"filename": "/Data/Object5/t19.OZJ", "start": 125404864, "end": 125411061}, {"filename": "/Data/Object5/t20.OZJ", "start": 125411061, "end": 125417441}, {"filename": "/Data/Object5/taa01.OZT", "start": 125417441, "end": 125483025}, {"filename": "/Data/Object5/taa02.OZT", "start": 125483025, "end": 125548609}, {"filename": "/Data/Object5/taa03.OZT", "start": 125548609, "end": 125552753}, {"filename": "/Data/Object5/worm.OZT", "start": 125552753, "end": 125556897}, {"filename": "/Data/Object6/Object04.bmd", "start": 125556897, "end": 125561303}, {"filename": "/Data/Object6/Object05.bmd", "start": 125561303, "end": 125572369}, {"filename": "/Data/Object6/Object07.bmd", "start": 125572369, "end": 125635741}, {"filename": "/Data/Object6/Object10.bmd", "start": 125635741, "end": 125641019}, {"filename": "/Data/Object6/Object17.bmd", "start": 125641019, "end": 125648709}, {"filename": "/Data/Object6/Object19.bmd", "start": 125648709, "end": 125668840}, {"filename": "/Data/Object6/Object20.bmd", "start": 125668840, "end": 125682814}, {"filename": "/Data/Object6/Object21.bmd", "start": 125682814, "end": 125716580}, {"filename": "/Data/Object6/Object25.bmd", "start": 125716580, "end": 125755058}, {"filename": "/Data/Object6/Object26.bmd", "start": 125755058, "end": 125768324}, {"filename": "/Data/Object6/Object28.bmd", "start": 125768324, "end": 125777462}, {"filename": "/Data/Object6/Object29.bmd", "start": 125777462, "end": 125785810}, {"filename": "/Data/Object6/Object30.bmd", "start": 125785810, "end": 125794948}, {"filename": "/Data/Object6/Object31.bmd", "start": 125794948, "end": 125882379}, {"filename": "/Data/Object6/Object32.bmd", "start": 125882379, "end": 125889805}, {"filename": "/Data/Object6/Object33.bmd", "start": 125889805, "end": 125897239}, {"filename": "/Data/Object6/Object34.bmd", "start": 125897239, "end": 125899337}, {"filename": "/Data/Object6/Object40.bmd", "start": 125899337, "end": 125994000}, {"filename": "/Data/Object6/Object41.bmd", "start": 125994000, "end": 126073989}, {"filename": "/Data/Object6/TileGround03.OZJ", "start": 126073989, "end": 126099323}, {"filename": "/Data/Object6/bfish07.OZJ", "start": 126099323, "end": 126169994}, {"filename": "/Data/Object6/bfish072.OZJ", "start": 126169994, "end": 126252955}, {"filename": "/Data/Object6/bfish073.OZJ", "start": 126252955, "end": 126330223}, {"filename": "/Data/Object6/hh.OZJ", "start": 126330223, "end": 126342832}, {"filename": "/Data/Object6/ship01.OZJ", "start": 126342832, "end": 126375940}, {"filename": "/Data/Object6/ship03.OZJ", "start": 126375940, "end": 126385727}, {"filename": "/Data/Object6/ship04.OZJ", "start": 126385727, "end": 126401741}, {"filename": "/Data/Object6/ship05.OZJ", "start": 126401741, "end": 126407795}, {"filename": "/Data/Object6/ship05.OZT", "start": 126407795, "end": 126416035}, {"filename": "/Data/Object6/ship06.OZJ", "start": 126416035, "end": 126421322}, {"filename": "/Data/Object6/ship06.OZT", "start": 126421322, "end": 126421626}, {"filename": "/Data/Object6/ship07.OZJ", "start": 126421626, "end": 126461651}, {"filename": "/Data/Object6/ship07.OZT", "start": 126461651, "end": 126462723}, {"filename": "/Data/Object6/sou01.OZJ", "start": 126462723, "end": 126476691}, {"filename": "/Data/Object6/sou02.OZJ", "start": 126476691, "end": 126487773}, {"filename": "/Data/Object6/squid01.OZJ", "start": 126487773, "end": 126521673}, {"filename": "/Data/Object6/squid02.OZJ", "start": 126521673, "end": 126528387}, {"filename": "/Data/Object6/star01.OZJ", "start": 126528387, "end": 126540281}, {"filename": "/Data/Object6/ston00.OZJ", "start": 126540281, "end": 126610786}, {"filename": "/Data/Object6/ston03.OZJ", "start": 126610786, "end": 126707451}, {"filename": "/Data/Object6/ston033.OZJ", "start": 126707451, "end": 126804116}, {"filename": "/Data/Object6/wood00.OZJ", "start": 126804116, "end": 126811395}, {"filename": "/Data/Object6/wood01.OZJ", "start": 126811395, "end": 126823790}, {"filename": "/Data/Object6/wood02.OZJ", "start": 126823790, "end": 126851962}, {"filename": "/Data/Object6/wood03.OZJ", "start": 126851962, "end": 126873455}, {"filename": "/Data/Object6/wood04.OZJ", "start": 126873455, "end": 126910440}, {"filename": "/Data/Object6/wood05.OZJ", "start": 126910440, "end": 127001699}, {"filename": "/Data/Object6/wood052.OZJ", "start": 127001699, "end": 127023623}, {"filename": "/Data/Object6/wooda.OZJ", "start": 127023623, "end": 127048977}, {"filename": "/Data/Object7/Bug01.bmd", "start": 127048977, "end": 127057178}, {"filename": "/Data/Object7/Object01.bmd", "start": 127057178, "end": 127125635}, {"filename": "/Data/Object7/Object02.bmd", "start": 127125635, "end": 127194092}, {"filename": "/Data/Object7/Object03.bmd", "start": 127194092, "end": 127223482}, {"filename": "/Data/Object7/Object04.bmd", "start": 127223482, "end": 127229795}, {"filename": "/Data/Object7/Object05.bmd", "start": 127229795, "end": 127259185}, {"filename": "/Data/Object7/Object06.bmd", "start": 127259185, "end": 127290270}, {"filename": "/Data/Object7/Object07.bmd", "start": 127290270, "end": 127321355}, {"filename": "/Data/Object7/Object08.bmd", "start": 127321355, "end": 127352440}, {"filename": "/Data/Object7/Object09.bmd", "start": 127352440, "end": 127359741}, {"filename": "/Data/Object7/Object10.bmd", "start": 127359741, "end": 127365756}, {"filename": "/Data/Object7/Object11.bmd", "start": 127365756, "end": 127368094}, {"filename": "/Data/Object7/Object12.bmd", "start": 127368094, "end": 127377567}, {"filename": "/Data/Object7/Object13.bmd", "start": 127377567, "end": 127400451}, {"filename": "/Data/Object7/Object14.bmd", "start": 127400451, "end": 127423335}, {"filename": "/Data/Object7/Object15.bmd", "start": 127423335, "end": 127431698}, {"filename": "/Data/Object7/Object16.bmd", "start": 127431698, "end": 127436492}, {"filename": "/Data/Object7/Object17.bmd", "start": 127436492, "end": 127452816}, {"filename": "/Data/Object7/Object18.bmd", "start": 127452816, "end": 127466975}, {"filename": "/Data/Object7/Object19.bmd", "start": 127466975, "end": 127492627}, {"filename": "/Data/Object7/Object20.bmd", "start": 127492627, "end": 127518239}, {"filename": "/Data/Object7/Object21.bmd", "start": 127518239, "end": 127520803}, {"filename": "/Data/Object7/Object22.bmd", "start": 127520803, "end": 127545060}, {"filename": "/Data/Object7/Object23.bmd", "start": 127545060, "end": 127550488}, {"filename": "/Data/Object7/Object24.bmd", "start": 127550488, "end": 127557392}, {"filename": "/Data/Object7/Object25.bmd", "start": 127557392, "end": 127628222}, {"filename": "/Data/Object7/Object26.bmd", "start": 127628222, "end": 127711525}, {"filename": "/Data/Object7/Object27.bmd", "start": 127711525, "end": 127720259}, {"filename": "/Data/Object7/Object28.bmd", "start": 127720259, "end": 127734460}, {"filename": "/Data/Object7/Object29.bmd", "start": 127734460, "end": 127748661}, {"filename": "/Data/Object7/Object30.bmd", "start": 127748661, "end": 127762862}, {"filename": "/Data/Object7/Object31.bmd", "start": 127762862, "end": 127777063}, {"filename": "/Data/Object7/Object32.bmd", "start": 127777063, "end": 127790277}, {"filename": "/Data/Object7/Object33.bmd", "start": 127790277, "end": 127803491}, {"filename": "/Data/Object7/Object34.bmd", "start": 127803491, "end": 127818152}, {"filename": "/Data/Object7/Object35.bmd", "start": 127818152, "end": 127832813}, {"filename": "/Data/Object7/Object36.bmd", "start": 127832813, "end": 127845532}, {"filename": "/Data/Object7/Object37.bmd", "start": 127845532, "end": 127858251}, {"filename": "/Data/Object7/Object38.bmd", "start": 127858251, "end": 127861077}, {"filename": "/Data/Object7/Object39.bmd", "start": 127861077, "end": 127861879}, {"filename": "/Data/Object7/Object40.bmd", "start": 127861879, "end": 127876381}, {"filename": "/Data/Object7/Object41.bmd", "start": 127876381, "end": 127890883}, {"filename": "/Data/Object7/au_01.OZJ", "start": 127890883, "end": 127955719}, {"filename": "/Data/Object7/au_02.OZJ", "start": 127955719, "end": 128019805}, {"filename": "/Data/Object7/au_02.OZT", "start": 128019805, "end": 128020877}, {"filename": "/Data/Object7/au_03.OZJ", "start": 128020877, "end": 128107362}, {"filename": "/Data/Object7/au_03.OZT", "start": 128107362, "end": 128109458}, {"filename": "/Data/Object7/au_04.OZJ", "start": 128109458, "end": 128212363}, {"filename": "/Data/Object7/au_04.OZT", "start": 128212363, "end": 128212923}, {"filename": "/Data/Object7/au_05.OZJ", "start": 128212923, "end": 128310238}, {"filename": "/Data/Object7/au_07.OZJ", "start": 128310238, "end": 128390430}, {"filename": "/Data/Object7/au_09.OZJ", "start": 128390430, "end": 128431219}, {"filename": "/Data/Object7/au_10.OZJ", "start": 128431219, "end": 128534163}, {"filename": "/Data/Object7/au_11.OZJ", "start": 128534163, "end": 128628150}, {"filename": "/Data/Object7/au_12.OZJ", "start": 128628150, "end": 128653111}, {"filename": "/Data/Object7/au_5.OZT", "start": 128653111, "end": 128657255}, {"filename": "/Data/Object7/au_6.OZT", "start": 128657255, "end": 128661399}, {"filename": "/Data/Object7/gggd01.OZT", "start": 128661399, "end": 128665543}, {"filename": "/Data/Object7/gggi01.OZJ", "start": 128665543, "end": 128682184}, {"filename": "/Data/Object7/gggi02.OZJ", "start": 128682184, "end": 128725748}, {"filename": "/Data/Object7/gggi04.OZJ", "start": 128725748, "end": 128765871}, {"filename": "/Data/Object7/gggi05.OZJ", "start": 128765871, "end": 128771809}, {"filename": "/Data/Object7/notice.OZJ", "start": 128771809, "end": 128783681}, {"filename": "/Data/Object7/tree_01.OZT", "start": 128783681, "end": 128787825}, {"filename": "/Data/Object7/tree_02.OZT", "start": 128787825, "end": 128791969}, {"filename": "/Data/Object7/tree_08.OZT", "start": 128791969, "end": 128796113}, {"filename": "/Data/Object7/tree_09.OZT", "start": 128796113, "end": 128804353}, {"filename": "/Data/Object7/water.OZJ", "start": 128804353, "end": 128834925}, {"filename": "/Data/Object8/Fish02.bmd", "start": 128834925, "end": 128839219}, {"filename": "/Data/Object8/Fish03.bmd", "start": 128839219, "end": 128843513}, {"filename": "/Data/Object8/Fish04.bmd", "start": 128843513, "end": 128848415}, {"filename": "/Data/Object8/Fish05.bmd", "start": 128848415, "end": 128853317}, {"filename": "/Data/Object8/Fish06.bmd", "start": 128853317, "end": 128861220}, {"filename": "/Data/Object8/Fish07.bmd", "start": 128861220, "end": 128869123}, {"filename": "/Data/Object8/Fish08.bmd", "start": 128869123, "end": 128887046}, {"filename": "/Data/Object8/Fish09.bmd", "start": 128887046, "end": 128906325}, {"filename": "/Data/Object8/Object01.bmd", "start": 128906325, "end": 129008047}, {"filename": "/Data/Object8/Object02.bmd", "start": 129008047, "end": 129042625}, {"filename": "/Data/Object8/Object03.bmd", "start": 129042625, "end": 129074167}, {"filename": "/Data/Object8/Object04.bmd", "start": 129074167, "end": 129078573}, {"filename": "/Data/Object8/Object05.bmd", "start": 129078573, "end": 129089639}, {"filename": "/Data/Object8/Object06.bmd", "start": 129089639, "end": 129092961}, {"filename": "/Data/Object8/Object07.bmd", "start": 129092961, "end": 129095247}, {"filename": "/Data/Object8/Object08.bmd", "start": 129095247, "end": 129175236}, {"filename": "/Data/Object8/Object09.bmd", "start": 129175236, "end": 129261322}, {"filename": "/Data/Object8/Object10.bmd", "start": 129261322, "end": 129355985}, {"filename": "/Data/Object8/Object11.bmd", "start": 129355985, "end": 129450795}, {"filename": "/Data/Object8/Object12.bmd", "start": 129450795, "end": 129489273}, {"filename": "/Data/Object8/Object13.bmd", "start": 129489273, "end": 129514855}, {"filename": "/Data/Object8/Object14.bmd", "start": 129514855, "end": 129528121}, {"filename": "/Data/Object8/Object15.bmd", "start": 129528121, "end": 129561887}, {"filename": "/Data/Object8/Object16.bmd", "start": 129561887, "end": 129575861}, {"filename": "/Data/Object8/Object17.bmd", "start": 129575861, "end": 129583551}, {"filename": "/Data/Object8/Object18.bmd", "start": 129583551, "end": 129589517}, {"filename": "/Data/Object8/Object19.bmd", "start": 129589517, "end": 129598583}, {"filename": "/Data/Object8/Object20.bmd", "start": 129598583, "end": 129603861}, {"filename": "/Data/Object8/Object21.bmd", "start": 129603861, "end": 129627367}, {"filename": "/Data/Object8/Object22.bmd", "start": 129627367, "end": 129627757}, {"filename": "/Data/Object8/Object23.bmd", "start": 129627757, "end": 129628951}, {"filename": "/Data/Object8/Object24.bmd", "start": 129628951, "end": 129630045}, {"filename": "/Data/Object8/Object25.bmd", "start": 129630045, "end": 129655032}, {"filename": "/Data/Object8/Object26.bmd", "start": 129655032, "end": 129729659}, {"filename": "/Data/Object8/Object27.bmd", "start": 129729659, "end": 129737461}, {"filename": "/Data/Object8/Object28.bmd", "start": 129737461, "end": 129844419}, {"filename": "/Data/Object8/Object29.bmd", "start": 129844419, "end": 129958471}, {"filename": "/Data/Object8/Object30.bmd", "start": 129958471, "end": 129967609}, {"filename": "/Data/Object8/Object31.bmd", "start": 129967609, "end": 129976747}, {"filename": "/Data/Object8/Object32.bmd", "start": 129976747, "end": 129980113}, {"filename": "/Data/Object8/Object33.bmd", "start": 129980113, "end": 129988461}, {"filename": "/Data/Object8/Object34.bmd", "start": 129988461, "end": 129992067}, {"filename": "/Data/Object8/Object35.bmd", "start": 129992067, "end": 130138351}, {"filename": "/Data/Object8/Object36.bmd", "start": 130138351, "end": 130162969}, {"filename": "/Data/Object8/Object37.bmd", "start": 130162969, "end": 130182627}, {"filename": "/Data/Object8/Object38.bmd", "start": 130182627, "end": 130238433}, {"filename": "/Data/Object8/Object39.bmd", "start": 130238433, "end": 130239365}, {"filename": "/Data/Object8/Object40.bmd", "start": 130239365, "end": 130240167}, {"filename": "/Data/Object8/Object41.bmd", "start": 130240167, "end": 130241620}, {"filename": "/Data/Object8/bfish01.OZJ", "start": 130241620, "end": 130253513}, {"filename": "/Data/Object8/bfish02.OZJ", "start": 130253513, "end": 130265254}, {"filename": "/Data/Object8/bfish04.OZJ", "start": 130265254, "end": 130277490}, {"filename": "/Data/Object8/bfish05.OZJ", "start": 130277490, "end": 130290382}, {"filename": "/Data/Object8/bfish06.OZJ", "start": 130290382, "end": 130299083}, {"filename": "/Data/Object8/bfish07.OZJ", "start": 130299083, "end": 130369754}, {"filename": "/Data/Object8/bfish072.OZJ", "start": 130369754, "end": 130452715}, {"filename": "/Data/Object8/bfish073.OZJ", "start": 130452715, "end": 130529983}, {"filename": "/Data/Object8/bfish08.OZJ", "start": 130529983, "end": 130551082}, {"filename": "/Data/Object8/bfish09.OZJ", "start": 130551082, "end": 130571489}, {"filename": "/Data/Object8/bfish10.OZJ", "start": 130571489, "end": 130579698}, {"filename": "/Data/Object8/bons.OZJ", "start": 130579698, "end": 130607497}, {"filename": "/Data/Object8/bu0.OZT", "start": 130607497, "end": 130673081}, {"filename": "/Data/Object8/bu01.OZT", "start": 130673081, "end": 130689513}, {"filename": "/Data/Object8/bu02.OZT", "start": 130689513, "end": 130755097}, {"filename": "/Data/Object8/bu03.OZT", "start": 130755097, "end": 130771529}, {"filename": "/Data/Object8/bu04.OZT", "start": 130771529, "end": 130775673}, {"filename": "/Data/Object8/drop01.OZJ", "start": 130775673, "end": 130782952}, {"filename": "/Data/Object8/ioi01.OZJ", "start": 130782952, "end": 130818081}, {"filename": "/Data/Object8/light01.OZJ", "start": 130818081, "end": 130824018}, {"filename": "/Data/Object8/sea01.OZJ", "start": 130824018, "end": 130895177}, {"filename": "/Data/Object8/star01.OZJ", "start": 130895177, "end": 130907071}, {"filename": "/Data/Object8/ston00.OZJ", "start": 130907071, "end": 130977576}, {"filename": "/Data/Object8/ston033.OZJ", "start": 130977576, "end": 131074241}, {"filename": "/Data/Object8/wood00.OZJ", "start": 131074241, "end": 131081520}, {"filename": "/Data/Object8/wood01.OZJ", "start": 131081520, "end": 131093915}, {"filename": "/Data/Object8/wood02.OZJ", "start": 131093915, "end": 131122087}, {"filename": "/Data/Object8/wood03.OZJ", "start": 131122087, "end": 131143580}, {"filename": "/Data/Object8/wood04.OZJ", "start": 131143580, "end": 131180565}, {"filename": "/Data/Object8/wood05.OZJ", "start": 131180565, "end": 131271824}, {"filename": "/Data/Object8/wood052.OZJ", "start": 131271824, "end": 131293748}, {"filename": "/Data/Object8/wooda.OZJ", "start": 131293748, "end": 131319102}, {"filename": "/Data/Object8/wt00.OZJ", "start": 131319102, "end": 131326722}, {"filename": "/Data/Object8/wt01.OZJ", "start": 131326722, "end": 131334793}, {"filename": "/Data/Object8/wt02.OZJ", "start": 131334793, "end": 131342891}, {"filename": "/Data/Object8/wt03.OZJ", "start": 131342891, "end": 131351044}, {"filename": "/Data/Object8/wt04.OZJ", "start": 131351044, "end": 131359157}, {"filename": "/Data/Object8/wt05.OZJ", "start": 131359157, "end": 131367236}, {"filename": "/Data/Object8/wt06.OZJ", "start": 131367236, "end": 131375330}, {"filename": "/Data/Object8/wt07.OZJ", "start": 131375330, "end": 131383447}, {"filename": "/Data/Object8/wt08.OZJ", "start": 131383447, "end": 131391570}, {"filename": "/Data/Object8/wt09.OZJ", "start": 131391570, "end": 131399704}, {"filename": "/Data/Object8/wt10.OZJ", "start": 131399704, "end": 131407807}, {"filename": "/Data/Object8/wt11.OZJ", "start": 131407807, "end": 131415868}, {"filename": "/Data/Object8/wt12.OZJ", "start": 131415868, "end": 131423961}, {"filename": "/Data/Object8/wt13.OZJ", "start": 131423961, "end": 131431989}, {"filename": "/Data/Object8/wt14.OZJ", "start": 131431989, "end": 131440051}, {"filename": "/Data/Object8/wt15.OZJ", "start": 131440051, "end": 131448095}, {"filename": "/Data/Object8/wt16.OZJ", "start": 131448095, "end": 131456139}, {"filename": "/Data/Object8/wt17.OZJ", "start": 131456139, "end": 131464162}, {"filename": "/Data/Object8/wt18.OZJ", "start": 131464162, "end": 131472217}, {"filename": "/Data/Object8/wt19.OZJ", "start": 131472217, "end": 131480261}, {"filename": "/Data/Object8/wt20.OZJ", "start": 131480261, "end": 131488298}, {"filename": "/Data/Object8/wt21.OZJ", "start": 131488298, "end": 131496376}, {"filename": "/Data/Object8/wt22.OZJ", "start": 131496376, "end": 131504435}, {"filename": "/Data/Object8/wt23.OZJ", "start": 131504435, "end": 131512462}, {"filename": "/Data/Object8/wt24.OZJ", "start": 131512462, "end": 131520484}, {"filename": "/Data/Object8/wt25.OZJ", "start": 131520484, "end": 131528506}, {"filename": "/Data/Object8/wt26.OZJ", "start": 131528506, "end": 131536552}, {"filename": "/Data/Object8/wt27.OZJ", "start": 131536552, "end": 131544604}, {"filename": "/Data/Object8/wt28.OZJ", "start": 131544604, "end": 131552639}, {"filename": "/Data/Object8/wt29.OZJ", "start": 131552639, "end": 131560687}, {"filename": "/Data/Object8/wt30.OZJ", "start": 131560687, "end": 131568758}, {"filename": "/Data/Object8/wt31.OZJ", "start": 131568758, "end": 131576845}, {"filename": "/Data/Object9/Bug02.bmd", "start": 131576845, "end": 131579658}, {"filename": "/Data/Object9/DDD.OZJ", "start": 131579658, "end": 131583667}, {"filename": "/Data/Object9/Df.OZT", "start": 131583667, "end": 131616483}, {"filename": "/Data/Object9/Dr.OZT", "start": 131616483, "end": 131620627}, {"filename": "/Data/Object9/Impack03.OZJ", "start": 131620627, "end": 131631917}, {"filename": "/Data/Object9/Object02.bmd", "start": 131631917, "end": 131675403}, {"filename": "/Data/Object9/Object03.bmd", "start": 131675403, "end": 131682957}, {"filename": "/Data/Object9/Object06.bmd", "start": 131682957, "end": 131726423}, {"filename": "/Data/Object9/Object07.bmd", "start": 131726423, "end": 131730107}, {"filename": "/Data/Object9/Object08.bmd", "start": 131730107, "end": 131730497}, {"filename": "/Data/Object9/Object09.bmd", "start": 131730497, "end": 131735901}, {"filename": "/Data/Object9/Object10.bmd", "start": 131735901, "end": 131757883}, {"filename": "/Data/Object9/Object11.bmd", "start": 131757883, "end": 131768141}, {"filename": "/Data/Object9/Object12.bmd", "start": 131768141, "end": 131778343}, {"filename": "/Data/Object9/Object13.bmd", "start": 131778343, "end": 131786259}, {"filename": "/Data/Object9/Object14.bmd", "start": 131786259, "end": 131796461}, {"filename": "/Data/Object9/Object15.bmd", "start": 131796461, "end": 131811877}, {"filename": "/Data/Object9/Object16.bmd", "start": 131811877, "end": 131825091}, {"filename": "/Data/Object9/Object17.bmd", "start": 131825091, "end": 131838305}, {"filename": "/Data/Object9/Object18.bmd", "start": 131838305, "end": 131852966}, {"filename": "/Data/Object9/Object19.bmd", "start": 131852966, "end": 131867627}, {"filename": "/Data/Object9/Object20.bmd", "start": 131867627, "end": 131880346}, {"filename": "/Data/Object9/Object21.bmd", "start": 131880346, "end": 131890884}, {"filename": "/Data/Object9/Object22.bmd", "start": 131890884, "end": 131902514}, {"filename": "/Data/Object9/Object23.bmd", "start": 131902514, "end": 131907748}, {"filename": "/Data/Object9/Object24.bmd", "start": 131907748, "end": 131912358}, {"filename": "/Data/Object9/Object25.bmd", "start": 131912358, "end": 131925868}, {"filename": "/Data/Object9/Object26.bmd", "start": 131925868, "end": 131935602}, {"filename": "/Data/Object9/Object27.bmd", "start": 131935602, "end": 131939624}, {"filename": "/Data/Object9/Object28.bmd", "start": 131939624, "end": 131944186}, {"filename": "/Data/Object9/Object29.bmd", "start": 131944186, "end": 131948152}, {"filename": "/Data/Object9/Object30.bmd", "start": 131948152, "end": 132000578}, {"filename": "/Data/Object9/Object31.bmd", "start": 132000578, "end": 132004161}, {"filename": "/Data/Object9/Object32.bmd", "start": 132004161, "end": 132021399}, {"filename": "/Data/Object9/Object33.bmd", "start": 132021399, "end": 132038637}, {"filename": "/Data/Object9/Object34.bmd", "start": 132038637, "end": 132074873}, {"filename": "/Data/Object9/Object37.bmd", "start": 132074873, "end": 132096111}, {"filename": "/Data/Object9/Object38.bmd", "start": 132096111, "end": 132106477}, {"filename": "/Data/Object9/Object40.bmd", "start": 132106477, "end": 132110791}, {"filename": "/Data/Object9/Object41.bmd", "start": 132110791, "end": 132122701}, {"filename": "/Data/Object9/Object42.bmd", "start": 132122701, "end": 132129191}, {"filename": "/Data/Object9/Object43.bmd", "start": 132129191, "end": 132137253}, {"filename": "/Data/Object9/Object44.bmd", "start": 132137253, "end": 132142419}, {"filename": "/Data/Object9/Object45.bmd", "start": 132142419, "end": 132156421}, {"filename": "/Data/Object9/Object46.bmd", "start": 132156421, "end": 132164251}, {"filename": "/Data/Object9/Object47.bmd", "start": 132164251, "end": 132180017}, {"filename": "/Data/Object9/Object48.bmd", "start": 132180017, "end": 132187879}, {"filename": "/Data/Object9/Object49.bmd", "start": 132187879, "end": 132231169}, {"filename": "/Data/Object9/Object50.bmd", "start": 132231169, "end": 132262199}, {"filename": "/Data/Object9/Object51.bmd", "start": 132262199, "end": 132384058}, {"filename": "/Data/Object9/Object52.bmd", "start": 132384058, "end": 132403872}, {"filename": "/Data/Object9/Object53.bmd", "start": 132403872, "end": 132411110}, {"filename": "/Data/Object9/Object54.bmd", "start": 132411110, "end": 132412560}, {"filename": "/Data/Object9/Object55.bmd", "start": 132412560, "end": 132427972}, {"filename": "/Data/Object9/Object56.bmd", "start": 132427972, "end": 132432202}, {"filename": "/Data/Object9/Object57.bmd", "start": 132432202, "end": 132443456}, {"filename": "/Data/Object9/Object58.bmd", "start": 132443456, "end": 132622948}, {"filename": "/Data/Object9/Object59.bmd", "start": 132622948, "end": 132629446}, {"filename": "/Data/Object9/Object60.bmd", "start": 132629446, "end": 132637561}, {"filename": "/Data/Object9/Object61.bmd", "start": 132637561, "end": 132638755}, {"filename": "/Data/Object9/Object62.bmd", "start": 132638755, "end": 132651031}, {"filename": "/Data/Object9/Object63.bmd", "start": 132651031, "end": 132661469}, {"filename": "/Data/Object9/Object64.bmd", "start": 132661469, "end": 132662781}, {"filename": "/Data/Object9/Object66.bmd", "start": 132662781, "end": 132676563}, {"filename": "/Data/Object9/Object67.bmd", "start": 132676563, "end": 132690345}, {"filename": "/Data/Object9/Object68.bmd", "start": 132690345, "end": 132704127}, {"filename": "/Data/Object9/Object69.bmd", "start": 132704127, "end": 132771981}, {"filename": "/Data/Object9/Object70.bmd", "start": 132771981, "end": 132835667}, {"filename": "/Data/Object9/Object71.bmd", "start": 132835667, "end": 132836861}, {"filename": "/Data/Object9/Object72.bmd", "start": 132836861, "end": 132927579}, {"filename": "/Data/Object9/Object73.bmd", "start": 132927579, "end": 132937781}, {"filename": "/Data/Object9/Object74.bmd", "start": 132937781, "end": 132947983}, {"filename": "/Data/Object9/Object75.bmd", "start": 132947983, "end": 133015837}, {"filename": "/Data/Object9/Object76.bmd", "start": 133015837, "end": 133026039}, {"filename": "/Data/Object9/Object77.bmd", "start": 133026039, "end": 133027233}, {"filename": "/Data/Object9/Object78.bmd", "start": 133027233, "end": 133028427}, {"filename": "/Data/Object9/Object79.bmd", "start": 133028427, "end": 133049665}, {"filename": "/Data/Object9/Object80.bmd", "start": 133049665, "end": 133059867}, {"filename": "/Data/Object9/Object81.bmd", "start": 133059867, "end": 133064533}, {"filename": "/Data/Object9/Object82.bmd", "start": 133064533, "end": 133067267}, {"filename": "/Data/Object9/Object83.bmd", "start": 133067267, "end": 133068199}, {"filename": "/Data/Object9/Object84.bmd", "start": 133068199, "end": 133069393}, {"filename": "/Data/Object9/R.OZJ", "start": 133069393, "end": 133071984}, {"filename": "/Data/Object9/arrow.OZT", "start": 133071984, "end": 133072288}, {"filename": "/Data/Object9/bug.OZJ", "start": 133072288, "end": 133074379}, {"filename": "/Data/Object9/casket.OZJ", "start": 133074379, "end": 133087662}, {"filename": "/Data/Object9/cl.OZT", "start": 133087662, "end": 133091806}, {"filename": "/Data/Object9/col.OZJ", "start": 133091806, "end": 133129921}, {"filename": "/Data/Object9/col2.OZJ", "start": 133129921, "end": 133137567}, {"filename": "/Data/Object9/face.OZJ", "start": 133137567, "end": 133205457}, {"filename": "/Data/Object9/face2.OZJ", "start": 133205457, "end": 133264259}, {"filename": "/Data/Object9/finger.OZJ", "start": 133264259, "end": 133274941}, {"filename": "/Data/Object9/finger1.OZJ", "start": 133274941, "end": 133285596}, {"filename": "/Data/Object9/flag.OZJ", "start": 133285596, "end": 133290697}, {"filename": "/Data/Object9/flag.OZT", "start": 133290697, "end": 133323513}, {"filename": "/Data/Object9/gaer.OZJ", "start": 133323513, "end": 133350895}, {"filename": "/Data/Object9/gear.OZT", "start": 133350895, "end": 133613087}, {"filename": "/Data/Object9/gearB.OZJ", "start": 133613087, "end": 133615936}, {"filename": "/Data/Object9/hand1.OZJ", "start": 133615936, "end": 133648348}, {"filename": "/Data/Object9/light01.OZJ", "start": 133648348, "end": 133654285}, {"filename": "/Data/Object9/p.OZT", "start": 133654285, "end": 133658429}, {"filename": "/Data/Object9/redB.OZJ", "start": 133658429, "end": 133685843}, {"filename": "/Data/Object9/sand01.OZJ", "start": 133685843, "end": 133707195}, {"filename": "/Data/Object9/sand02.OZJ", "start": 133707195, "end": 133757213}, {"filename": "/Data/Object9/sf.OZJ", "start": 133757213, "end": 133788618}, {"filename": "/Data/Object9/sf2.OZJ", "start": 133788618, "end": 133847955}, {"filename": "/Data/Object9/sf3.OZJ", "start": 133847955, "end": 133871680}, {"filename": "/Data/Object9/sf4.OZJ", "start": 133871680, "end": 133890034}, {"filename": "/Data/Object9/statue.OZJ", "start": 133890034, "end": 133910290}, {"filename": "/Data/Object9/statue2.OZJ", "start": 133910290, "end": 133930191}, {"filename": "/Data/Object9/ston.OZJ", "start": 133930191, "end": 133993756}, {"filename": "/Data/Object9/ston2.OZJ", "start": 133993756, "end": 134027226}, {"filename": "/Data/Object9/stonD.OZJ", "start": 134027226, "end": 134042860}, {"filename": "/Data/Object9/test1.OZT", "start": 134042860, "end": 134051100}, {"filename": "/Data/Object9/test12.OZJ", "start": 134051100, "end": 134077363}, {"filename": "/Data/Object9/test15.OZT", "start": 134077363, "end": 134085603}, {"filename": "/Data/Object9/test16.OZJ", "start": 134085603, "end": 134119250}, {"filename": "/Data/Object9/test17.OZJ", "start": 134119250, "end": 134154975}, {"filename": "/Data/Object9/test18.OZJ", "start": 134154975, "end": 134205979}, {"filename": "/Data/Object9/test2.OZJ", "start": 134205979, "end": 134222130}, {"filename": "/Data/Object9/test2.OZT", "start": 134222130, "end": 134287714}, {"filename": "/Data/Object9/test20.OZJ", "start": 134287714, "end": 134310600}, {"filename": "/Data/Object9/test22.OZJ", "start": 134310600, "end": 134418289}, {"filename": "/Data/Object9/test23.OZJ", "start": 134418289, "end": 134521587}, {"filename": "/Data/Object9/test24.OZJ", "start": 134521587, "end": 134623935}, {"filename": "/Data/Object9/test3.OZJ", "start": 134623935, "end": 134639489}, {"filename": "/Data/Object9/test37.OZJ", "start": 134639489, "end": 134648473}, {"filename": "/Data/Object9/test4.OZJ", "start": 134648473, "end": 134665636}, {"filename": "/Data/Object9/tree_01.OZT", "start": 134665636, "end": 134669780}, {"filename": "/Data/Object9/tree_02.OZT", "start": 134669780, "end": 134673924}, {"filename": "/Data/Object9/tree_08.OZT", "start": 134673924, "end": 134678068}, {"filename": "/Data/Object9/tree_09.OZT", "start": 134678068, "end": 134686308}, {"filename": "/Data/Player/Angel.bmd", "start": 134686308, "end": 134753554}, {"filename": "/Data/Player/ArmorClass01.bmd", "start": 134753554, "end": 134770317}, {"filename": "/Data/Player/ArmorClass02.bmd", "start": 134770317, "end": 134784080}, {"filename": "/Data/Player/ArmorClass03.bmd", "start": 134784080, "end": 134797843}, {"filename": "/Data/Player/ArmorClass04.bmd", "start": 134797843, "end": 134814606}, {"filename": "/Data/Player/ArmorClass05.bmd", "start": 134814606, "end": 134843146}, {"filename": "/Data/Player/ArmorClass201.bmd", "start": 134843146, "end": 134859846}, {"filename": "/Data/Player/ArmorClass202.bmd", "start": 134859846, "end": 134873546}, {"filename": "/Data/Player/ArmorClass203.bmd", "start": 134873546, "end": 134886918}, {"filename": "/Data/Player/ArmorElf01.bmd", "start": 134886918, "end": 134905397}, {"filename": "/Data/Player/ArmorElf02.bmd", "start": 134905397, "end": 134923444}, {"filename": "/Data/Player/ArmorElf03.bmd", "start": 134923444, "end": 134948563}, {"filename": "/Data/Player/ArmorElf04.bmd", "start": 134948563, "end": 134969500}, {"filename": "/Data/Player/ArmorElf05.bmd", "start": 134969500, "end": 134995155}, {"filename": "/Data/Player/ArmorMale01.bmd", "start": 134995155, "end": 135013880}, {"filename": "/Data/Player/ArmorMale02.bmd", "start": 135013880, "end": 135041495}, {"filename": "/Data/Player/ArmorMale03.bmd", "start": 135041495, "end": 135059214}, {"filename": "/Data/Player/ArmorMale04.bmd", "start": 135059214, "end": 135078127}, {"filename": "/Data/Player/ArmorMale05.bmd", "start": 135078127, "end": 135098000}, {"filename": "/Data/Player/ArmorMale06.bmd", "start": 135098000, "end": 135118621}, {"filename": "/Data/Player/ArmorMale07.bmd", "start": 135118621, "end": 135138714}, {"filename": "/Data/Player/ArmorMale08.bmd", "start": 135138714, "end": 135164849}, {"filename": "/Data/Player/ArmorMale09.bmd", "start": 135164849, "end": 135184800}, {"filename": "/Data/Player/ArmorMale10.bmd", "start": 135184800, "end": 135207213}, {"filename": "/Data/Player/ArmorMale16.bmd", "start": 135207213, "end": 135232258}, {"filename": "/Data/Player/ArmorMale17.bmd", "start": 135232258, "end": 135259533}, {"filename": "/Data/Player/ArmorMale18.bmd", "start": 135259533, "end": 135299856}, {"filename": "/Data/Player/ArmorMale19.bmd", "start": 135299856, "end": 135320657}, {"filename": "/Data/Player/ArmorMale20.bmd", "start": 135320657, "end": 135358712}, {"filename": "/Data/Player/ArmorMale21.bmd", "start": 135358712, "end": 135396718}, {"filename": "/Data/Player/ArmorMale22.bmd", "start": 135396718, "end": 135436092}, {"filename": "/Data/Player/ArmorMale23.bmd", "start": 135436092, "end": 135464076}, {"filename": "/Data/Player/ArmorMale24.bmd", "start": 135464076, "end": 135507546}, {"filename": "/Data/Player/ArmorMale25.bmd", "start": 135507546, "end": 135552036}, {"filename": "/Data/Player/ArmorMale26.bmd", "start": 135552036, "end": 135582694}, {"filename": "/Data/Player/ArmorMale27.bmd", "start": 135582694, "end": 135628974}, {"filename": "/Data/Player/ArmorMale28.bmd", "start": 135628974, "end": 135665470}, {"filename": "/Data/Player/ArmorMale29.bmd", "start": 135665470, "end": 135719510}, {"filename": "/Data/Player/BootClass01.bmd", "start": 135719510, "end": 135733313}, {"filename": "/Data/Player/BootClass02.bmd", "start": 135733313, "end": 135747116}, {"filename": "/Data/Player/BootClass03.bmd", "start": 135747116, "end": 135759271}, {"filename": "/Data/Player/BootClass04.bmd", "start": 135759271, "end": 135773986}, {"filename": "/Data/Player/BootClass05.bmd", "start": 135773986, "end": 135791638}, {"filename": "/Data/Player/BootClass201.bmd", "start": 135791638, "end": 135811810}, {"filename": "/Data/Player/BootClass202.bmd", "start": 135811810, "end": 135824782}, {"filename": "/Data/Player/BootClass203.bmd", "start": 135824782, "end": 135838986}, {"filename": "/Data/Player/BootElf01.bmd", "start": 135838986, "end": 135853601}, {"filename": "/Data/Player/BootElf02.bmd", "start": 135853601, "end": 135867638}, {"filename": "/Data/Player/BootElf03.bmd", "start": 135867638, "end": 135881323}, {"filename": "/Data/Player/BootElf04.bmd", "start": 135881323, "end": 135897498}, {"filename": "/Data/Player/BootElf05.bmd", "start": 135897498, "end": 135913413}, {"filename": "/Data/Player/BootMale01.bmd", "start": 135913413, "end": 135931160}, {"filename": "/Data/Player/BootMale02.bmd", "start": 135931160, "end": 135947043}, {"filename": "/Data/Player/BootMale03.bmd", "start": 135947043, "end": 135962050}, {"filename": "/Data/Player/BootMale04.bmd", "start": 135962050, "end": 135976875}, {"filename": "/Data/Player/BootMale05.bmd", "start": 135976875, "end": 135990864}, {"filename": "/Data/Player/BootMale06.bmd", "start": 135990864, "end": 136004885}, {"filename": "/Data/Player/BootMale07.bmd", "start": 136004885, "end": 136021098}, {"filename": "/Data/Player/BootMale08.bmd", "start": 136021098, "end": 136034727}, {"filename": "/Data/Player/BootMale09.bmd", "start": 136034727, "end": 136050540}, {"filename": "/Data/Player/BootMale10.bmd", "start": 136050540, "end": 136069911}, {"filename": "/Data/Player/BootMale16.bmd", "start": 136069911, "end": 136087694}, {"filename": "/Data/Player/BootMale17.bmd", "start": 136087694, "end": 136106109}, {"filename": "/Data/Player/BootMale18.bmd", "start": 136106109, "end": 136127250}, {"filename": "/Data/Player/BootMale19.bmd", "start": 136127250, "end": 136143675}, {"filename": "/Data/Player/BootMale20.bmd", "start": 136143675, "end": 136170546}, {"filename": "/Data/Player/BootMale21.bmd", "start": 136170546, "end": 136191412}, {"filename": "/Data/Player/BootMale22.bmd", "start": 136191412, "end": 136219724}, {"filename": "/Data/Player/BootMale23.bmd", "start": 136219724, "end": 136237516}, {"filename": "/Data/Player/BootMale24.bmd", "start": 136237516, "end": 136259564}, {"filename": "/Data/Player/BootMale25.bmd", "start": 136259564, "end": 136281030}, {"filename": "/Data/Player/BootMale26.bmd", "start": 136281030, "end": 136296702}, {"filename": "/Data/Player/BootMale27.bmd", "start": 136296702, "end": 136324622}, {"filename": "/Data/Player/BootMale28.bmd", "start": 136324622, "end": 136347980}, {"filename": "/Data/Player/BootMale29.bmd", "start": 136347980, "end": 136372812}, {"filename": "/Data/Player/Custom/21/ArmorMale22.bmd", "start": 136372812, "end": 136412186}, {"filename": "/Data/Player/Custom/21/BootMale22.bmd", "start": 136412186, "end": 136440498}, {"filename": "/Data/Player/Custom/21/GloveMale22.bmd", "start": 136440498, "end": 136460924}, {"filename": "/Data/Player/Custom/21/HelmMale22.bmd", "start": 136460924, "end": 136485436}, {"filename": "/Data/Player/Custom/21/PantMale22.bmd", "start": 136485436, "end": 136500498}, {"filename": "/Data/Player/Custom/21/boots22.OZJ", "start": 136500498, "end": 136519584}, {"filename": "/Data/Player/Custom/21/glove22.OZJ", "start": 136519584, "end": 136536429}, {"filename": "/Data/Player/Custom/21/head22.OZJ", "start": 136536429, "end": 136554016}, {"filename": "/Data/Player/Custom/21/hide.OZJ", "start": 136554016, "end": 136558572}, {"filename": "/Data/Player/Custom/21/level_man01.OZJ", "start": 136558572, "end": 136635386}, {"filename": "/Data/Player/Custom/21/pants22.OZJ", "start": 136635386, "end": 136669831}, {"filename": "/Data/Player/Custom/21/pants22.OZT", "start": 136669831, "end": 136686263}, {"filename": "/Data/Player/Custom/21/upper22.OZJ", "start": 136686263, "end": 136730880}, {"filename": "/Data/Player/DarklordRobe.OZT", "start": 136730880, "end": 136862000}, {"filename": "/Data/Player/E_head.OZT", "start": 136862000, "end": 136870240}, {"filename": "/Data/Player/FArmor.OZJ", "start": 136870240, "end": 136912578}, {"filename": "/Data/Player/FBoots.OZJ", "start": 136912578, "end": 136929382}, {"filename": "/Data/Player/FGlove.OZJ", "start": 136929382, "end": 136946562}, {"filename": "/Data/Player/FHelm.OZJ", "start": 136946562, "end": 136965356}, {"filename": "/Data/Player/FPants01.OZJ", "start": 136965356, "end": 136989340}, {"filename": "/Data/Player/FPants02.OZJ", "start": 136989340, "end": 137013728}, {"filename": "/Data/Player/FShoots.OZT", "start": 137013728, "end": 137021968}, {"filename": "/Data/Player/FShoots02.OZT", "start": 137021968, "end": 137030208}, {"filename": "/Data/Player/FShoots_R.OZJ", "start": 137030208, "end": 137040769}, {"filename": "/Data/Player/GloveClass01.bmd", "start": 137040769, "end": 137054948}, {"filename": "/Data/Player/GloveClass02.bmd", "start": 137054948, "end": 137069127}, {"filename": "/Data/Player/GloveClass03.bmd", "start": 137069127, "end": 137083274}, {"filename": "/Data/Player/GloveClass04.bmd", "start": 137083274, "end": 137097453}, {"filename": "/Data/Player/GloveClass05.bmd", "start": 137097453, "end": 137116509}, {"filename": "/Data/Player/GloveClass201.bmd", "start": 137116509, "end": 137130625}, {"filename": "/Data/Player/GloveClass202.bmd", "start": 137130625, "end": 137144741}, {"filename": "/Data/Player/GloveClass203.bmd", "start": 137144741, "end": 137158825}, {"filename": "/Data/Player/GloveElf01.bmd", "start": 137158825, "end": 137175294}, {"filename": "/Data/Player/GloveElf02.bmd", "start": 137175294, "end": 137191183}, {"filename": "/Data/Player/GloveElf03.bmd", "start": 137191183, "end": 137207228}, {"filename": "/Data/Player/GloveElf04.bmd", "start": 137207228, "end": 137224423}, {"filename": "/Data/Player/GloveElf05.bmd", "start": 137224423, "end": 137240994}, {"filename": "/Data/Player/GloveMale01.bmd", "start": 137240994, "end": 137260885}, {"filename": "/Data/Player/GloveMale02.bmd", "start": 137260885, "end": 137277424}, {"filename": "/Data/Player/GloveMale03.bmd", "start": 137277424, "end": 137293917}, {"filename": "/Data/Player/GloveMale04.bmd", "start": 137293917, "end": 137312026}, {"filename": "/Data/Player/GloveMale05.bmd", "start": 137312026, "end": 137328759}, {"filename": "/Data/Player/GloveMale06.bmd", "start": 137328759, "end": 137344812}, {"filename": "/Data/Player/GloveMale07.bmd", "start": 137344812, "end": 137363089}, {"filename": "/Data/Player/GloveMale08.bmd", "start": 137363089, "end": 137379134}, {"filename": "/Data/Player/GloveMale09.bmd", "start": 137379134, "end": 137395581}, {"filename": "/Data/Player/GloveMale10.bmd", "start": 137395581, "end": 137414024}, {"filename": "/Data/Player/GloveMale16.bmd", "start": 137414024, "end": 137430859}, {"filename": "/Data/Player/GloveMale17.bmd", "start": 137430859, "end": 137448368}, {"filename": "/Data/Player/GloveMale18.bmd", "start": 137448368, "end": 137476189}, {"filename": "/Data/Player/GloveMale19.bmd", "start": 137476189, "end": 137495586}, {"filename": "/Data/Player/GloveMale20.bmd", "start": 137495586, "end": 137516529}, {"filename": "/Data/Player/GloveMale21.bmd", "start": 137516529, "end": 137535471}, {"filename": "/Data/Player/GloveMale22.bmd", "start": 137535471, "end": 137555897}, {"filename": "/Data/Player/GloveMale23.bmd", "start": 137555897, "end": 137580865}, {"filename": "/Data/Player/GloveMale24.bmd", "start": 137580865, "end": 137599673}, {"filename": "/Data/Player/GloveMale25.bmd", "start": 137599673, "end": 137620075}, {"filename": "/Data/Player/GloveMale26.bmd", "start": 137620075, "end": 137636731}, {"filename": "/Data/Player/GloveMale27.bmd", "start": 137636731, "end": 137657795}, {"filename": "/Data/Player/GloveMale28.bmd", "start": 137657795, "end": 137676021}, {"filename": "/Data/Player/GloveMale29.bmd", "start": 137676021, "end": 137692421}, {"filename": "/Data/Player/HelmClass01.bmd", "start": 137692421, "end": 137705552}, {"filename": "/Data/Player/HelmClass02.bmd", "start": 137705552, "end": 137719583}, {"filename": "/Data/Player/HelmClass03.bmd", "start": 137719583, "end": 137734158}, {"filename": "/Data/Player/HelmClass04.bmd", "start": 137734158, "end": 137751561}, {"filename": "/Data/Player/HelmClass05.bmd", "start": 137751561, "end": 137770703}, {"filename": "/Data/Player/HelmClass201.bmd", "start": 137770703, "end": 137783811}, {"filename": "/Data/Player/HelmClass202.bmd", "start": 137783811, "end": 137797671}, {"filename": "/Data/Player/HelmClass203.bmd", "start": 137797671, "end": 137814103}, {"filename": "/Data/Player/HelmElf01.bmd", "start": 137814103, "end": 137822958}, {"filename": "/Data/Player/HelmElf02.bmd", "start": 137822958, "end": 137829881}, {"filename": "/Data/Player/HelmElf03.bmd", "start": 137829881, "end": 137836596}, {"filename": "/Data/Player/HelmElf04.bmd", "start": 137836596, "end": 137846035}, {"filename": "/Data/Player/HelmElf05.bmd", "start": 137846035, "end": 137864264}, {"filename": "/Data/Player/HelmMale01.bmd", "start": 137864264, "end": 137873829}, {"filename": "/Data/Player/HelmMale02.bmd", "start": 137873829, "end": 137894162}, {"filename": "/Data/Player/HelmMale03.bmd", "start": 137894162, "end": 137906023}, {"filename": "/Data/Player/HelmMale04.bmd", "start": 137906023, "end": 137919068}, {"filename": "/Data/Player/HelmMale05.bmd", "start": 137919068, "end": 137932889}, {"filename": "/Data/Player/HelmMale06.bmd", "start": 137932889, "end": 137946532}, {"filename": "/Data/Player/HelmMale07.bmd", "start": 137946532, "end": 137962947}, {"filename": "/Data/Player/HelmMale08.bmd", "start": 137962947, "end": 137980268}, {"filename": "/Data/Player/HelmMale09.bmd", "start": 137980268, "end": 137989907}, {"filename": "/Data/Player/HelmMale10.bmd", "start": 137989907, "end": 137996830}, {"filename": "/Data/Player/HelmMale17.bmd", "start": 137996830, "end": 138017291}, {"filename": "/Data/Player/HelmMale18.bmd", "start": 138017291, "end": 138042896}, {"filename": "/Data/Player/HelmMale19.bmd", "start": 138042896, "end": 138057325}, {"filename": "/Data/Player/HelmMale20.bmd", "start": 138057325, "end": 138089668}, {"filename": "/Data/Player/HelmMale22.bmd", "start": 138089668, "end": 138114180}, {"filename": "/Data/Player/HelmMale23.bmd", "start": 138114180, "end": 138129044}, {"filename": "/Data/Player/HelmMale25.bmd", "start": 138129044, "end": 138176938}, {"filename": "/Data/Player/HelmMale26.bmd", "start": 138176938, "end": 138200886}, {"filename": "/Data/Player/HelmMale27.bmd", "start": 138200886, "end": 138231950}, {"filename": "/Data/Player/HelmMale28.bmd", "start": 138231950, "end": 138255530}, {"filename": "/Data/Player/HelmMale29.bmd", "start": 138255530, "end": 138281486}, {"filename": "/Data/Player/Helper01.bmd", "start": 138281486, "end": 138287739}, {"filename": "/Data/Player/Helper02.bmd", "start": 138287739, "end": 138294636}, {"filename": "/Data/Player/Helper03.bmd", "start": 138294636, "end": 138299543}, {"filename": "/Data/Player/Helper04.bmd", "start": 138299543, "end": 138303612}, {"filename": "/Data/Player/KSbp.OZJ", "start": 138303612, "end": 138317913}, {"filename": "/Data/Player/KSgp.OZJ", "start": 138317913, "end": 138325538}, {"filename": "/Data/Player/KShp.OZJ", "start": 138325538, "end": 138333884}, {"filename": "/Data/Player/KSlp.OZJ", "start": 138333884, "end": 138359812}, {"filename": "/Data/Player/KSup.OZJ", "start": 138359812, "end": 138389660}, {"filename": "/Data/Player/KSup2.OZT", "start": 138389660, "end": 138406092}, {"filename": "/Data/Player/Kbpp.OZJ", "start": 138406092, "end": 138419587}, {"filename": "/Data/Player/Kgpp.OZJ", "start": 138419587, "end": 138427640}, {"filename": "/Data/Player/Klpp.OZJ", "start": 138427640, "end": 138453398}, {"filename": "/Data/Player/Kmpp.OZJ", "start": 138453398, "end": 138461548}, {"filename": "/Data/Player/Kupp.OZJ", "start": 138461548, "end": 138489666}, {"filename": "/Data/Player/MaskHelmMale01.bmd", "start": 138489666, "end": 138515667}, {"filename": "/Data/Player/MaskHelmMale06.bmd", "start": 138515667, "end": 138538338}, {"filename": "/Data/Player/MaskHelmMale07.bmd", "start": 138538338, "end": 138565579}, {"filename": "/Data/Player/MaskHelmMale09.bmd", "start": 138565579, "end": 138580174}, {"filename": "/Data/Player/MaskHelmMale10.bmd", "start": 138580174, "end": 138602651}, {"filename": "/Data/Player/PantClass01.bmd", "start": 138602651, "end": 138616606}, {"filename": "/Data/Player/PantClass02.bmd", "start": 138616606, "end": 138628837}, {"filename": "/Data/Player/PantClass03.bmd", "start": 138628837, "end": 138641844}, {"filename": "/Data/Player/PantClass04.bmd", "start": 138641844, "end": 138653195}, {"filename": "/Data/Player/PantClass05.bmd", "start": 138653195, "end": 138666183}, {"filename": "/Data/Player/PantClass201.bmd", "start": 138666183, "end": 138680075}, {"filename": "/Data/Player/PantClass202.bmd", "start": 138680075, "end": 138692243}, {"filename": "/Data/Player/PantClass203.bmd", "start": 138692243, "end": 138705187}, {"filename": "/Data/Player/PantElf01.bmd", "start": 138705187, "end": 138721156}, {"filename": "/Data/Player/PantElf02.bmd", "start": 138721156, "end": 138736537}, {"filename": "/Data/Player/PantElf03.bmd", "start": 138736537, "end": 138755026}, {"filename": "/Data/Player/PantElf04.bmd", "start": 138755026, "end": 138768123}, {"filename": "/Data/Player/PantElf05.bmd", "start": 138768123, "end": 138784070}, {"filename": "/Data/Player/PantMale01.bmd", "start": 138784070, "end": 138798279}, {"filename": "/Data/Player/PantMale02.bmd", "start": 138798279, "end": 138812352}, {"filename": "/Data/Player/PantMale03.bmd", "start": 138812352, "end": 138828341}, {"filename": "/Data/Player/PantMale04.bmd", "start": 138828341, "end": 138843088}, {"filename": "/Data/Player/PantMale05.bmd", "start": 138843088, "end": 138857719}, {"filename": "/Data/Player/PantMale06.bmd", "start": 138857719, "end": 138872104}, {"filename": "/Data/Player/PantMale07.bmd", "start": 138872104, "end": 138885621}, {"filename": "/Data/Player/PantMale08.bmd", "start": 138885621, "end": 138901992}, {"filename": "/Data/Player/PantMale09.bmd", "start": 138901992, "end": 138916499}, {"filename": "/Data/Player/PantMale10.bmd", "start": 138916499, "end": 138928476}, {"filename": "/Data/Player/PantMale16.bmd", "start": 138928476, "end": 138940453}, {"filename": "/Data/Player/PantMale17.bmd", "start": 138940453, "end": 138954934}, {"filename": "/Data/Player/PantMale18.bmd", "start": 138954934, "end": 138976399}, {"filename": "/Data/Player/PantMale19.bmd", "start": 138976399, "end": 138989856}, {"filename": "/Data/Player/PantMale20.bmd", "start": 138989856, "end": 139033621}, {"filename": "/Data/Player/PantMale21.bmd", "start": 139033621, "end": 139054441}, {"filename": "/Data/Player/PantMale22.bmd", "start": 139054441, "end": 139069503}, {"filename": "/Data/Player/PantMale23.bmd", "start": 139069503, "end": 139089830}, {"filename": "/Data/Player/PantMale24.bmd", "start": 139089830, "end": 139112392}, {"filename": "/Data/Player/PantMale25.bmd", "start": 139112392, "end": 139136542}, {"filename": "/Data/Player/PantMale26.bmd", "start": 139136542, "end": 139148110}, {"filename": "/Data/Player/PantMale27.bmd", "start": 139148110, "end": 139158350}, {"filename": "/Data/Player/PantMale28.bmd", "start": 139158350, "end": 139169232}, {"filename": "/Data/Player/PantMale29.bmd", "start": 139169232, "end": 139179520}, {"filename": "/Data/Player/Robe01.OZJ", "start": 139179520, "end": 139191589}, {"filename": "/Data/Player/Robe02.OZJ", "start": 139191589, "end": 139198834}, {"filename": "/Data/Player/Robe03.OZT", "start": 139198834, "end": 139264418}, {"filename": "/Data/Player/Shadow01.bmd", "start": 139264418, "end": 139276089}, {"filename": "/Data/Player/Wing02.bmd", "start": 139276089, "end": 139282596}, {"filename": "/Data/Player/Wing03.bmd", "start": 139282596, "end": 139287967}, {"filename": "/Data/Player/Wing04.bmd", "start": 139287967, "end": 139292011}, {"filename": "/Data/Player/boot_10c.OZJ", "start": 139292011, "end": 139305514}, {"filename": "/Data/Player/boots.OZJ", "start": 139305514, "end": 139324600}, {"filename": "/Data/Player/boots22.OZJ", "start": 139324600, "end": 139343686}, {"filename": "/Data/Player/boots_02.OZJ", "start": 139343686, "end": 139355728}, {"filename": "/Data/Player/boots_03.OZJ", "start": 139355728, "end": 139369746}, {"filename": "/Data/Player/boots_03b.OZJ", "start": 139369746, "end": 139384583}, {"filename": "/Data/Player/boots_04.OZJ", "start": 139384583, "end": 139396009}, {"filename": "/Data/Player/boots_04b.OZT", "start": 139396009, "end": 139400153}, {"filename": "/Data/Player/boots_04c.OZJ", "start": 139400153, "end": 139410918}, {"filename": "/Data/Player/boots_06.OZJ", "start": 139410918, "end": 139420393}, {"filename": "/Data/Player/boots_07.OZJ", "start": 139420393, "end": 139429884}, {"filename": "/Data/Player/boots_08.OZJ", "start": 139429884, "end": 139441718}, {"filename": "/Data/Player/boots_09.OZJ", "start": 139441718, "end": 139451975}, {"filename": "/Data/Player/boots_09c.OZJ", "start": 139451975, "end": 139464084}, {"filename": "/Data/Player/boots_10.OZJ", "start": 139464084, "end": 139476922}, {"filename": "/Data/Player/boots_10b.OZT", "start": 139476922, "end": 139481066}, {"filename": "/Data/Player/boots_11.OZJ", "start": 139481066, "end": 139494210}, {"filename": "/Data/Player/boots_13m.OZJ", "start": 139494210, "end": 139506183}, {"filename": "/Data/Player/boots_14.OZT", "start": 139506183, "end": 139522615}, {"filename": "/Data/Player/boots_14m.OZJ", "start": 139522615, "end": 139533250}, {"filename": "/Data/Player/boots_15.OZT", "start": 139533250, "end": 139549682}, {"filename": "/Data/Player/boots_15m.OZJ", "start": 139549682, "end": 139563662}, {"filename": "/Data/Player/boots_17.OZJ", "start": 139563662, "end": 139574908}, {"filename": "/Data/Player/boots_18.OZJ", "start": 139574908, "end": 139583438}, {"filename": "/Data/Player/boots_E1.OZJ", "start": 139583438, "end": 139593732}, {"filename": "/Data/Player/boots_E1Test.OZJ", "start": 139593732, "end": 139610513}, {"filename": "/Data/Player/boots_bd.OZJ", "start": 139610513, "end": 139622434}, {"filename": "/Data/Player/boots_bld.OZJ", "start": 139622434, "end": 139631632}, {"filename": "/Data/Player/boots_c07.OZJ", "start": 139631632, "end": 139642869}, {"filename": "/Data/Player/devil_wing.OZT", "start": 139642869, "end": 139708453}, {"filename": "/Data/Player/elfin_wing.OZJ", "start": 139708453, "end": 139718135}, {"filename": "/Data/Player/glove.OZJ", "start": 139718135, "end": 139734980}, {"filename": "/Data/Player/glove22.OZJ", "start": 139734980, "end": 139751825}, {"filename": "/Data/Player/gloves_02.OZJ", "start": 139751825, "end": 139764689}, {"filename": "/Data/Player/gloves_03.OZJ", "start": 139764689, "end": 139777865}, {"filename": "/Data/Player/gloves_03b.OZJ", "start": 139777865, "end": 139791900}, {"filename": "/Data/Player/gloves_04.OZJ", "start": 139791900, "end": 139805591}, {"filename": "/Data/Player/gloves_04c.OZJ", "start": 139805591, "end": 139818030}, {"filename": "/Data/Player/gloves_06.OZJ", "start": 139818030, "end": 139829639}, {"filename": "/Data/Player/gloves_07.OZJ", "start": 139829639, "end": 139839790}, {"filename": "/Data/Player/gloves_08.OZJ", "start": 139839790, "end": 139851160}, {"filename": "/Data/Player/gloves_09.OZJ", "start": 139851160, "end": 139862724}, {"filename": "/Data/Player/gloves_09c.OZJ", "start": 139862724, "end": 139875347}, {"filename": "/Data/Player/gloves_10.OZJ", "start": 139875347, "end": 139888979}, {"filename": "/Data/Player/gloves_10c.OZJ", "start": 139888979, "end": 139903118}, {"filename": "/Data/Player/gloves_11.OZJ", "start": 139903118, "end": 139917086}, {"filename": "/Data/Player/gloves_13m.OZJ", "start": 139917086, "end": 139927904}, {"filename": "/Data/Player/gloves_14.OZT", "start": 139927904, "end": 139944336}, {"filename": "/Data/Player/gloves_14m.OZJ", "start": 139944336, "end": 139954592}, {"filename": "/Data/Player/gloves_15.OZT", "start": 139954592, "end": 139971024}, {"filename": "/Data/Player/gloves_15m.OZJ", "start": 139971024, "end": 139979482}, {"filename": "/Data/Player/gloves_17.OZJ", "start": 139979482, "end": 139990019}, {"filename": "/Data/Player/gloves_18.OZJ", "start": 139990019, "end": 139997764}, {"filename": "/Data/Player/gloves_E1.OZJ", "start": 139997764, "end": 140008120}, {"filename": "/Data/Player/gloves_E1Test.OZJ", "start": 140008120, "end": 140018803}, {"filename": "/Data/Player/gloves_bd.OZJ", "start": 140018803, "end": 140032654}, {"filename": "/Data/Player/gloves_bld.OZJ", "start": 140032654, "end": 140041393}, {"filename": "/Data/Player/gloves_c07.OZJ", "start": 140041393, "end": 140053107}, {"filename": "/Data/Player/guard_hair.OZT", "start": 140053107, "end": 140057251}, {"filename": "/Data/Player/hair_R.OZJ", "start": 140057251, "end": 140060830}, {"filename": "/Data/Player/head.OZJ", "start": 140060830, "end": 140078417}, {"filename": "/Data/Player/head22.OZJ", "start": 140078417, "end": 140096004}, {"filename": "/Data/Player/head_02.OZJ", "start": 140096004, "end": 140108288}, {"filename": "/Data/Player/head_03.OZJ", "start": 140108288, "end": 140122015}, {"filename": "/Data/Player/head_04.OZJ", "start": 140122015, "end": 140133898}, {"filename": "/Data/Player/head_06.OZJ", "start": 140133898, "end": 140143457}, {"filename": "/Data/Player/head_07.OZJ", "start": 140143457, "end": 140152408}, {"filename": "/Data/Player/head_08.OZJ", "start": 140152408, "end": 140163160}, {"filename": "/Data/Player/head_09.OZJ", "start": 140163160, "end": 140173605}, {"filename": "/Data/Player/head_09b.OZT", "start": 140173605, "end": 140190037}, {"filename": "/Data/Player/head_10.OZJ", "start": 140190037, "end": 140202493}, {"filename": "/Data/Player/head_11.OZJ", "start": 140202493, "end": 140213575}, {"filename": "/Data/Player/head_13m.OZJ", "start": 140213575, "end": 140225857}, {"filename": "/Data/Player/head_13m.OZT", "start": 140225857, "end": 140227953}, {"filename": "/Data/Player/head_14m.OZJ", "start": 140227953, "end": 140235251}, {"filename": "/Data/Player/head_15m.OZJ", "start": 140235251, "end": 140243883}, {"filename": "/Data/Player/head_17.OZJ", "start": 140243883, "end": 140255576}, {"filename": "/Data/Player/head_18.OZJ", "start": 140255576, "end": 140264416}, {"filename": "/Data/Player/head_E1.OZJ", "start": 140264416, "end": 140272924}, {"filename": "/Data/Player/head_E1Test.OZJ", "start": 140272924, "end": 140282592}, {"filename": "/Data/Player/head_a01.OZJ", "start": 140282592, "end": 140290867}, {"filename": "/Data/Player/head_a02.OZJ", "start": 140290867, "end": 140302372}, {"filename": "/Data/Player/head_a03.OZJ", "start": 140302372, "end": 140314842}, {"filename": "/Data/Player/head_a04.OZJ", "start": 140314842, "end": 140328670}, {"filename": "/Data/Player/head_a05.OZJ", "start": 140328670, "end": 140341192}, {"filename": "/Data/Player/head_a06.OZT", "start": 140341192, "end": 140345336}, {"filename": "/Data/Player/head_bd.OZJ", "start": 140345336, "end": 140356385}, {"filename": "/Data/Player/head_bld.OZJ", "start": 140356385, "end": 140364113}, {"filename": "/Data/Player/hide.OZJ", "start": 140364113, "end": 140368669}, {"filename": "/Data/Player/hide22.OZJ", "start": 140368669, "end": 140373225}, {"filename": "/Data/Player/hide_m.OZJ", "start": 140373225, "end": 140377765}, {"filename": "/Data/Player/kaa.OZT", "start": 140377765, "end": 140394197}, {"filename": "/Data/Player/khair.OZT", "start": 140394197, "end": 140459781}, {"filename": "/Data/Player/level_man01.OZJ", "start": 140459781, "end": 140536595}, {"filename": "/Data/Player/level_man02.OZJ", "start": 140536595, "end": 140593213}, {"filename": "/Data/Player/level_man022.OZJ", "start": 140593213, "end": 140658993}, {"filename": "/Data/Player/level_man033.OZJ", "start": 140658993, "end": 140759329}, {"filename": "/Data/Player/lower2_15m.OZT", "start": 140759329, "end": 140775761}, {"filename": "/Data/Player/lowerTest2_R.OZJ", "start": 140775761, "end": 140781001}, {"filename": "/Data/Player/lowerTest_R.OZJ", "start": 140781001, "end": 140787549}, {"filename": "/Data/Player/lower_02_m.OZJ", "start": 140787549, "end": 140823053}, {"filename": "/Data/Player/lower_03.OZJ", "start": 140823053, "end": 140859872}, {"filename": "/Data/Player/lower_03_m.OZJ", "start": 140859872, "end": 140899708}, {"filename": "/Data/Player/lower_03b.OZT", "start": 140899708, "end": 140916140}, {"filename": "/Data/Player/lower_03b_m.OZT", "start": 140916140, "end": 140932572}, {"filename": "/Data/Player/lower_04.OZJ", "start": 140932572, "end": 140943132}, {"filename": "/Data/Player/lower_04_m.OZJ", "start": 140943132, "end": 140979031}, {"filename": "/Data/Player/lower_04b.OZT", "start": 140979031, "end": 140983175}, {"filename": "/Data/Player/lower_04b_m.OZT", "start": 140983175, "end": 140987319}, {"filename": "/Data/Player/lower_04c.OZT", "start": 140987319, "end": 140991463}, {"filename": "/Data/Player/lower_06.OZJ", "start": 140991463, "end": 141021456}, {"filename": "/Data/Player/lower_07.OZJ", "start": 141021456, "end": 141049869}, {"filename": "/Data/Player/lower_07.OZT", "start": 141049869, "end": 141066301}, {"filename": "/Data/Player/lower_07_m.OZJ", "start": 141066301, "end": 141088140}, {"filename": "/Data/Player/lower_07c.OZT", "start": 141088140, "end": 141104572}, {"filename": "/Data/Player/lower_08_m.OZJ", "start": 141104572, "end": 141138107}, {"filename": "/Data/Player/lower_09.OZJ", "start": 141138107, "end": 141163570}, {"filename": "/Data/Player/lower_09_m.OZJ", "start": 141163570, "end": 141199249}, {"filename": "/Data/Player/lower_09b.OZT", "start": 141199249, "end": 141215681}, {"filename": "/Data/Player/lower_09c.OZT", "start": 141215681, "end": 141219825}, {"filename": "/Data/Player/lower_10_m.OZJ", "start": 141219825, "end": 141248688}, {"filename": "/Data/Player/lower_10b.OZT", "start": 141248688, "end": 141252832}, {"filename": "/Data/Player/lower_10c.OZJ", "start": 141252832, "end": 141291509}, {"filename": "/Data/Player/lower_11.OZJ", "start": 141291509, "end": 141326356}, {"filename": "/Data/Player/lower_13m.OZJ", "start": 141326356, "end": 141346903}, {"filename": "/Data/Player/lower_13m.OZT", "start": 141346903, "end": 141355143}, {"filename": "/Data/Player/lower_14.OZT", "start": 141355143, "end": 141387959}, {"filename": "/Data/Player/lower_14m.OZJ", "start": 141387959, "end": 141404867}, {"filename": "/Data/Player/lower_15.OZT", "start": 141404867, "end": 141437683}, {"filename": "/Data/Player/lower_15m.OZJ", "start": 141437683, "end": 141463870}, {"filename": "/Data/Player/lower_17.OZJ", "start": 141463870, "end": 141483576}, {"filename": "/Data/Player/lower_18.OZJ", "start": 141483576, "end": 141494574}, {"filename": "/Data/Player/lower_E1.OZJ", "start": 141494574, "end": 141522498}, {"filename": "/Data/Player/lower_E1.OZT", "start": 141522498, "end": 141588082}, {"filename": "/Data/Player/lower_E1Test.OZJ", "start": 141588082, "end": 141604984}, {"filename": "/Data/Player/lower_a06.OZT", "start": 141604984, "end": 141609128}, {"filename": "/Data/Player/lower_bd.OZJ", "start": 141609128, "end": 141632409}, {"filename": "/Data/Player/lower_bd.OZT", "start": 141632409, "end": 141648841}, {"filename": "/Data/Player/lower_bld.OZJ", "start": 141648841, "end": 141669959}, {"filename": "/Data/Player/lower_bld.OZT", "start": 141669959, "end": 141686391}, {"filename": "/Data/Player/mg_arm.OZT", "start": 141686391, "end": 141702823}, {"filename": "/Data/Player/mg_boots.OZT", "start": 141702823, "end": 141768407}, {"filename": "/Data/Player/mg_jacket.OZT", "start": 141768407, "end": 141833991}, {"filename": "/Data/Player/mg_under.OZT", "start": 141833991, "end": 141866807}, {"filename": "/Data/Player/pants.OZJ", "start": 141866807, "end": 141901252}, {"filename": "/Data/Player/pants02.OZT", "start": 141901252, "end": 141917684}, {"filename": "/Data/Player/pants22.OZJ", "start": 141917684, "end": 141952129}, {"filename": "/Data/Player/pants22.OZT", "start": 141952129, "end": 141968561}, {"filename": "/Data/Player/player.bmd", "start": 141968561, "end": 143442674}, {"filename": "/Data/Player/skin_E1.OZJ", "start": 143442674, "end": 143447200}, {"filename": "/Data/Player/skin_archer_01.OZJ", "start": 143447200, "end": 143519832}, {"filename": "/Data/Player/skin_barbarian_01.OZJ", "start": 143519832, "end": 143578122}, {"filename": "/Data/Player/skin_ff.OZJ", "start": 143578122, "end": 143589956}, {"filename": "/Data/Player/skin_special_01.OZJ", "start": 143589956, "end": 143664135}, {"filename": "/Data/Player/skin_warrior_01.OZJ", "start": 143664135, "end": 143734156}, {"filename": "/Data/Player/skin_wizard_01.OZJ", "start": 143734156, "end": 143803008}, {"filename": "/Data/Player/upper.OZJ", "start": 143803008, "end": 143847625}, {"filename": "/Data/Player/upper22.OZJ", "start": 143847625, "end": 143892242}, {"filename": "/Data/Player/upper_02_m.OZJ", "start": 143892242, "end": 143914649}, {"filename": "/Data/Player/upper_02b_m.OZT", "start": 143914649, "end": 143918793}, {"filename": "/Data/Player/upper_03.OZJ", "start": 143918793, "end": 143955316}, {"filename": "/Data/Player/upper_03_m.OZJ", "start": 143955316, "end": 143998987}, {"filename": "/Data/Player/upper_04.OZJ", "start": 143998987, "end": 144021556}, {"filename": "/Data/Player/upper_04_m.OZJ", "start": 144021556, "end": 144050790}, {"filename": "/Data/Player/upper_06.OZJ", "start": 144050790, "end": 144075063}, {"filename": "/Data/Player/upper_07.OZJ", "start": 144075063, "end": 144106294}, {"filename": "/Data/Player/upper_07_m.OZJ", "start": 144106294, "end": 144126027}, {"filename": "/Data/Player/upper_07b_m.OZT", "start": 144126027, "end": 144130171}, {"filename": "/Data/Player/upper_08_m.OZJ", "start": 144130171, "end": 144164670}, {"filename": "/Data/Player/upper_09.OZJ", "start": 144164670, "end": 144197717}, {"filename": "/Data/Player/upper_09_m.OZJ", "start": 144197717, "end": 144225452}, {"filename": "/Data/Player/upper_09b_m.OZT", "start": 144225452, "end": 144229596}, {"filename": "/Data/Player/upper_09c.OZT", "start": 144229596, "end": 144233740}, {"filename": "/Data/Player/upper_10_m.OZJ", "start": 144233740, "end": 144268874}, {"filename": "/Data/Player/upper_10c.OZJ", "start": 144268874, "end": 144306887}, {"filename": "/Data/Player/upper_11.OZJ", "start": 144306887, "end": 144343794}, {"filename": "/Data/Player/upper_13m.OZJ", "start": 144343794, "end": 144375262}, {"filename": "/Data/Player/upper_14.OZT", "start": 144375262, "end": 144440846}, {"filename": "/Data/Player/upper_14m.OZJ", "start": 144440846, "end": 144472953}, {"filename": "/Data/Player/upper_15.OZT", "start": 144472953, "end": 144538537}, {"filename": "/Data/Player/upper_15m.OZJ", "start": 144538537, "end": 144566852}, {"filename": "/Data/Player/upper_17.OZJ", "start": 144566852, "end": 144591448}, {"filename": "/Data/Player/upper_18.OZJ", "start": 144591448, "end": 144618703}, {"filename": "/Data/Player/upper_E1.OZJ", "start": 144618703, "end": 144654260}, {"filename": "/Data/Player/upper_E1.OZT", "start": 144654260, "end": 144719844}, {"filename": "/Data/Player/upper_E1Test.OZJ", "start": 144719844, "end": 144747254}, {"filename": "/Data/Player/upper_bd.OZJ", "start": 144747254, "end": 144776577}, {"filename": "/Data/Player/upper_bld.OZJ", "start": 144776577, "end": 144801458}, {"filename": "/Data/Skill/Airforce.bmd", "start": 144801458, "end": 144807076}, {"filename": "/Data/Skill/Arrow.OZJ", "start": 144807076, "end": 144812032}, {"filename": "/Data/Skill/Arrow01.bmd", "start": 144812032, "end": 144816882}, {"filename": "/Data/Skill/Arrowbomb01.bmd", "start": 144816882, "end": 144820026}, {"filename": "/Data/Skill/Arrowdouble01.bmd", "start": 144820026, "end": 144830342}, {"filename": "/Data/Skill/Arrowlaser01.bmd", "start": 144830342, "end": 144830944}, {"filename": "/Data/Skill/Arrownature01.bmd", "start": 144830944, "end": 144856524}, {"filename": "/Data/Skill/Arrowsaw01.bmd", "start": 144856524, "end": 144866702}, {"filename": "/Data/Skill/Arrowsteel01.bmd", "start": 144866702, "end": 144869212}, {"filename": "/Data/Skill/Arrowthunder01.bmd", "start": 144869212, "end": 144872090}, {"filename": "/Data/Skill/Arrowv01.bmd", "start": 144872090, "end": 144873176}, {"filename": "/Data/Skill/Arrowwing01.bmd", "start": 144873176, "end": 144877858}, {"filename": "/Data/Skill/Ball01.bmd", "start": 144877858, "end": 144895057}, {"filename": "/Data/Skill/Bigstone01.bmd", "start": 144895057, "end": 144897163}, {"filename": "/Data/Skill/Bigstone02.bmd", "start": 144897163, "end": 144899269}, {"filename": "/Data/Skill/Blast01.bmd", "start": 144899269, "end": 144900295}, {"filename": "/Data/Skill/Blizzard.bmd", "start": 144900295, "end": 144902017}, {"filename": "/Data/Skill/Bone01.bmd", "start": 144902017, "end": 144909211}, {"filename": "/Data/Skill/Bone02.bmd", "start": 144909211, "end": 144912197}, {"filename": "/Data/Skill/Bons.OZJ", "start": 144912197, "end": 144939996}, {"filename": "/Data/Skill/Bons_a.OZJ", "start": 144939996, "end": 144975000}, {"filename": "/Data/Skill/Bons_a2.OZT", "start": 144975000, "end": 144977096}, {"filename": "/Data/Skill/Bons_b.OZJ", "start": 144977096, "end": 145004654}, {"filename": "/Data/Skill/Bons_particle.OZJ", "start": 145004654, "end": 145015137}, {"filename": "/Data/Skill/Bow_b.OZJ", "start": 145015137, "end": 145026596}, {"filename": "/Data/Skill/Bow_c.OZJ", "start": 145026596, "end": 145032084}, {"filename": "/Data/Skill/Bow_d.OZJ", "start": 145032084, "end": 145037713}, {"filename": "/Data/Skill/Bowtt.OZJ", "start": 145037713, "end": 145040578}, {"filename": "/Data/Skill/Bowtt2.OZJ", "start": 145040578, "end": 145043764}, {"filename": "/Data/Skill/Bu009.OZJ", "start": 145043764, "end": 145050090}, {"filename": "/Data/Skill/Carow.OZJ", "start": 145050090, "end": 145061899}, {"filename": "/Data/Skill/Carow.bmd", "start": 145061899, "end": 145067100}, {"filename": "/Data/Skill/Circle01.bmd", "start": 145067100, "end": 145067954}, {"filename": "/Data/Skill/Circle02.bmd", "start": 145067954, "end": 145078068}, {"filename": "/Data/Skill/Crossb.OZJ", "start": 145078068, "end": 145080244}, {"filename": "/Data/Skill/Ct10.OZJ", "start": 145080244, "end": 145127881}, {"filename": "/Data/Skill/Curer.OZJ", "start": 145127881, "end": 145135649}, {"filename": "/Data/Skill/Dhorss.OZJ", "start": 145135649, "end": 145157780}, {"filename": "/Data/Skill/Dhorss_r.OZJ", "start": 145157780, "end": 145161016}, {"filename": "/Data/Skill/Dragon02.OZJ", "start": 145161016, "end": 145179263}, {"filename": "/Data/Skill/Earow.OZJ", "start": 145179263, "end": 145192456}, {"filename": "/Data/Skill/Earthquake01.bmd", "start": 145192456, "end": 145192846}, {"filename": "/Data/Skill/Earthquake02.bmd", "start": 145192846, "end": 145194784}, {"filename": "/Data/Skill/Earthquake03.bmd", "start": 145194784, "end": 145195174}, {"filename": "/Data/Skill/Earthquake04.bmd", "start": 145195174, "end": 145195564}, {"filename": "/Data/Skill/Earthquake05.bmd", "start": 145195564, "end": 145197486}, {"filename": "/Data/Skill/Earthquake06.bmd", "start": 145197486, "end": 145197876}, {"filename": "/Data/Skill/Earthquake07.bmd", "start": 145197876, "end": 145198266}, {"filename": "/Data/Skill/Earthquake08.bmd", "start": 145198266, "end": 145200204}, {"filename": "/Data/Skill/Ffa1.OZJ", "start": 145200204, "end": 145205986}, {"filename": "/Data/Skill/Ffa2.OZJ", "start": 145205986, "end": 145211272}, {"filename": "/Data/Skill/Fire01.OZJ", "start": 145211272, "end": 145221783}, {"filename": "/Data/Skill/Fire01.bmd", "start": 145221783, "end": 145230878}, {"filename": "/Data/Skill/Fire02.OZJ", "start": 145230878, "end": 145243657}, {"filename": "/Data/Skill/Flashing.bmd", "start": 145243657, "end": 145245147}, {"filename": "/Data/Skill/Flower1.OZT", "start": 145245147, "end": 145249291}, {"filename": "/Data/Skill/Flower2.OZT", "start": 145249291, "end": 145253435}, {"filename": "/Data/Skill/Flower3.OZT", "start": 145253435, "end": 145257579}, {"filename": "/Data/Skill/Foot.OZJ", "start": 145257579, "end": 145267757}, {"filename": "/Data/Skill/Fury.OZJ", "start": 145267757, "end": 145279469}, {"filename": "/Data/Skill/Fury.OZT", "start": 145279469, "end": 145312285}, {"filename": "/Data/Skill/Ground.OZJ", "start": 145312285, "end": 145335962}, {"filename": "/Data/Skill/Groundeff.OZJ", "start": 145335962, "end": 145379082}, {"filename": "/Data/Skill/Groundstone.bmd", "start": 145379082, "end": 145386132}, {"filename": "/Data/Skill/Groundstone2.bmd", "start": 145386132, "end": 145396198}, {"filename": "/Data/Skill/Ice.OZJ", "start": 145396198, "end": 145425080}, {"filename": "/Data/Skill/Ice01.bmd", "start": 145425080, "end": 145455046}, {"filename": "/Data/Skill/Ice02.bmd", "start": 145455046, "end": 145455832}, {"filename": "/Data/Skill/Inferno01.bmd", "start": 145455832, "end": 145515320}, {"filename": "/Data/Skill/Kcross.bmd", "start": 145515320, "end": 145521082}, {"filename": "/Data/Skill/Kcrossb.OZJ", "start": 145521082, "end": 145523060}, {"filename": "/Data/Skill/Kcteil.OZJ", "start": 145523060, "end": 145533789}, {"filename": "/Data/Skill/Kings_r.OZJ", "start": 145533789, "end": 145555019}, {"filename": "/Data/Skill/Laser01.bmd", "start": 145555019, "end": 145562097}, {"filename": "/Data/Skill/M_piercing.OZJ", "start": 145562097, "end": 145574064}, {"filename": "/Data/Skill/M_piercing.OZT", "start": 145574064, "end": 145590496}, {"filename": "/Data/Skill/M_piercing.bmd", "start": 145590496, "end": 145594064}, {"filename": "/Data/Skill/M_piercing02.OZJ", "start": 145594064, "end": 145602802}, {"filename": "/Data/Skill/M_piercing02.OZT", "start": 145602802, "end": 145606946}, {"filename": "/Data/Skill/M_waves.bmd", "start": 145606946, "end": 145609976}, {"filename": "/Data/Skill/Magic01.bmd", "start": 145609976, "end": 145613662}, {"filename": "/Data/Skill/Magic02.bmd", "start": 145613662, "end": 145615616}, {"filename": "/Data/Skill/Magic2.OZJ", "start": 145615616, "end": 145619087}, {"filename": "/Data/Skill/Magic_a01.OZJ", "start": 145619087, "end": 145637010}, {"filename": "/Data/Skill/Magic_a02.OZJ", "start": 145637010, "end": 145649265}, {"filename": "/Data/Skill/Magic_b.OZJ", "start": 145649265, "end": 145662829}, {"filename": "/Data/Skill/Magic_g.OZJ", "start": 145662829, "end": 145678062}, {"filename": "/Data/Skill/Magiccircle01.bmd", "start": 145678062, "end": 145684421}, {"filename": "/Data/Skill/Mmn2.OZJ", "start": 145684421, "end": 145688297}, {"filename": "/Data/Skill/Part.OZT", "start": 145688297, "end": 145704729}, {"filename": "/Data/Skill/Part2.OZT", "start": 145704729, "end": 145721161}, {"filename": "/Data/Skill/Phoenixshield01.bmd", "start": 145721161, "end": 145755761}, {"filename": "/Data/Skill/Piercing.OZJ", "start": 145755761, "end": 145769965}, {"filename": "/Data/Skill/Piercing.bmd", "start": 145769965, "end": 145772395}, {"filename": "/Data/Skill/Pierpart.bmd", "start": 145772395, "end": 145784774}, {"filename": "/Data/Skill/Poison01.bmd", "start": 145784774, "end": 145825134}, {"filename": "/Data/Skill/Protect01.bmd", "start": 145825134, "end": 145829320}, {"filename": "/Data/Skill/Protect02.bmd", "start": 145829320, "end": 145837690}, {"filename": "/Data/Skill/Rdgon.OZJ", "start": 145837690, "end": 145926633}, {"filename": "/Data/Skill/Rdgonw.OZT", "start": 145926633, "end": 145959449}, {"filename": "/Data/Skill/Reddragon_n.OZJ", "start": 145959449, "end": 146042664}, {"filename": "/Data/Skill/Reddragon_n.OZT", "start": 146042664, "end": 146304856}, {"filename": "/Data/Skill/Reddragont.OZJ", "start": 146304856, "end": 146315232}, {"filename": "/Data/Skill/Rider01.bmd", "start": 146315232, "end": 146371772}, {"filename": "/Data/Skill/Rider02.bmd", "start": 146371772, "end": 146561785}, {"filename": "/Data/Skill/Ridingspear01.bmd", "start": 146561785, "end": 146562971}, {"filename": "/Data/Skill/Ring2.OZJ", "start": 146562971, "end": 146572915}, {"filename": "/Data/Skill/Ring3.OZJ", "start": 146572915, "end": 146582392}, {"filename": "/Data/Skill/Ring4.OZJ", "start": 146582392, "end": 146602091}, {"filename": "/Data/Skill/Saw01.bmd", "start": 146602091, "end": 146612269}, {"filename": "/Data/Skill/Skeleton01.bmd", "start": 146612269, "end": 146657524}, {"filename": "/Data/Skill/Skeleton02.bmd", "start": 146657524, "end": 146731357}, {"filename": "/Data/Skill/Skeleton03.bmd", "start": 146731357, "end": 146794225}, {"filename": "/Data/Skill/Skull.OZJ", "start": 146794225, "end": 146796501}, {"filename": "/Data/Skill/Snow01.bmd", "start": 146796501, "end": 146800999}, {"filename": "/Data/Skill/Snow02.bmd", "start": 146800999, "end": 146804653}, {"filename": "/Data/Skill/Snow03.bmd", "start": 146804653, "end": 146805835}, {"filename": "/Data/Skill/Snow_p.OZJ", "start": 146805835, "end": 146811506}, {"filename": "/Data/Skill/Sou01.OZJ", "start": 146811506, "end": 146822644}, {"filename": "/Data/Skill/Sou02.OZJ", "start": 146822644, "end": 146829919}, {"filename": "/Data/Skill/Soul_ba.OZJ", "start": 146829919, "end": 146837280}, {"filename": "/Data/Skill/Spie_r.OZJ", "start": 146837280, "end": 146843519}, {"filename": "/Data/Skill/Ston1.OZJ", "start": 146843519, "end": 146856063}, {"filename": "/Data/Skill/Stone01.bmd", "start": 146856063, "end": 146857245}, {"filename": "/Data/Skill/Stone02.bmd", "start": 146857245, "end": 146860899}, {"filename": "/Data/Skill/Storm01.bmd", "start": 146860899, "end": 146899559}, {"filename": "/Data/Skill/Tail.bmd", "start": 146899559, "end": 146899949}, {"filename": "/Data/Skill/Tama01.bmd", "start": 146899949, "end": 146934113}, {"filename": "/Data/Skill/Test2.OZJ", "start": 146934113, "end": 146942300}, {"filename": "/Data/Skill/Test2.OZT", "start": 146942300, "end": 146958732}, {"filename": "/Data/Skill/Test_2.OZJ", "start": 146958732, "end": 146966919}, {"filename": "/Data/Skill/Test_2.OZT", "start": 146966919, "end": 146983351}, {"filename": "/Data/Skill/Toothed_whee.OZJ", "start": 146983351, "end": 146989232}, {"filename": "/Data/Skill/Typhoon.OZJ", "start": 146989232, "end": 147000334}, {"filename": "/Data/Skill/V.OZJ", "start": 147000334, "end": 147005007}, {"filename": "/Data/Skill/Wall01.OZJ", "start": 147005007, "end": 147017343}, {"filename": "/Data/Skill/Wall02.OZJ", "start": 147017343, "end": 147024611}, {"filename": "/Data/Skill/Waveforce.bmd", "start": 147024611, "end": 147026236}, {"filename": "/Data/Skill/tama00.OZJ", "start": 147026236, "end": 147049282}, {"filename": "/Data/Skill/tama01.OZT", "start": 147049282, "end": 147057522}, {"filename": "/Data/Sound/Berserker.wav", "start": 147057522, "end": 147242134}, {"filename": "/Data/Sound/aBat.wav", "start": 147242134, "end": 147351264}, {"filename": "/Data/Sound/aBird1.WAV", "start": 147351264, "end": 147416362}, {"filename": "/Data/Sound/aBird2.WAV", "start": 147416362, "end": 147436208}, {"filename": "/Data/Sound/aCastleDoor.wav", "start": 147436208, "end": 147546988}, {"filename": "/Data/Sound/aDoor.wav", "start": 147546988, "end": 147663198}, {"filename": "/Data/Sound/aDungeon.wav", "start": 147663198, "end": 148396876}, {"filename": "/Data/Sound/aForest.wav", "start": 148396876, "end": 149332648}, {"filename": "/Data/Sound/aGrate.wav", "start": 149332648, "end": 149385902}, {"filename": "/Data/Sound/aHeaven.wav", "start": 149385902, "end": 150574210}, {"filename": "/Data/Sound/aMouse.WAV", "start": 150574210, "end": 150689928}, {"filename": "/Data/Sound/aRain.wav", "start": 150689928, "end": 152428186}, {"filename": "/Data/Sound/aTamajjang1.wav", "start": 152428186, "end": 152432620}, {"filename": "/Data/Sound/aTamajjang2.wav", "start": 152432620, "end": 152437098}, {"filename": "/Data/Sound/aThunder01.wav", "start": 152437098, "end": 152501928}, {"filename": "/Data/Sound/aThunder02.wav", "start": 152501928, "end": 152566758}, {"filename": "/Data/Sound/aThunder03.wav", "start": 152566758, "end": 152631588}, {"filename": "/Data/Sound/aTower.wav", "start": 152631588, "end": 153468926}, {"filename": "/Data/Sound/aWater.wav", "start": 153468926, "end": 154637956}, {"filename": "/Data/Sound/aWind.wav", "start": 154637956, "end": 155755344}, {"filename": "/Data/Sound/beep.wav", "start": 155755344, "end": 155759312}, {"filename": "/Data/Sound/blood1.wav", "start": 155759312, "end": 156007526}, {"filename": "/Data/Sound/blood_attack1.wav", "start": 156007526, "end": 156115324}, {"filename": "/Data/Sound/blood_attack2.wav", "start": 156115324, "end": 156249514}, {"filename": "/Data/Sound/blood_die.wav", "start": 156249514, "end": 156541316}, {"filename": "/Data/Sound/death1.wav", "start": 156541316, "end": 156800538}, {"filename": "/Data/Sound/death_attack1.wav", "start": 156800538, "end": 157055560}, {"filename": "/Data/Sound/death_die.wav", "start": 157055560, "end": 157617242}, {"filename": "/Data/Sound/desert.wav", "start": 157617242, "end": 159050912}, {"filename": "/Data/Sound/eBloodAttack.wav", "start": 159050912, "end": 159068794}, {"filename": "/Data/Sound/eBlow.wav", "start": 159068794, "end": 159095486}, {"filename": "/Data/Sound/eBlow1.wav", "start": 159095486, "end": 159110128}, {"filename": "/Data/Sound/eBlow2.wav", "start": 159110128, "end": 159132350}, {"filename": "/Data/Sound/eBlow3.wav", "start": 159132350, "end": 159150090}, {"filename": "/Data/Sound/eBlow4.wav", "start": 159150090, "end": 159171462}, {"filename": "/Data/Sound/eBow.wav", "start": 159171462, "end": 159213264}, {"filename": "/Data/Sound/eBreak.wav", "start": 159213264, "end": 159239554}, {"filename": "/Data/Sound/eCrossbow.wav", "start": 159239554, "end": 159269108}, {"filename": "/Data/Sound/eCrow.wav", "start": 159269108, "end": 159276966}, {"filename": "/Data/Sound/eDownGate.wav", "start": 159276966, "end": 159444074}, {"filename": "/Data/Sound/eExplosion.wav", "start": 159444074, "end": 159489734}, {"filename": "/Data/Sound/eFirecracker1.wav", "start": 159489734, "end": 159618892}, {"filename": "/Data/Sound/eFirecracker2.wav", "start": 159618892, "end": 159751294}, {"filename": "/Data/Sound/eGem.wav", "start": 159751294, "end": 159780076}, {"filename": "/Data/Sound/eHitCristal.wav", "start": 159780076, "end": 159797900}, {"filename": "/Data/Sound/eHitGate.wav", "start": 159797900, "end": 159832992}, {"filename": "/Data/Sound/eHitGate2.wav", "start": 159832992, "end": 159883336}, {"filename": "/Data/Sound/eIceArrow.wav", "start": 159883336, "end": 160029082}, {"filename": "/Data/Sound/eMedal.wav", "start": 160029082, "end": 160049968}, {"filename": "/Data/Sound/eMeteorite.wav", "start": 160049968, "end": 160120716}, {"filename": "/Data/Sound/eMix.wav", "start": 160120716, "end": 160676114}, {"filename": "/Data/Sound/ePhoenixExp.wav", "start": 160676114, "end": 160702384}, {"filename": "/Data/Sound/ePiercing.wav", "start": 160702384, "end": 160743164}, {"filename": "/Data/Sound/eRaidShoot.wav", "start": 160743164, "end": 160862642}, {"filename": "/Data/Sound/eRidingSpear.wav", "start": 160862642, "end": 160927666}, {"filename": "/Data/Sound/eShortBlow1.wav", "start": 160927666, "end": 160950084}, {"filename": "/Data/Sound/eShortBlow2.wav", "start": 160950084, "end": 160958906}, {"filename": "/Data/Sound/eShortBlow3.wav", "start": 160958906, "end": 160972436}, {"filename": "/Data/Sound/eSoulBarrier.wav", "start": 160972436, "end": 161043610}, {"filename": "/Data/Sound/eSwellLife.wav", "start": 161043610, "end": 161257764}, {"filename": "/Data/Sound/eSwingLightSword.wav", "start": 161257764, "end": 161310760}, {"filename": "/Data/Sound/eSwingWeapon1.wav", "start": 161310760, "end": 161332436}, {"filename": "/Data/Sound/eSwingWeapon2.wav", "start": 161332436, "end": 161352738}, {"filename": "/Data/Sound/eTelekinesis.wav", "start": 161352738, "end": 161490784}, {"filename": "/Data/Sound/eThunder.wav", "start": 161490784, "end": 161555636}, {"filename": "/Data/Sound/iAlert.wav", "start": 161555636, "end": 161685494}, {"filename": "/Data/Sound/iBloodCastle.wav", "start": 161685494, "end": 166410108}, {"filename": "/Data/Sound/iButtonClick.wav", "start": 166410108, "end": 166426168}, {"filename": "/Data/Sound/iButtonError.wav", "start": 166426168, "end": 166443512}, {"filename": "/Data/Sound/iButtonMove.wav", "start": 166443512, "end": 166490388}, {"filename": "/Data/Sound/iCreateWindow.wav", "start": 166490388, "end": 166579174}, {"filename": "/Data/Sound/iRepair.wav", "start": 166579174, "end": 166586956}, {"filename": "/Data/Sound/iTitle.wav", "start": 166586956, "end": 166947082}, {"filename": "/Data/Sound/iWhisper.wav", "start": 166947082, "end": 166973294}, {"filename": "/Data/Sound/iron1.wav", "start": 166973294, "end": 167153360}, {"filename": "/Data/Sound/iron_attack1.wav", "start": 167153360, "end": 167324042}, {"filename": "/Data/Sound/jaikan1.wav", "start": 167324042, "end": 167652700}, {"filename": "/Data/Sound/jaikan2.wav", "start": 167652700, "end": 167763138}, {"filename": "/Data/Sound/jaikan_attack1.wav", "start": 167763138, "end": 167995840}, {"filename": "/Data/Sound/jaikan_attack2.wav", "start": 167995840, "end": 168084938}, {"filename": "/Data/Sound/jaikan_die.wav", "start": 168084938, "end": 168412816}, {"filename": "/Data/Sound/mAlquamos1.wav", "start": 168412816, "end": 168614152}, {"filename": "/Data/Sound/mAlquamosAttack1.wav", "start": 168614152, "end": 168762232}, {"filename": "/Data/Sound/mAlquamosDie.wav", "start": 168762232, "end": 168899848}, {"filename": "/Data/Sound/mArgon1.wav", "start": 168899848, "end": 169012302}, {"filename": "/Data/Sound/mArgon2.wav", "start": 169012302, "end": 169111164}, {"filename": "/Data/Sound/mArgonAttack1.wav", "start": 169111164, "end": 169216374}, {"filename": "/Data/Sound/mArgonAttack2.wav", "start": 169216374, "end": 169369240}, {"filename": "/Data/Sound/mArgonDie.wav", "start": 169369240, "end": 169489246}, {"filename": "/Data/Sound/mAssassin1.wav", "start": 169489246, "end": 169609428}, {"filename": "/Data/Sound/mAssassinAttack1.wav", "start": 169609428, "end": 169658396}, {"filename": "/Data/Sound/mAssassinAttack2.wav", "start": 169658396, "end": 169706354}, {"filename": "/Data/Sound/mAssassinDie.wav", "start": 169706354, "end": 169774586}, {"filename": "/Data/Sound/mBahamut1.wav", "start": 169774586, "end": 170201164}, {"filename": "/Data/Sound/mBali1.wav", "start": 170201164, "end": 170498594}, {"filename": "/Data/Sound/mBali2.wav", "start": 170498594, "end": 170841340}, {"filename": "/Data/Sound/mBaliAttack1.wav", "start": 170841340, "end": 170900674}, {"filename": "/Data/Sound/mBaliAttack2.wav", "start": 170900674, "end": 170959852}, {"filename": "/Data/Sound/mBalrog1.wav", "start": 170959852, "end": 171167194}, {"filename": "/Data/Sound/mBalrog2.wav", "start": 171167194, "end": 171400666}, {"filename": "/Data/Sound/mBalrogDie.wav", "start": 171400666, "end": 171545022}, {"filename": "/Data/Sound/mBeetle1.wav", "start": 171545022, "end": 171592072}, {"filename": "/Data/Sound/mBeetleAttack1.wav", "start": 171592072, "end": 171692774}, {"filename": "/Data/Sound/mBeetleDie.wav", "start": 171692774, "end": 171801396}, {"filename": "/Data/Sound/mBepar1.wav", "start": 171801396, "end": 171963078}, {"filename": "/Data/Sound/mBepar2.wav", "start": 171963078, "end": 172075028}, {"filename": "/Data/Sound/mBlackSkullAttack.wav", "start": 172075028, "end": 172133386}, {"filename": "/Data/Sound/mBlackSkullDie.wav", "start": 172133386, "end": 172791024}, {"filename": "/Data/Sound/mBone1.WAV", "start": 172791024, "end": 172804969}, {"filename": "/Data/Sound/mBone2.wav", "start": 172804969, "end": 172957207}, {"filename": "/Data/Sound/mBudge1.wav", "start": 172957207, "end": 172994187}, {"filename": "/Data/Sound/mBudgeAttack1.wav", "start": 172994187, "end": 172999941}, {"filename": "/Data/Sound/mBudgeDie.wav", "start": 172999941, "end": 173035137}, {"filename": "/Data/Sound/mBull1.wav", "start": 173035137, "end": 173071609}, {"filename": "/Data/Sound/mBull2.wav", "start": 173071609, "end": 173113893}, {"filename": "/Data/Sound/mBullAttack1.wav", "start": 173113893, "end": 173183193}, {"filename": "/Data/Sound/mBullAttack2.wav", "start": 173183193, "end": 173196325}, {"filename": "/Data/Sound/mBullDie.wav", "start": 173196325, "end": 173249583}, {"filename": "/Data/Sound/mChangeup.wav", "start": 173249583, "end": 173415089}, {"filename": "/Data/Sound/mCursedKing1.wav", "start": 173415089, "end": 174134177}, {"filename": "/Data/Sound/mCursedKing2.wav", "start": 174134177, "end": 174743081}, {"filename": "/Data/Sound/mCursedKingDie1.wav", "start": 174743081, "end": 174990339}, {"filename": "/Data/Sound/mDarkKnight1.wav", "start": 174990339, "end": 175113235}, {"filename": "/Data/Sound/mDarkKnight2.wav", "start": 175113235, "end": 175300023}, {"filename": "/Data/Sound/mDarkKnightAttack1.wav", "start": 175300023, "end": 175377399}, {"filename": "/Data/Sound/mDarkKnightAttack2.wav", "start": 175377399, "end": 175448347}, {"filename": "/Data/Sound/mDarkKnightDie.wav", "start": 175448347, "end": 175498853}, {"filename": "/Data/Sound/mDrakan1.wav", "start": 175498853, "end": 175561281}, {"filename": "/Data/Sound/mDrakanAttack1.wav", "start": 175561281, "end": 175575373}, {"filename": "/Data/Sound/mDrakanDie.wav", "start": 175575373, "end": 175804355}, {"filename": "/Data/Sound/mGhaintOrgerDie.wav", "start": 175804355, "end": 175912469}, {"filename": "/Data/Sound/mGhost1.wav", "start": 175912469, "end": 176084155}, {"filename": "/Data/Sound/mGhost2.wav", "start": 176084155, "end": 176296141}, {"filename": "/Data/Sound/mGhostAttack1.wav", "start": 176296141, "end": 176341363}, {"filename": "/Data/Sound/mGhostAttack2.wav", "start": 176341363, "end": 176381279}, {"filename": "/Data/Sound/mGhostDie.wav", "start": 176381279, "end": 176540295}, {"filename": "/Data/Sound/mGiant1.wav", "start": 176540295, "end": 176649265}, {"filename": "/Data/Sound/mGiant2.wav", "start": 176649265, "end": 176766527}, {"filename": "/Data/Sound/mGiantAttack1.wav", "start": 176766527, "end": 176770537}, {"filename": "/Data/Sound/mGiantAttack2.wav", "start": 176770537, "end": 176826777}, {"filename": "/Data/Sound/mGiantDie.wav", "start": 176826777, "end": 176903779}, {"filename": "/Data/Sound/mGiantWalk.wav", "start": 176903779, "end": 176915199}, {"filename": "/Data/Sound/mGoblin1.wav", "start": 176915199, "end": 177029017}, {"filename": "/Data/Sound/mGoblin2.wav", "start": 177029017, "end": 177203675}, {"filename": "/Data/Sound/mGoblinAttack1.wav", "start": 177203675, "end": 177340005}, {"filename": "/Data/Sound/mGoblinAttack2.wav", "start": 177340005, "end": 177457955}, {"filename": "/Data/Sound/mGoblinDie.wav", "start": 177457955, "end": 177643693}, {"filename": "/Data/Sound/mGolem1.wav", "start": 177643693, "end": 177840743}, {"filename": "/Data/Sound/mGolem2.wav", "start": 177840743, "end": 178033037}, {"filename": "/Data/Sound/mGolemAttack1.wav", "start": 178033037, "end": 178187579}, {"filename": "/Data/Sound/mGolemAttack2.wav", "start": 178187579, "end": 178383841}, {"filename": "/Data/Sound/mGolemDie.wav", "start": 178383841, "end": 178584307}, {"filename": "/Data/Sound/mGorgon1.wav", "start": 178584307, "end": 179082957}, {"filename": "/Data/Sound/mGorgon2.wav", "start": 179082957, "end": 179249731}, {"filename": "/Data/Sound/mGorgonAttack1.wav", "start": 179249731, "end": 179353609}, {"filename": "/Data/Sound/mGorgonAttack2.wav", "start": 179353609, "end": 179409307}, {"filename": "/Data/Sound/mGorgonDie.wav", "start": 179409307, "end": 179498473}, {"filename": "/Data/Sound/mHellSpider1.wav", "start": 179498473, "end": 179542815}, {"filename": "/Data/Sound/mHellSpiderAttack1.wav", "start": 179542815, "end": 179580979}, {"filename": "/Data/Sound/mHellSpiderDie.wav", "start": 179580979, "end": 179670507}, {"filename": "/Data/Sound/mHomord1.wav", "start": 179670507, "end": 179854389}, {"filename": "/Data/Sound/mHomord2.wav", "start": 179854389, "end": 180209787}, {"filename": "/Data/Sound/mHomordAttack1.wav", "start": 180209787, "end": 180254185}, {"filename": "/Data/Sound/mHomordDie.wav", "start": 180254185, "end": 180289885}, {"filename": "/Data/Sound/mHound1.wav", "start": 180289885, "end": 180349667}, {"filename": "/Data/Sound/mHound2.wav", "start": 180349667, "end": 180458549}, {"filename": "/Data/Sound/mHoundAttack1.wav", "start": 180458549, "end": 180507701}, {"filename": "/Data/Sound/mHoundAttack2.wav", "start": 180507701, "end": 180537653}, {"filename": "/Data/Sound/mHoundDie.wav", "start": 180537653, "end": 180594225}, {"filename": "/Data/Sound/mHunter1.wav", "start": 180594225, "end": 180771707}, {"filename": "/Data/Sound/mHunter2.wav", "start": 180771707, "end": 180946249}, {"filename": "/Data/Sound/mHunterAttack1.wav", "start": 180946249, "end": 181102215}, {"filename": "/Data/Sound/mHunterAttack2.wav", "start": 181102215, "end": 181259585}, {"filename": "/Data/Sound/mHunterDie.wav", "start": 181259585, "end": 181333187}, {"filename": "/Data/Sound/mHydra1.wav", "start": 181333187, "end": 181691721}, {"filename": "/Data/Sound/mHydraAttack1.wav", "start": 181691721, "end": 181844487}, {"filename": "/Data/Sound/mIceMonster1.wav", "start": 181844487, "end": 182009979}, {"filename": "/Data/Sound/mIceMonster2.wav", "start": 182009979, "end": 182113685}, {"filename": "/Data/Sound/mIceMonsterDie.wav", "start": 182113685, "end": 182233415}, {"filename": "/Data/Sound/mIceQueen1.wav", "start": 182233415, "end": 182418891}, {"filename": "/Data/Sound/mIceQueen2.wav", "start": 182418891, "end": 182861629}, {"filename": "/Data/Sound/mIceQueenAttack1.wav", "start": 182861629, "end": 183104055}, {"filename": "/Data/Sound/mIceQueenAttack2.wav", "start": 183104055, "end": 183178681}, {"filename": "/Data/Sound/mIceQueenDie.wav", "start": 183178681, "end": 183339579}, {"filename": "/Data/Sound/mLarva1.wav", "start": 183339579, "end": 183358533}, {"filename": "/Data/Sound/mLarva2.wav", "start": 183358533, "end": 183379155}, {"filename": "/Data/Sound/mLizardKing1.wav", "start": 183379155, "end": 183550457}, {"filename": "/Data/Sound/mLizardKing2.wav", "start": 183550457, "end": 183705235}, {"filename": "/Data/Sound/mMagicSkull.wav", "start": 183705235, "end": 183886237}, {"filename": "/Data/Sound/mMegaCrust1.wav", "start": 183886237, "end": 183908299}, {"filename": "/Data/Sound/mMegaCrustAttack1.wav", "start": 183908299, "end": 183978287}, {"filename": "/Data/Sound/mMegaCrustDie.wav", "start": 183978287, "end": 184026249}, {"filename": "/Data/Sound/mMolt1.wav", "start": 184026249, "end": 184045303}, {"filename": "/Data/Sound/mMoltAttack1.wav", "start": 184045303, "end": 184064357}, {"filename": "/Data/Sound/mMoltDie.wav", "start": 184064357, "end": 184123403}, {"filename": "/Data/Sound/mOgre1.wav", "start": 184123403, "end": 184215787}, {"filename": "/Data/Sound/mOgre2.wav", "start": 184215787, "end": 184261021}, {"filename": "/Data/Sound/mOgreAttack1.wav", "start": 184261021, "end": 184382811}, {"filename": "/Data/Sound/mOgreAttack2.wav", "start": 184382811, "end": 184446361}, {"filename": "/Data/Sound/mOgreDie.wav", "start": 184446361, "end": 184534679}, {"filename": "/Data/Sound/mOrcArcherAttack1.wav", "start": 184534679, "end": 184557679}, {"filename": "/Data/Sound/mOrcCapAttack1.wav", "start": 184557679, "end": 184675207}, {"filename": "/Data/Sound/mPhantom1.wav", "start": 184675207, "end": 184680953}, {"filename": "/Data/Sound/mPhantomAttack1.wav", "start": 184680953, "end": 184806491}, {"filename": "/Data/Sound/mPhantomDie.wav", "start": 184806491, "end": 185117831}, {"filename": "/Data/Sound/mPhoenix1.wav", "start": 185117831, "end": 185333145}, {"filename": "/Data/Sound/mPhoenix2.wav", "start": 185333145, "end": 185429885}, {"filename": "/Data/Sound/mPhoenixAttack1.wav", "start": 185429885, "end": 185562119}, {"filename": "/Data/Sound/mQuest.wav", "start": 185562119, "end": 185739309}, {"filename": "/Data/Sound/mRainner1.wav", "start": 185739309, "end": 186075145}, {"filename": "/Data/Sound/mRainnerAttack1.wav", "start": 186075145, "end": 186095327}, {"filename": "/Data/Sound/mRainnerDie.wav", "start": 186095327, "end": 186158397}, {"filename": "/Data/Sound/mRedSkull.wav", "start": 186158397, "end": 186229345}, {"filename": "/Data/Sound/mRedSkullAttack.wav", "start": 186229345, "end": 186335451}, {"filename": "/Data/Sound/mRedSkullDie.wav", "start": 186335451, "end": 186443725}, {"filename": "/Data/Sound/mSatanAttack1.wav", "start": 186443725, "end": 186504959}, {"filename": "/Data/Sound/mScorpion1.wav", "start": 186504959, "end": 186578005}, {"filename": "/Data/Sound/mScorpion2.wav", "start": 186578005, "end": 186698927}, {"filename": "/Data/Sound/mScorpionAttack1.wav", "start": 186698927, "end": 186852493}, {"filename": "/Data/Sound/mScorpionAttack2.wav", "start": 186852493, "end": 186971047}, {"filename": "/Data/Sound/mScorpionDie.wav", "start": 186971047, "end": 187124381}, {"filename": "/Data/Sound/mShadow1.wav", "start": 187124381, "end": 187243489}, {"filename": "/Data/Sound/mShadow2.wav", "start": 187243489, "end": 187326361}, {"filename": "/Data/Sound/mShadowAttack1.wav", "start": 187326361, "end": 187388901}, {"filename": "/Data/Sound/mShadowAttack2.wav", "start": 187388901, "end": 187445485}, {"filename": "/Data/Sound/mShadowDie.wav", "start": 187445485, "end": 187486791}, {"filename": "/Data/Sound/mSpider1.wav", "start": 187486791, "end": 187491823}, {"filename": "/Data/Sound/mValkyrie1.wav", "start": 187491823, "end": 187822949}, {"filename": "/Data/Sound/mValkyrieDie.wav", "start": 187822949, "end": 188017159}, {"filename": "/Data/Sound/mWizard1.wav", "start": 188017159, "end": 188165689}, {"filename": "/Data/Sound/mWizard2.wav", "start": 188165689, "end": 188483035}, {"filename": "/Data/Sound/mWizardAttack1.wav", "start": 188483035, "end": 188535903}, {"filename": "/Data/Sound/mWizardAttack2.wav", "start": 188535903, "end": 188636453}, {"filename": "/Data/Sound/mWizardDie.wav", "start": 188636453, "end": 188673849}, {"filename": "/Data/Sound/mWoodMon1.wav", "start": 188673849, "end": 188778927}, {"filename": "/Data/Sound/mWoodMon2.wav", "start": 188778927, "end": 188941941}, {"filename": "/Data/Sound/mWoodMonAttack1.wav", "start": 188941941, "end": 189093007}, {"filename": "/Data/Sound/mWoodMonAttack2.wav", "start": 189093007, "end": 189184985}, {"filename": "/Data/Sound/mWoodMonDie.wav", "start": 189184985, "end": 189322387}, {"filename": "/Data/Sound/mWorm1.wav", "start": 189322387, "end": 189443525}, {"filename": "/Data/Sound/mWorm2.wav", "start": 189443525, "end": 189576251}, {"filename": "/Data/Sound/mWormDie.wav", "start": 189576251, "end": 189633311}, {"filename": "/Data/Sound/mYeti1.wav", "start": 189633311, "end": 189954485}, {"filename": "/Data/Sound/mYeti2.wav", "start": 189954485, "end": 190292623}, {"filename": "/Data/Sound/mYetiAttack1.wav", "start": 190292623, "end": 190429535}, {"filename": "/Data/Sound/mYetiDie.wav", "start": 190429535, "end": 190521145}, {"filename": "/Data/Sound/mutant1.wav", "start": 190521145, "end": 190841151}, {"filename": "/Data/Sound/mutant2.wav", "start": 190841151, "end": 191186641}, {"filename": "/Data/Sound/mutant_attack1.wav", "start": 191186641, "end": 191323839}, {"filename": "/Data/Sound/nBlackSmith.wav", "start": 191323839, "end": 191354075}, {"filename": "/Data/Sound/nHarp.wav", "start": 191354075, "end": 192163609}, {"filename": "/Data/Sound/nMix.wav", "start": 192163609, "end": 192915051}, {"filename": "/Data/Sound/pDrink.wav", "start": 192915051, "end": 192995689}, {"filename": "/Data/Sound/pDropItem.wav", "start": 192995689, "end": 193018347}, {"filename": "/Data/Sound/pDropMoney.wav", "start": 193018347, "end": 193188049}, {"filename": "/Data/Sound/pEatApple.wav", "start": 193188049, "end": 193254983}, {"filename": "/Data/Sound/pEnergy.wav", "start": 193254983, "end": 193315619}, {"filename": "/Data/Sound/pFemaleScream1.wav", "start": 193315619, "end": 193405085}, {"filename": "/Data/Sound/pFemaleScream2.wav", "start": 193405085, "end": 193515291}, {"filename": "/Data/Sound/pGetItem.wav", "start": 193515291, "end": 193528259}, {"filename": "/Data/Sound/pHeartBeat.wav", "start": 193528259, "end": 193859109}, {"filename": "/Data/Sound/pLevelUp.wav", "start": 193859109, "end": 194121857}, {"filename": "/Data/Sound/pMaleDie.wav", "start": 194121857, "end": 194199987}, {"filename": "/Data/Sound/pMaleScream1.wav", "start": 194199987, "end": 194243629}, {"filename": "/Data/Sound/pMaleScream2.wav", "start": 194243629, "end": 194296607}, {"filename": "/Data/Sound/pMaleScream3.wav", "start": 194296607, "end": 194366705}, {"filename": "/Data/Sound/pSwim.wav", "start": 194366705, "end": 194511431}, {"filename": "/Data/Sound/pWalk(Grass).wav", "start": 194511431, "end": 194537431}, {"filename": "/Data/Sound/pWalk(Snow).wav", "start": 194537431, "end": 194553091}, {"filename": "/Data/Sound/pWalk(Soil).wav", "start": 194553091, "end": 194565965}, {"filename": "/Data/Sound/sAquaFlash.wav", "start": 194565965, "end": 194739459}, {"filename": "/Data/Sound/sEvil.wav", "start": 194739459, "end": 195034117}, {"filename": "/Data/Sound/sFlame.wav", "start": 195034117, "end": 195157147}, {"filename": "/Data/Sound/sHellFire.wav", "start": 195157147, "end": 195363429}, {"filename": "/Data/Sound/sIce.wav", "start": 195363429, "end": 195493051}, {"filename": "/Data/Sound/sKnightDefense.wav", "start": 195493051, "end": 195685837}, {"filename": "/Data/Sound/sKnightSkill1.wav", "start": 195685837, "end": 195781405}, {"filename": "/Data/Sound/sKnightSkill2.wav", "start": 195781405, "end": 195817849}, {"filename": "/Data/Sound/sKnightSkill3.wav", "start": 195817849, "end": 195855573}, {"filename": "/Data/Sound/sKnightSkill4.wav", "start": 195855573, "end": 195906513}, {"filename": "/Data/Sound/sMagic.wav", "start": 195906513, "end": 195980699}, {"filename": "/Data/Sound/sTornado.wav", "start": 195980699, "end": 196376417}, {"filename": "/Data/World1/EncTerrain1.att", "start": 196376417, "end": 196507493}, {"filename": "/Data/World1/EncTerrain1.map", "start": 196507493, "end": 196704103}, {"filename": "/Data/World1/EncTerrain1.obj", "start": 196704103, "end": 196790207}, {"filename": "/Data/World1/Sky.bmp", "start": 196790207, "end": 197053431}, {"filename": "/Data/World1/Terrain1.att", "start": 197053431, "end": 197118970}, {"filename": "/Data/World1/TerrainHeight.OZB", "start": 197118970, "end": 197185590}, {"filename": "/Data/World1/TerrainLight.OZJ", "start": 197185590, "end": 197256433}, {"filename": "/Data/World1/TileGrass01.OZJ", "start": 197256433, "end": 197326865}, {"filename": "/Data/World1/TileGrass01.OZT", "start": 197326865, "end": 197392449}, {"filename": "/Data/World1/TileGrass02.OZJ", "start": 197392449, "end": 197423684}, {"filename": "/Data/World1/TileGround01.OZJ", "start": 197423684, "end": 197519966}, {"filename": "/Data/World1/TileGround02.OZJ", "start": 197519966, "end": 197544020}, {"filename": "/Data/World1/TileGround03.OZJ", "start": 197544020, "end": 197578582}, {"filename": "/Data/World1/TileRock01.OZJ", "start": 197578582, "end": 197679026}, {"filename": "/Data/World1/TileRock02.OZJ", "start": 197679026, "end": 197710599}, {"filename": "/Data/World1/TileWater01.OZJ", "start": 197710599, "end": 197773599}, {"filename": "/Data/World1/TileWood01.OZJ", "start": 197773599, "end": 197807992}, {"filename": "/Data/World1/leaf01.OZT", "start": 197807992, "end": 197809064}, {"filename": "/Data/World1/rain01.OZT", "start": 197809064, "end": 197809624}, {"filename": "/Data/World1/rain02.OZT", "start": 197809624, "end": 197811720}, {"filename": "/Data/World10/EncTerrain10.att", "start": 197811720, "end": 197877260}, {"filename": "/Data/World10/EncTerrain10.map", "start": 197877260, "end": 198073870}, {"filename": "/Data/World10/EncTerrain10.obj", "start": 198073870, "end": 198090794}, {"filename": "/Data/World10/Terrain10.att", "start": 198090794, "end": 198156333}, {"filename": "/Data/World10/TerrainHeight.OZB", "start": 198156333, "end": 198222953}, {"filename": "/Data/World10/TerrainLight.OZJ", "start": 198222953, "end": 198227106}, {"filename": "/Data/World10/TileGrass01.OZJ", "start": 198227106, "end": 198285765}, {"filename": "/Data/World10/TileGrass02.OZJ", "start": 198285765, "end": 198382241}, {"filename": "/Data/World10/TileGround01.OZJ", "start": 198382241, "end": 198417408}, {"filename": "/Data/World10/TileGround03.OZJ", "start": 198417408, "end": 198438228}, {"filename": "/Data/World10/TileRock01.OZJ", "start": 198438228, "end": 198462548}, {"filename": "/Data/World10/TileRock02.OZJ", "start": 198462548, "end": 198520722}, {"filename": "/Data/World10/TileRock03.OZJ", "start": 198520722, "end": 198589875}, {"filename": "/Data/World10/TileRock04.OZJ", "start": 198589875, "end": 198677890}, {"filename": "/Data/World10/TileWood01.OZJ", "start": 198677890, "end": 198718633}, {"filename": "/Data/World10/leaf02.OZJ", "start": 198718633, "end": 198723134}, {"filename": "/Data/World10/rain03.OZT", "start": 198723134, "end": 198727278}, {"filename": "/Data/World11/EncTerrain11.att", "start": 198727278, "end": 198792818}, {"filename": "/Data/World11/EncTerrain11.map", "start": 198792818, "end": 198989428}, {"filename": "/Data/World11/EncTerrain11.obj", "start": 198989428, "end": 199009532}, {"filename": "/Data/World11/Terrain11.att", "start": 199009532, "end": 199075071}, {"filename": "/Data/World11/TerrainHeight.OZB", "start": 199075071, "end": 199141691}, {"filename": "/Data/World11/TerrainLight.OZJ", "start": 199141691, "end": 199164390}, {"filename": "/Data/World11/TileGrass01.OZJ", "start": 199164390, "end": 199275788}, {"filename": "/Data/World11/leaf01.OZT", "start": 199275788, "end": 199276860}, {"filename": "/Data/World11/leaf02.OZJ", "start": 199276860, "end": 199281305}, {"filename": "/Data/World11/rain01.OZT", "start": 199281305, "end": 199281865}, {"filename": "/Data/World12/EncTerrain12.att", "start": 199281865, "end": 199347405}, {"filename": "/Data/World12/EncTerrain12.map", "start": 199347405, "end": 199544015}, {"filename": "/Data/World12/EncTerrain12.obj", "start": 199544015, "end": 199550319}, {"filename": "/Data/World12/Terrain12.att", "start": 199550319, "end": 199615858}, {"filename": "/Data/World12/TerrainHeight.OZB", "start": 199615858, "end": 199682478}, {"filename": "/Data/World12/TerrainLight.OZJ", "start": 199682478, "end": 199688466}, {"filename": "/Data/World12/TileGrass01.OZJ", "start": 199688466, "end": 199768092}, {"filename": "/Data/World12/TileGrass01.OZT", "start": 199768092, "end": 199833676}, {"filename": "/Data/World12/TileGrass02.OZJ", "start": 199833676, "end": 199914181}, {"filename": "/Data/World12/TileGrass03.OZT", "start": 199914181, "end": 200045301}, {"filename": "/Data/World12/TileGround02.OZJ", "start": 200045301, "end": 200115036}, {"filename": "/Data/World12/TileGround03.OZJ", "start": 200115036, "end": 200187981}, {"filename": "/Data/World12/TileRock01.OZJ", "start": 200187981, "end": 200300180}, {"filename": "/Data/World12/TileRock02.OZJ", "start": 200300180, "end": 200349989}, {"filename": "/Data/World12/TileRock03.OZJ", "start": 200349989, "end": 200383265}, {"filename": "/Data/World12/TileRock04.OZJ", "start": 200383265, "end": 200499797}, {"filename": "/Data/World12/TileWater01.OZJ", "start": 200499797, "end": 200560076}, {"filename": "/Data/World12/TileWood01.OZJ", "start": 200560076, "end": 200596964}, {"filename": "/Data/World12/leaf01.OZT", "start": 200596964, "end": 200598036}, {"filename": "/Data/World12/leaf02.OZJ", "start": 200598036, "end": 200602481}, {"filename": "/Data/World12/rain01.OZT", "start": 200602481, "end": 200603041}, {"filename": "/Data/World2/EncTerrain2.att", "start": 200603041, "end": 200668581}, {"filename": "/Data/World2/EncTerrain2.map", "start": 200668581, "end": 200865191}, {"filename": "/Data/World2/EncTerrain2.obj", "start": 200865191, "end": 200999835}, {"filename": "/Data/World2/Sky.bmp", "start": 200999835, "end": 202048467}, {"filename": "/Data/World2/Terrain2.att", "start": 202048467, "end": 202114006}, {"filename": "/Data/World2/TerrainHeight.OZB", "start": 202114006, "end": 202180626}, {"filename": "/Data/World2/TerrainLight.OZJ", "start": 202180626, "end": 202244052}, {"filename": "/Data/World2/TileGrass01.OZJ", "start": 202244052, "end": 202278449}, {"filename": "/Data/World2/TileGrass02.OZJ", "start": 202278449, "end": 202309684}, {"filename": "/Data/World2/TileGround01.OZJ", "start": 202309684, "end": 202419593}, {"filename": "/Data/World2/TileGround02.OZJ", "start": 202419593, "end": 202442022}, {"filename": "/Data/World2/TileGround03.OZJ", "start": 202442022, "end": 202478335}, {"filename": "/Data/World2/TileRock01.OZJ", "start": 202478335, "end": 202550290}, {"filename": "/Data/World2/TileRock02.OZJ", "start": 202550290, "end": 202583022}, {"filename": "/Data/World2/TileWater01.OZJ", "start": 202583022, "end": 202657907}, {"filename": "/Data/World2/TileWood01.OZJ", "start": 202657907, "end": 202691133}, {"filename": "/Data/World3/EncTerrain3.att", "start": 202691133, "end": 202756673}, {"filename": "/Data/World3/EncTerrain3.map", "start": 202756673, "end": 202953283}, {"filename": "/Data/World3/EncTerrain3.obj", "start": 202953283, "end": 203017607}, {"filename": "/Data/World3/Sky.bmp", "start": 203017607, "end": 204066239}, {"filename": "/Data/World3/Terrain3.att", "start": 204066239, "end": 204131778}, {"filename": "/Data/World3/TerrainHeight.OZB", "start": 204131778, "end": 204198398}, {"filename": "/Data/World3/TerrainLight.OZJ", "start": 204198398, "end": 204262580}, {"filename": "/Data/World3/TileGrass01.OZJ", "start": 204262580, "end": 204325529}, {"filename": "/Data/World3/TileGrass02.OZJ", "start": 204325529, "end": 204345240}, {"filename": "/Data/World3/TileGrass02.OZT", "start": 204345240, "end": 204410824}, {"filename": "/Data/World3/TileGround01.OZJ", "start": 204410824, "end": 204496218}, {"filename": "/Data/World3/TileGround02.OZJ", "start": 204496218, "end": 204519266}, {"filename": "/Data/World3/TileGround03.OZJ", "start": 204519266, "end": 204550365}, {"filename": "/Data/World3/TileRock01.OZJ", "start": 204550365, "end": 204607582}, {"filename": "/Data/World3/TileRock02.OZJ", "start": 204607582, "end": 204628318}, {"filename": "/Data/World3/TileRock03.OZJ", "start": 204628318, "end": 204650637}, {"filename": "/Data/World3/TileRock04.OZJ", "start": 204650637, "end": 204671885}, {"filename": "/Data/World3/TileRock05.OZJ", "start": 204671885, "end": 204761090}, {"filename": "/Data/World3/TileRock06.OZJ", "start": 204761090, "end": 204773437}, {"filename": "/Data/World3/TileRock07.OZJ", "start": 204773437, "end": 204866049}, {"filename": "/Data/World3/TileWater01.OZJ", "start": 204866049, "end": 204934496}, {"filename": "/Data/World3/TileWood01.OZJ", "start": 204934496, "end": 204964126}, {"filename": "/Data/World3/leaf01.OZJ", "start": 204964126, "end": 204966297}, {"filename": "/Data/World3/leaf01.OZT", "start": 204966297, "end": 204970441}, {"filename": "/Data/World3/leaf02.OZJ", "start": 204970441, "end": 204972681}, {"filename": "/Data/World4/EncTerrain4.att", "start": 204972681, "end": 205038221}, {"filename": "/Data/World4/EncTerrain4.map", "start": 205038221, "end": 205234831}, {"filename": "/Data/World4/EncTerrain4.obj", "start": 205234831, "end": 205516805}, {"filename": "/Data/World4/Sky.bmp", "start": 205516805, "end": 206565435}, {"filename": "/Data/World4/Terrain4.att", "start": 206565435, "end": 206630974}, {"filename": "/Data/World4/TerrainHeight.OZB", "start": 206630974, "end": 206697594}, {"filename": "/Data/World4/TerrainLight.OZJ", "start": 206697594, "end": 206734495}, {"filename": "/Data/World4/TileGrass01.OZJ", "start": 206734495, "end": 206841539}, {"filename": "/Data/World4/TileGrass01.OZT", "start": 206841539, "end": 206907123}, {"filename": "/Data/World4/TileGrass03.OZT", "start": 206907123, "end": 207038243}, {"filename": "/Data/World4/TileGround01.OZJ", "start": 207038243, "end": 207069542}, {"filename": "/Data/World4/TileGround03.OZJ", "start": 207069542, "end": 207101108}, {"filename": "/Data/World4/TileRock01.OZJ", "start": 207101108, "end": 207135605}, {"filename": "/Data/World4/TileRock02.OZJ", "start": 207135605, "end": 207204409}, {"filename": "/Data/World4/TileRock03.OZJ", "start": 207204409, "end": 207302551}, {"filename": "/Data/World4/TileRock04.OZJ", "start": 207302551, "end": 207393335}, {"filename": "/Data/World4/TileWater01.OZJ", "start": 207393335, "end": 207495860}, {"filename": "/Data/World4/TileWood01.OZJ", "start": 207495860, "end": 207529086}, {"filename": "/Data/World4/leaf01.OZT", "start": 207529086, "end": 207530158}, {"filename": "/Data/World5/EncTerrain5.att", "start": 207530158, "end": 207595698}, {"filename": "/Data/World5/EncTerrain5.map", "start": 207595698, "end": 207792308}, {"filename": "/Data/World5/EncTerrain5.obj", "start": 207792308, "end": 207953712}, {"filename": "/Data/World5/Sky.bmp", "start": 207953712, "end": 209002344}, {"filename": "/Data/World5/Terrain5.att", "start": 209002344, "end": 209067883}, {"filename": "/Data/World5/TerrainHeight.OZB", "start": 209067883, "end": 209134503}, {"filename": "/Data/World5/TerrainLight.OZJ", "start": 209134503, "end": 209201721}, {"filename": "/Data/World5/TileGrass01.OZJ", "start": 209201721, "end": 209275208}, {"filename": "/Data/World5/TileGrass02.OZJ", "start": 209275208, "end": 209345902}, {"filename": "/Data/World5/TileGround01.OZJ", "start": 209345902, "end": 209363086}, {"filename": "/Data/World5/TileGround02.OZJ", "start": 209363086, "end": 209483899}, {"filename": "/Data/World5/TileGround03.OZJ", "start": 209483899, "end": 209511282}, {"filename": "/Data/World5/TileRock01.OZJ", "start": 209511282, "end": 209539482}, {"filename": "/Data/World5/TileRock02.OZJ", "start": 209539482, "end": 209610307}, {"filename": "/Data/World5/TileRock03.OZJ", "start": 209610307, "end": 209676043}, {"filename": "/Data/World5/TileRock04.OZJ", "start": 209676043, "end": 209759437}, {"filename": "/Data/World5/TileWater01.OZJ", "start": 209759437, "end": 209878493}, {"filename": "/Data/World5/TileWood01.OZJ", "start": 209878493, "end": 209913126}, {"filename": "/Data/World5/leaf02.OZJ", "start": 209913126, "end": 209917571}, {"filename": "/Data/World6/EncTerrain6.att", "start": 209917571, "end": 209983111}, {"filename": "/Data/World6/EncTerrain6.map", "start": 209983111, "end": 210179721}, {"filename": "/Data/World6/EncTerrain6.obj", "start": 210179721, "end": 210179725}, {"filename": "/Data/World6/Terrain6.att", "start": 210179725, "end": 210245264}, {"filename": "/Data/World6/TerrainHeight.OZB", "start": 210245264, "end": 210311882}, {"filename": "/Data/World6/TerrainHeight0.OZB", "start": 210311882, "end": 210378502}, {"filename": "/Data/World6/TerrainLight.OZJ", "start": 210378502, "end": 210442684}, {"filename": "/Data/World6/TerrainLight0.OZJ", "start": 210442684, "end": 210479585}, {"filename": "/Data/World6/Terrainmap.OZB", "start": 210479585, "end": 210546205}, {"filename": "/Data/World6/TileGrass01.OZJ", "start": 210546205, "end": 210646075}, {"filename": "/Data/World6/TileGrass01.OZT", "start": 210646075, "end": 210711659}, {"filename": "/Data/World6/TileGrass012.OZJ", "start": 210711659, "end": 210820136}, {"filename": "/Data/World6/TileGrass013.OZJ", "start": 210820136, "end": 210922661}, {"filename": "/Data/World6/TileGrass02.OZJ", "start": 210922661, "end": 210967703}, {"filename": "/Data/World6/TileGrass021.OZJ", "start": 210967703, "end": 211055076}, {"filename": "/Data/World6/TileGrass023.OZJ", "start": 211055076, "end": 211177763}, {"filename": "/Data/World6/TileGround01.OZJ", "start": 211177763, "end": 211252900}, {"filename": "/Data/World6/TileGround011.OZJ", "start": 211252900, "end": 211288332}, {"filename": "/Data/World6/TileGround012.OZJ", "start": 211288332, "end": 211395698}, {"filename": "/Data/World6/TileGround02.OZJ", "start": 211395698, "end": 211516511}, {"filename": "/Data/World6/TileGround03.OZJ", "start": 211516511, "end": 211648759}, {"filename": "/Data/World6/TileRock01.OZJ", "start": 211648759, "end": 211749712}, {"filename": "/Data/World6/TileRock012.OZJ", "start": 211749712, "end": 211784209}, {"filename": "/Data/World6/TileRock02.OZJ", "start": 211784209, "end": 211894576}, {"filename": "/Data/World6/TileRock021.OZJ", "start": 211894576, "end": 211981949}, {"filename": "/Data/World6/TileRock022.OZJ", "start": 211981949, "end": 212089315}, {"filename": "/Data/World6/TileRock03.OZJ", "start": 212089315, "end": 212160051}, {"filename": "/Data/World6/TileRock04.OZJ", "start": 212160051, "end": 212235358}, {"filename": "/Data/World6/TileWater01.OZJ", "start": 212235358, "end": 212331531}, {"filename": "/Data/World6/TileWood01.OZJ", "start": 212331531, "end": 212439690}, {"filename": "/Data/World6/leaf01.OZT", "start": 212439690, "end": 212440762}, {"filename": "/Data/World6/leaf02.OZJ", "start": 212440762, "end": 212445207}, {"filename": "/Data/World7/EncTerrain7.att", "start": 212445207, "end": 212510747}, {"filename": "/Data/World7/EncTerrain7.map", "start": 212510747, "end": 212707357}, {"filename": "/Data/World7/EncTerrain7.obj", "start": 212707357, "end": 212765621}, {"filename": "/Data/World7/Sky.bmp", "start": 212765621, "end": 213814253}, {"filename": "/Data/World7/Terrain7.att", "start": 213814253, "end": 213879792}, {"filename": "/Data/World7/TerrainHeight.OZB", "start": 213879792, "end": 213946412}, {"filename": "/Data/World7/TerrainLight.OZJ", "start": 213946412, "end": 213969127}, {"filename": "/Data/World7/TileGrass01.OZJ", "start": 213969127, "end": 214079755}, {"filename": "/Data/World7/TileGrass01.OZT", "start": 214079755, "end": 214145339}, {"filename": "/Data/World7/TileGrass02.OZJ", "start": 214145339, "end": 214263361}, {"filename": "/Data/World7/TileGround02.OZJ", "start": 214263361, "end": 214384174}, {"filename": "/Data/World7/TileGround03.OZJ", "start": 214384174, "end": 214421156}, {"filename": "/Data/World7/TileRock01.OZJ", "start": 214421156, "end": 214453376}, {"filename": "/Data/World7/TileRock02.OZJ", "start": 214453376, "end": 214540615}, {"filename": "/Data/World7/TileRock03.OZJ", "start": 214540615, "end": 214622601}, {"filename": "/Data/World7/TileRock04.OZJ", "start": 214622601, "end": 214719315}, {"filename": "/Data/World7/TileWater01.OZJ", "start": 214719315, "end": 214806688}, {"filename": "/Data/World7/TileWood01.OZJ", "start": 214806688, "end": 214847431}, {"filename": "/Data/World7/leaf01.OZT", "start": 214847431, "end": 214848503}, {"filename": "/Data/World7/leaf02.OZJ", "start": 214848503, "end": 214852948}, {"filename": "/Data/World8/EncTerrain8.att", "start": 214852948, "end": 214918488}, {"filename": "/Data/World8/EncTerrain8.map", "start": 214918488, "end": 215115098}, {"filename": "/Data/World8/EncTerrain8.obj", "start": 215115098, "end": 215271252}, {"filename": "/Data/World8/Sky.bmp", "start": 215271252, "end": 216319884}, {"filename": "/Data/World8/Terrain8.att", "start": 216319884, "end": 216385423}, {"filename": "/Data/World8/TerrainHeight.OZB", "start": 216385423, "end": 216452043}, {"filename": "/Data/World8/TerrainLight.OZJ", "start": 216452043, "end": 216517514}, {"filename": "/Data/World8/TileGrass01.OZJ", "start": 216517514, "end": 216625991}, {"filename": "/Data/World8/TileGrass02.OZJ", "start": 216625991, "end": 216748678}, {"filename": "/Data/World8/TileGround01.OZJ", "start": 216748678, "end": 216783845}, {"filename": "/Data/World8/TileGround03.OZJ", "start": 216783845, "end": 216819277}, {"filename": "/Data/World8/TileRock01.OZJ", "start": 216819277, "end": 216849520}, {"filename": "/Data/World8/TileRock02.OZJ", "start": 216849520, "end": 216956886}, {"filename": "/Data/World8/TileRock03.OZJ", "start": 216956886, "end": 217026039}, {"filename": "/Data/World8/TileRock04.OZJ", "start": 217026039, "end": 217118923}, {"filename": "/Data/World8/TileWood01.OZJ", "start": 217118923, "end": 217159666}, {"filename": "/Data/World8/leaf01.OZJ", "start": 217159666, "end": 217164167}, {"filename": "/Data/World8/leaf02.OZJ", "start": 217164167, "end": 217168668}, {"filename": "/Data/World9/EncTerrain9.att", "start": 217168668, "end": 217234208}, {"filename": "/Data/World9/EncTerrain9.map", "start": 217234208, "end": 217430818}, {"filename": "/Data/World9/EncTerrain9.obj", "start": 217430818, "end": 217530632}, {"filename": "/Data/World9/Sky.bmp", "start": 217530632, "end": 218579264}, {"filename": "/Data/World9/Terrain9.att", "start": 218579264, "end": 218644803}, {"filename": "/Data/World9/TerrainHeight.OZB", "start": 218644803, "end": 218711423}, {"filename": "/Data/World9/TerrainLight.OZJ", "start": 218711423, "end": 218790442}, {"filename": "/Data/World9/TileGrass01.OZJ", "start": 218790442, "end": 218901840}, {"filename": "/Data/World9/TileGrass01.OZT", "start": 218901840, "end": 218967424}, {"filename": "/Data/World9/TileGrass02.OZJ", "start": 218967424, "end": 219085446}, {"filename": "/Data/World9/TileGrass03.OZT", "start": 219085446, "end": 219216566}, {"filename": "/Data/World9/TileGround01.OZJ", "start": 219216566, "end": 219251733}, {"filename": "/Data/World9/TileGround02.OZJ", "start": 219251733, "end": 219321858}, {"filename": "/Data/World9/TileGround03.OZJ", "start": 219321858, "end": 219354224}, {"filename": "/Data/World9/TileRock01.OZJ", "start": 219354224, "end": 219466125}, {"filename": "/Data/World9/TileRock02.OZJ", "start": 219466125, "end": 219549874}, {"filename": "/Data/World9/TileRock03.OZJ", "start": 219549874, "end": 219583150}, {"filename": "/Data/World9/TileRock04.OZJ", "start": 219583150, "end": 219699427}, {"filename": "/Data/World9/TileWater01.OZJ", "start": 219699427, "end": 219759706}, {"filename": "/Data/World9/TileWood01.OZJ", "start": 219759706, "end": 219796594}, {"filename": "/config.ini", "start": 219796594, "end": 219797510}], "remote_package_size": 219797510});
+    loadPackage({"files": [{"filename": "/Data/Dec2.dat", "start": 0, "end": 54}, {"filename": "/Data/Effect/Chrome01.OZJ", "start": 54, "end": 9058}, {"filename": "/Data/Effect/Chrome02.OZJ", "start": 9058, "end": 15349}, {"filename": "/Data/Effect/DinoE.OZJ", "start": 15349, "end": 27677}, {"filename": "/Data/Effect/Explotion01.OZJ", "start": 27677, "end": 69591}, {"filename": "/Data/Effect/Fire01.OZJ", "start": 69591, "end": 83871}, {"filename": "/Data/Effect/Fire02.OZJ", "start": 83871, "end": 93374}, {"filename": "/Data/Effect/Fire03.OZJ", "start": 93374, "end": 107099}, {"filename": "/Data/Effect/Fire04.OZJ", "start": 107099, "end": 116508}, {"filename": "/Data/Effect/Flame01.OZJ", "start": 116508, "end": 125987}, {"filename": "/Data/Effect/Flare.OZJ", "start": 125987, "end": 137190}, {"filename": "/Data/Effect/JointEnergy01.OZJ", "start": 137190, "end": 142044}, {"filename": "/Data/Effect/JointLaser01.OZJ", "start": 142044, "end": 147741}, {"filename": "/Data/Effect/JointLaser02.OZJ", "start": 147741, "end": 156207}, {"filename": "/Data/Effect/JointSpirit01.OZJ", "start": 156207, "end": 166383}, {"filename": "/Data/Effect/JointThunder01.OZJ", "start": 166383, "end": 178222}, {"filename": "/Data/Effect/Magic_Circle1.OZJ", "start": 178222, "end": 185145}, {"filename": "/Data/Effect/Magic_Ground1.OZJ", "start": 185145, "end": 198830}, {"filename": "/Data/Effect/Magic_Ground2.OZJ", "start": 198830, "end": 212768}, {"filename": "/Data/Effect/NSkill.OZJ", "start": 212768, "end": 216646}, {"filename": "/Data/Effect/PoundingBall.OZJ", "start": 216646, "end": 222215}, {"filename": "/Data/Effect/Shiny01.OZJ", "start": 222215, "end": 227150}, {"filename": "/Data/Effect/Shiny02.OZJ", "start": 227150, "end": 233739}, {"filename": "/Data/Effect/Shiny03.OZJ", "start": 233739, "end": 237258}, {"filename": "/Data/Effect/Spark01.OZJ", "start": 237258, "end": 242166}, {"filename": "/Data/Effect/Spark02.OZJ", "start": 242166, "end": 247050}, {"filename": "/Data/Effect/Spark03.OZJ", "start": 247050, "end": 252781}, {"filename": "/Data/Effect/Thunder01.OZJ", "start": 252781, "end": 261625}, {"filename": "/Data/Effect/bab2.OZJ", "start": 261625, "end": 267318}, {"filename": "/Data/Effect/blood.OZT", "start": 267318, "end": 332902}, {"filename": "/Data/Effect/blood01.OZT", "start": 332902, "end": 349334}, {"filename": "/Data/Effect/blur01.OZJ", "start": 349334, "end": 354638}, {"filename": "/Data/Effect/cloudLight.OZJ", "start": 354638, "end": 372372}, {"filename": "/Data/Effect/clouds.OZJ", "start": 372372, "end": 402036}, {"filename": "/Data/Effect/eye01.OZJ", "start": 402036, "end": 407166}, {"filename": "/Data/Effect/fi01.OZJ", "start": 407166, "end": 419685}, {"filename": "/Data/Effect/fi02.OZT", "start": 419685, "end": 681877}, {"filename": "/Data/Effect/flare01.OZJ", "start": 681877, "end": 687728}, {"filename": "/Data/Effect/flare02.OZJ", "start": 687728, "end": 691398}, {"filename": "/Data/Effect/flareBlue.OZJ", "start": 691398, "end": 696031}, {"filename": "/Data/Effect/lightning.OZJ", "start": 696031, "end": 754597}, {"filename": "/Data/Effect/lightning2.OZJ", "start": 754597, "end": 773981}, {"filename": "/Data/Effect/motion_blur.OZJ", "start": 773981, "end": 782715}, {"filename": "/Data/Effect/motion_blur_r.OZJ", "start": 782715, "end": 790085}, {"filename": "/Data/Effect/motion_blur_r2.OZJ", "start": 790085, "end": 802471}, {"filename": "/Data/Effect/ring.OZJ", "start": 802471, "end": 811559}, {"filename": "/Data/Effect/smoke01.OZJ", "start": 811559, "end": 818377}, {"filename": "/Data/Effect/smoke02.OZT", "start": 818377, "end": 834809}, {"filename": "/Data/Effect/spark.OZJ", "start": 834809, "end": 845280}, {"filename": "/Data/Enc1.dat", "start": 845280, "end": 845334}, {"filename": "/Data/Gate.bmd", "start": 845334, "end": 846234}, {"filename": "/Data/Interface/Accept_box01.OZJ", "start": 846234, "end": 852229}, {"filename": "/Data/Interface/Accept_box02.OZJ", "start": 852229, "end": 858400}, {"filename": "/Data/Interface/Back1.OZJ", "start": 858400, "end": 864417}, {"filename": "/Data/Interface/Back2.OZJ", "start": 864417, "end": 871038}, {"filename": "/Data/Interface/Back3.OZJ", "start": 871038, "end": 877610}, {"filename": "/Data/Interface/Bar.OZJ", "start": 877610, "end": 883380}, {"filename": "/Data/Interface/Buy_01.OZJ", "start": 883380, "end": 889312}, {"filename": "/Data/Interface/Buy_02.OZJ", "start": 889312, "end": 895200}, {"filename": "/Data/Interface/Cancel.OZJ", "start": 895200, "end": 902123}, {"filename": "/Data/Interface/Cancel2.OZJ", "start": 902123, "end": 909820}, {"filename": "/Data/Interface/Cursor.OZT", "start": 909820, "end": 913964}, {"filename": "/Data/Interface/Cursorattack.OZT", "start": 913964, "end": 918108}, {"filename": "/Data/Interface/Cursordontmove.OZT", "start": 918108, "end": 922252}, {"filename": "/Data/Interface/Cursoreye.OZT", "start": 922252, "end": 938684}, {"filename": "/Data/Interface/Cursorget.OZT", "start": 938684, "end": 942828}, {"filename": "/Data/Interface/Cursorleanagainst.OZT", "start": 942828, "end": 946972}, {"filename": "/Data/Interface/Cursorpush.OZT", "start": 946972, "end": 951116}, {"filename": "/Data/Interface/Cursorrepair.OZT", "start": 951116, "end": 955260}, {"filename": "/Data/Interface/Cursorsitdown.OZT", "start": 955260, "end": 959404}, {"filename": "/Data/Interface/Cursortalk.OZT", "start": 959404, "end": 975836}, {"filename": "/Data/Interface/Dialogue1.OZJ", "start": 975836, "end": 985884}, {"filename": "/Data/Interface/Dialogue2.OZJ", "start": 985884, "end": 995662}, {"filename": "/Data/Interface/Dialogue2_1.OZJ", "start": 995662, "end": 1000892}, {"filename": "/Data/Interface/Exit_01.OZJ", "start": 1000892, "end": 1006846}, {"filename": "/Data/Interface/Exit_02.OZJ", "start": 1006846, "end": 1012912}, {"filename": "/Data/Interface/Font.OZT", "start": 1012912, "end": 1275104}, {"filename": "/Data/Interface/Fontinput.OZT", "start": 1275104, "end": 1307920}, {"filename": "/Data/Interface/Fonttest.OZT", "start": 1307920, "end": 1340736}, {"filename": "/Data/Interface/Guild.OZJ", "start": 1340736, "end": 1347057}, {"filename": "/Data/Interface/Guild.OZT", "start": 1347057, "end": 1347361}, {"filename": "/Data/Interface/Inventorybox2.OZJ", "start": 1347361, "end": 1353231}, {"filename": "/Data/Interface/Item_Back02.OZJ", "start": 1353231, "end": 1387301}, {"filename": "/Data/Interface/Item_back01.OZJ", "start": 1387301, "end": 1434499}, {"filename": "/Data/Interface/Item_boots.OZJ", "start": 1434499, "end": 1440792}, {"filename": "/Data/Interface/Item_box.OZJ", "start": 1440792, "end": 1446292}, {"filename": "/Data/Interface/Item_cap.OZJ", "start": 1446292, "end": 1452604}, {"filename": "/Data/Interface/Item_fairy.OZJ", "start": 1452604, "end": 1458999}, {"filename": "/Data/Interface/Item_gloves.OZJ", "start": 1458999, "end": 1465440}, {"filename": "/Data/Interface/Item_lower.OZJ", "start": 1465440, "end": 1471919}, {"filename": "/Data/Interface/Item_money.OZJ", "start": 1471919, "end": 1478678}, {"filename": "/Data/Interface/Item_necklace.OZJ", "start": 1478678, "end": 1483929}, {"filename": "/Data/Interface/Item_ring.OZJ", "start": 1483929, "end": 1489159}, {"filename": "/Data/Interface/Item_upper.OZJ", "start": 1489159, "end": 1496572}, {"filename": "/Data/Interface/Item_weapon01.OZJ", "start": 1496572, "end": 1503953}, {"filename": "/Data/Interface/Item_weapon02.OZJ", "start": 1503953, "end": 1511205}, {"filename": "/Data/Interface/Item_wing.OZJ", "start": 1511205, "end": 1518182}, {"filename": "/Data/Interface/Level01.OZJ", "start": 1518182, "end": 1523229}, {"filename": "/Data/Interface/Level_01.OZJ", "start": 1523229, "end": 1529473}, {"filename": "/Data/Interface/Level_02.OZJ", "start": 1529473, "end": 1535695}, {"filename": "/Data/Interface/Level_box.OZJ", "start": 1535695, "end": 1542807}, {"filename": "/Data/Interface/Lock_01.OZJ", "start": 1542807, "end": 1548981}, {"filename": "/Data/Interface/Lock_02.OZJ", "start": 1548981, "end": 1555295}, {"filename": "/Data/Interface/Lock_03.OZJ", "start": 1555295, "end": 1561525}, {"filename": "/Data/Interface/Lock_04.OZJ", "start": 1561525, "end": 1567876}, {"filename": "/Data/Interface/Menu01_new.OZJ", "start": 1567876, "end": 1584577}, {"filename": "/Data/Interface/Menu02.OZJ", "start": 1584577, "end": 1599484}, {"filename": "/Data/Interface/Menu03_new.OZJ", "start": 1599484, "end": 1618522}, {"filename": "/Data/Interface/Menu03_new_ag.OZJ", "start": 1618522, "end": 1621397}, {"filename": "/Data/Interface/Menu04.OZT", "start": 1621397, "end": 1640885}, {"filename": "/Data/Interface/Menu_blue.OZJ", "start": 1640885, "end": 1651154}, {"filename": "/Data/Interface/Menu_character.OZJ", "start": 1651154, "end": 1656798}, {"filename": "/Data/Interface/Menu_green.OZJ", "start": 1656798, "end": 1666738}, {"filename": "/Data/Interface/Menu_inventory.OZJ", "start": 1666738, "end": 1672549}, {"filename": "/Data/Interface/Menu_party.OZJ", "start": 1672549, "end": 1678347}, {"filename": "/Data/Interface/Menu_red.OZJ", "start": 1678347, "end": 1688239}, {"filename": "/Data/Interface/Message_box.OZJ", "start": 1688239, "end": 1707054}, {"filename": "/Data/Interface/Message_box1.OZJ", "start": 1707054, "end": 1714847}, {"filename": "/Data/Interface/Message_box2.OZJ", "start": 1714847, "end": 1719759}, {"filename": "/Data/Interface/MiniMap.OZT", "start": 1719759, "end": 1824299}, {"filename": "/Data/Interface/Mix_button1.OZJ", "start": 1824299, "end": 1829339}, {"filename": "/Data/Interface/Mix_button2.OZJ", "start": 1829339, "end": 1834852}, {"filename": "/Data/Interface/Money_01.OZJ", "start": 1834852, "end": 1840736}, {"filename": "/Data/Interface/Money_02.OZJ", "start": 1840736, "end": 1846694}, {"filename": "/Data/Interface/Nis_back.OZJ", "start": 1846694, "end": 1848460}, {"filename": "/Data/Interface/Nis_bar.OZJ", "start": 1848460, "end": 1850223}, {"filename": "/Data/Interface/Nis_btnalpha.OZJ", "start": 1850223, "end": 1852615}, {"filename": "/Data/Interface/Nis_btnarrow.OZJ", "start": 1852615, "end": 1854984}, {"filename": "/Data/Interface/Nis_btnchat.OZJ", "start": 1854984, "end": 1857395}, {"filename": "/Data/Interface/Nis_btnend.OZJ", "start": 1857395, "end": 1859767}, {"filename": "/Data/Interface/Nis_btnmax.OZJ", "start": 1859767, "end": 1861827}, {"filename": "/Data/Interface/Nis_btnmin.OZJ", "start": 1861827, "end": 1863906}, {"filename": "/Data/Interface/Nis_btnsize.OZJ", "start": 1863906, "end": 1866306}, {"filename": "/Data/Interface/Nis_hframe.OZJ", "start": 1866306, "end": 1871548}, {"filename": "/Data/Interface/Nis_rsframe.OZJ", "start": 1871548, "end": 1874526}, {"filename": "/Data/Interface/Nis_rsframe.OZT", "start": 1874526, "end": 1875630}, {"filename": "/Data/Interface/Nis_vframe.OZJ", "start": 1875630, "end": 1878055}, {"filename": "/Data/Interface/Ok.OZJ", "start": 1878055, "end": 1884769}, {"filename": "/Data/Interface/Ok2.OZJ", "start": 1884769, "end": 1892121}, {"filename": "/Data/Interface/Progress.OZJ", "start": 1892121, "end": 1895763}, {"filename": "/Data/Interface/Progress_back.OZJ", "start": 1895763, "end": 1900137}, {"filename": "/Data/Interface/Repair_01.OZJ", "start": 1900137, "end": 1906096}, {"filename": "/Data/Interface/Repair_02.OZJ", "start": 1906096, "end": 1912096}, {"filename": "/Data/Interface/Sell_01.OZJ", "start": 1912096, "end": 1917949}, {"filename": "/Data/Interface/Sell_02.OZJ", "start": 1917949, "end": 1923794}, {"filename": "/Data/Interface/Skill.OZJ", "start": 1923794, "end": 2021659}, {"filename": "/Data/Interface/Trading_line.OZJ", "start": 2021659, "end": 2030467}, {"filename": "/Data/Item/Antidote01.bmd", "start": 2030467, "end": 2039031}, {"filename": "/Data/Item/Arrows01.bmd", "start": 2039031, "end": 2043188}, {"filename": "/Data/Item/Arrows02.bmd", "start": 2043188, "end": 2050718}, {"filename": "/Data/Item/Axe01.bmd", "start": 2050718, "end": 2055440}, {"filename": "/Data/Item/Axe02.bmd", "start": 2055440, "end": 2061294}, {"filename": "/Data/Item/Axe03.bmd", "start": 2061294, "end": 2067732}, {"filename": "/Data/Item/Axe04.bmd", "start": 2067732, "end": 2073566}, {"filename": "/Data/Item/Axe05.bmd", "start": 2073566, "end": 2077234}, {"filename": "/Data/Item/Axe06.bmd", "start": 2077234, "end": 2082736}, {"filename": "/Data/Item/Axe07.bmd", "start": 2082736, "end": 2089182}, {"filename": "/Data/Item/Axe08.bmd", "start": 2089182, "end": 2096404}, {"filename": "/Data/Item/Axe09.bmd", "start": 2096404, "end": 2106893}, {"filename": "/Data/Item/Axes02.OZJ", "start": 2106893, "end": 2113044}, {"filename": "/Data/Item/Axes03.OZJ", "start": 2113044, "end": 2119285}, {"filename": "/Data/Item/Axes04.OZJ", "start": 2119285, "end": 2130438}, {"filename": "/Data/Item/Axes05.OZJ", "start": 2130438, "end": 2141357}, {"filename": "/Data/Item/Axes06.OZJ", "start": 2141357, "end": 2146749}, {"filename": "/Data/Item/Axes06.OZT", "start": 2146749, "end": 2163181}, {"filename": "/Data/Item/Axes07.OZJ", "start": 2163181, "end": 2173949}, {"filename": "/Data/Item/Axes08.OZJ", "start": 2173949, "end": 2185030}, {"filename": "/Data/Item/Axes09.OZJ", "start": 2185030, "end": 2197242}, {"filename": "/Data/Item/Axes10.OZJ", "start": 2197242, "end": 2207992}, {"filename": "/Data/Item/Beer01.bmd", "start": 2207992, "end": 2211402}, {"filename": "/Data/Item/Beer02.bmd", "start": 2211402, "end": 2223912}, {"filename": "/Data/Item/Book01.bmd", "start": 2223912, "end": 2225574}, {"filename": "/Data/Item/Book02.bmd", "start": 2225574, "end": 2227236}, {"filename": "/Data/Item/Book03.bmd", "start": 2227236, "end": 2228898}, {"filename": "/Data/Item/Book04.bmd", "start": 2228898, "end": 2230560}, {"filename": "/Data/Item/Book05.bmd", "start": 2230560, "end": 2232222}, {"filename": "/Data/Item/Book06.bmd", "start": 2232222, "end": 2233884}, {"filename": "/Data/Item/Book07.bmd", "start": 2233884, "end": 2235546}, {"filename": "/Data/Item/Book08.bmd", "start": 2235546, "end": 2237208}, {"filename": "/Data/Item/Book09.bmd", "start": 2237208, "end": 2238870}, {"filename": "/Data/Item/Book10.bmd", "start": 2238870, "end": 2240532}, {"filename": "/Data/Item/Book11.bmd", "start": 2240532, "end": 2242194}, {"filename": "/Data/Item/Book12.bmd", "start": 2242194, "end": 2243856}, {"filename": "/Data/Item/Book13.bmd", "start": 2243856, "end": 2245518}, {"filename": "/Data/Item/Book14.bmd", "start": 2245518, "end": 2247180}, {"filename": "/Data/Item/Book15.bmd", "start": 2247180, "end": 2248842}, {"filename": "/Data/Item/Book16.bmd", "start": 2248842, "end": 2250504}, {"filename": "/Data/Item/Book17.bmd", "start": 2250504, "end": 2252166}, {"filename": "/Data/Item/Book18.bmd", "start": 2252166, "end": 2253828}, {"filename": "/Data/Item/Book19.bmd", "start": 2253828, "end": 2255490}, {"filename": "/Data/Item/Bow01.bmd", "start": 2255490, "end": 2263714}, {"filename": "/Data/Item/Bow02.bmd", "start": 2263714, "end": 2273888}, {"filename": "/Data/Item/Bow03.bmd", "start": 2273888, "end": 2284698}, {"filename": "/Data/Item/Bow04.bmd", "start": 2284698, "end": 2296864}, {"filename": "/Data/Item/Bow05.bmd", "start": 2296864, "end": 2318310}, {"filename": "/Data/Item/Bow06.bmd", "start": 2318310, "end": 2331202}, {"filename": "/Data/Item/Bow07.bmd", "start": 2331202, "end": 2362398}, {"filename": "/Data/Item/Bow18.bmd", "start": 2362398, "end": 2432796}, {"filename": "/Data/Item/Bow19.bmd", "start": 2432796, "end": 2453944}, {"filename": "/Data/Item/Bow20.bmd", "start": 2453944, "end": 2514311}, {"filename": "/Data/Item/ConChip00.bmd", "start": 2514311, "end": 2518513}, {"filename": "/Data/Item/CrossBow01.bmd", "start": 2518513, "end": 2530650}, {"filename": "/Data/Item/CrossBow02.bmd", "start": 2530650, "end": 2543015}, {"filename": "/Data/Item/CrossBow03.bmd", "start": 2543015, "end": 2558800}, {"filename": "/Data/Item/CrossBow04.bmd", "start": 2558800, "end": 2571133}, {"filename": "/Data/Item/CrossBow05.bmd", "start": 2571133, "end": 2589966}, {"filename": "/Data/Item/CrossBow06.bmd", "start": 2589966, "end": 2610466}, {"filename": "/Data/Item/CrossBow07.bmd", "start": 2610466, "end": 2631966}, {"filename": "/Data/Item/CrossBow17.bmd", "start": 2631966, "end": 2664318}, {"filename": "/Data/Item/CrossBow20.bmd", "start": 2664318, "end": 2695907}, {"filename": "/Data/Item/Custom/20/nks01.OZJ", "start": 2695907, "end": 2706686}, {"filename": "/Data/Item/Custom/20/nks02.OZJ", "start": 2706686, "end": 2724156}, {"filename": "/Data/Item/Custom/20/nks03.OZJ", "start": 2724156, "end": 2733452}, {"filename": "/Data/Item/Custom/20/nks04.OZJ", "start": 2733452, "end": 2744327}, {"filename": "/Data/Item/Custom/20/sword21.bmd", "start": 2744327, "end": 2767045}, {"filename": "/Data/Item/Custom/72/Mace72.bmd", "start": 2767045, "end": 2805814}, {"filename": "/Data/Item/Custom/72/nfm01.OZJ", "start": 2805814, "end": 2835905}, {"filename": "/Data/Item/Custom/72/nfm02.OZT", "start": 2835905, "end": 2868721}, {"filename": "/Data/Item/Custom/72/nfm03.OZJ", "start": 2868721, "end": 2877470}, {"filename": "/Data/Item/Custom/Rudolph/flareRed.OZJ", "start": 2877470, "end": 2887841}, {"filename": "/Data/Item/Custom/Rudolph/gold_tree.OZJ", "start": 2887841, "end": 2901100}, {"filename": "/Data/Item/Custom/Rudolph/xmas_deer.bmd", "start": 2901100, "end": 2993289}, {"filename": "/Data/Item/Custom/Rudolph/xmassasum02.OZJ", "start": 2993289, "end": 3011714}, {"filename": "/Data/Item/DarkHorseHorn.bmd", "start": 3011714, "end": 3014886}, {"filename": "/Data/Item/DarkHorseSoul.bmd", "start": 3014886, "end": 3019032}, {"filename": "/Data/Item/DarkLordRobe.OZT", "start": 3019032, "end": 3150152}, {"filename": "/Data/Item/DarkLordRobe.bmd", "start": 3150152, "end": 3151986}, {"filename": "/Data/Item/DarkLordSign.OZJ", "start": 3151986, "end": 3163421}, {"filename": "/Data/Item/DarkLordSleeve.OZT", "start": 3163421, "end": 3171661}, {"filename": "/Data/Item/DarkLordSleeve.bmd", "start": 3171661, "end": 3172507}, {"filename": "/Data/Item/Devil00.bmd", "start": 3172507, "end": 3178259}, {"filename": "/Data/Item/Devil01.bmd", "start": 3178259, "end": 3185671}, {"filename": "/Data/Item/Devil02.bmd", "start": 3185671, "end": 3202881}, {"filename": "/Data/Item/Drax.OZJ", "start": 3202881, "end": 3217118}, {"filename": "/Data/Item/Drax_N.OZJ", "start": 3217118, "end": 3220148}, {"filename": "/Data/Item/Drax_R.OZJ", "start": 3220148, "end": 3226766}, {"filename": "/Data/Item/Drink00.bmd", "start": 3226766, "end": 3239856}, {"filename": "/Data/Item/Ds_B.OZJ", "start": 3239856, "end": 3241868}, {"filename": "/Data/Item/Ds_R.OZJ", "start": 3241868, "end": 3243880}, {"filename": "/Data/Item/Dstic.OZJ", "start": 3243880, "end": 3259980}, {"filename": "/Data/Item/Ebow4.OZJ", "start": 3259980, "end": 3273404}, {"filename": "/Data/Item/Ebow_R.OZJ", "start": 3273404, "end": 3275890}, {"filename": "/Data/Item/Eccross.OZJ", "start": 3275890, "end": 3315256}, {"filename": "/Data/Item/Eccross.OZT", "start": 3315256, "end": 3446376}, {"filename": "/Data/Item/Eldobox.OZJ", "start": 3446376, "end": 3450550}, {"filename": "/Data/Item/Elf_E.OZJ", "start": 3450550, "end": 3455762}, {"filename": "/Data/Item/Esh.OZJ", "start": 3455762, "end": 3462458}, {"filename": "/Data/Item/Esh.OZT", "start": 3462458, "end": 3470698}, {"filename": "/Data/Item/Esh2.OZJ", "start": 3470698, "end": 3474055}, {"filename": "/Data/Item/Estic.OZJ", "start": 3474055, "end": 3478194}, {"filename": "/Data/Item/Estic2.OZJ", "start": 3478194, "end": 3481300}, {"filename": "/Data/Item/Estic2_R.OZJ", "start": 3481300, "end": 3488785}, {"filename": "/Data/Item/Event01.bmd", "start": 3488785, "end": 3497082}, {"filename": "/Data/Item/Event02.bmd", "start": 3497082, "end": 3500076}, {"filename": "/Data/Item/Event03.bmd", "start": 3500076, "end": 3512742}, {"filename": "/Data/Item/EventBloodCastle00.bmd", "start": 3512742, "end": 3514635}, {"filename": "/Data/Item/EventBloodCastle01.bmd", "start": 3514635, "end": 3518269}, {"filename": "/Data/Item/EventBloodCastle02.bmd", "start": 3518269, "end": 3526963}, {"filename": "/Data/Item/EventBloodCastle03.bmd", "start": 3526963, "end": 3529057}, {"filename": "/Data/Item/EventBloodCastle04.bmd", "start": 3529057, "end": 3534690}, {"filename": "/Data/Item/EventBloodCastle05.bmd", "start": 3534690, "end": 3540323}, {"filename": "/Data/Item/EventBloodCastle06.bmd", "start": 3540323, "end": 3545956}, {"filename": "/Data/Item/EventChaosCastle.bmd", "start": 3545956, "end": 3565958}, {"filename": "/Data/Item/Gem01.bmd", "start": 3565958, "end": 3570456}, {"filename": "/Data/Item/Gem02.bmd", "start": 3570456, "end": 3574954}, {"filename": "/Data/Item/Gem03.bmd", "start": 3574954, "end": 3579452}, {"filename": "/Data/Item/Gem04.bmd", "start": 3579452, "end": 3583950}, {"filename": "/Data/Item/Gem05.bmd", "start": 3583950, "end": 3588448}, {"filename": "/Data/Item/Gem06.bmd", "start": 3588448, "end": 3592946}, {"filename": "/Data/Item/Gem07.bmd", "start": 3592946, "end": 3597444}, {"filename": "/Data/Item/Gem08.bmd", "start": 3597444, "end": 3601942}, {"filename": "/Data/Item/Gem10.bmd", "start": 3601942, "end": 3606440}, {"filename": "/Data/Item/Gem11.bmd", "start": 3606440, "end": 3610938}, {"filename": "/Data/Item/Gem12.bmd", "start": 3610938, "end": 3615436}, {"filename": "/Data/Item/Gem13.bmd", "start": 3615436, "end": 3619934}, {"filename": "/Data/Item/Gem14.bmd", "start": 3619934, "end": 3624432}, {"filename": "/Data/Item/Gold01.bmd", "start": 3624432, "end": 3627426}, {"filename": "/Data/Item/HELLASITEM00.bmd", "start": 3627426, "end": 3640262}, {"filename": "/Data/Item/HELLASITEM01.bmd", "start": 3640262, "end": 3648272}, {"filename": "/Data/Item/Javelins01.OZJ", "start": 3648272, "end": 3654737}, {"filename": "/Data/Item/Javelins03.OZJ", "start": 3654737, "end": 3660658}, {"filename": "/Data/Item/Javelins04.OZJ", "start": 3660658, "end": 3666865}, {"filename": "/Data/Item/Javelins05.OZJ", "start": 3666865, "end": 3678447}, {"filename": "/Data/Item/Jewel01.bmd", "start": 3678447, "end": 3679761}, {"filename": "/Data/Item/Jewel02.bmd", "start": 3679761, "end": 3681863}, {"filename": "/Data/Item/Jewel03.bmd", "start": 3681863, "end": 3685985}, {"filename": "/Data/Item/Jewel15.bmd", "start": 3685985, "end": 3688827}, {"filename": "/Data/Item/Ksword.OZJ", "start": 3688827, "end": 3703634}, {"filename": "/Data/Item/Ksword2.OZJ", "start": 3703634, "end": 3706029}, {"filename": "/Data/Item/Ktext.OZJ", "start": 3706029, "end": 3719575}, {"filename": "/Data/Item/MMsS.OZJ", "start": 3719575, "end": 3722245}, {"filename": "/Data/Item/MMsS2.OZJ", "start": 3722245, "end": 3727208}, {"filename": "/Data/Item/MMsS_r.OZJ", "start": 3727208, "end": 3730398}, {"filename": "/Data/Item/MMsSs_r.OZJ", "start": 3730398, "end": 3743103}, {"filename": "/Data/Item/Mace01.bmd", "start": 3743103, "end": 3746893}, {"filename": "/Data/Item/Mace02.bmd", "start": 3746893, "end": 3758183}, {"filename": "/Data/Item/Mace03.bmd", "start": 3758183, "end": 3772745}, {"filename": "/Data/Item/Mace04.bmd", "start": 3772745, "end": 3778015}, {"filename": "/Data/Item/Mace05.bmd", "start": 3778015, "end": 3797295}, {"filename": "/Data/Item/Mace06.bmd", "start": 3797295, "end": 3814461}, {"filename": "/Data/Item/Mace07.bmd", "start": 3814461, "end": 3828257}, {"filename": "/Data/Item/Mace08.bmd", "start": 3828257, "end": 3853858}, {"filename": "/Data/Item/Mace09.bmd", "start": 3853858, "end": 3890641}, {"filename": "/Data/Item/Mace10.bmd", "start": 3890641, "end": 3926668}, {"filename": "/Data/Item/Mace11.bmd", "start": 3926668, "end": 3963660}, {"filename": "/Data/Item/Mace12.bmd", "start": 3963660, "end": 4010916}, {"filename": "/Data/Item/Mace13.bmd", "start": 4010916, "end": 4067923}, {"filename": "/Data/Item/Mace14.bmd", "start": 4067923, "end": 4106692}, {"filename": "/Data/Item/MagicBox01.bmd", "start": 4106692, "end": 4112524}, {"filename": "/Data/Item/MagicBox02.bmd", "start": 4112524, "end": 4114958}, {"filename": "/Data/Item/MagicBox03.bmd", "start": 4114958, "end": 4117312}, {"filename": "/Data/Item/MagicBox04.bmd", "start": 4117312, "end": 4129283}, {"filename": "/Data/Item/MagicBox05.bmd", "start": 4129283, "end": 4137580}, {"filename": "/Data/Item/MagicBox06.bmd", "start": 4137580, "end": 4145220}, {"filename": "/Data/Item/MagicBox07.bmd", "start": 4145220, "end": 4152860}, {"filename": "/Data/Item/MagicBox08.bmd", "start": 4152860, "end": 4157302}, {"filename": "/Data/Item/MagicRing.OZJ", "start": 4157302, "end": 4165869}, {"filename": "/Data/Item/MagicRing00.bmd", "start": 4165869, "end": 4171517}, {"filename": "/Data/Item/MagicRingPendant.OZJ", "start": 4171517, "end": 4179895}, {"filename": "/Data/Item/Msword.OZJ", "start": 4179895, "end": 4214390}, {"filename": "/Data/Item/NDEE.OZJ", "start": 4214390, "end": 4217207}, {"filename": "/Data/Item/NDEE.OZT", "start": 4217207, "end": 4225447}, {"filename": "/Data/Item/NDW.OZJ", "start": 4225447, "end": 4234821}, {"filename": "/Data/Item/NDW_R.OZJ", "start": 4234821, "end": 4241546}, {"filename": "/Data/Item/NEWWW.OZJ", "start": 4241546, "end": 4252353}, {"filename": "/Data/Item/NEWW_R.OZJ", "start": 4252353, "end": 4264248}, {"filename": "/Data/Item/Necklace01.bmd", "start": 4264248, "end": 4271370}, {"filename": "/Data/Item/Necklace02.bmd", "start": 4271370, "end": 4279180}, {"filename": "/Data/Item/NewingEl.OZJ", "start": 4279180, "end": 4298346}, {"filename": "/Data/Item/Polearms02.OZJ", "start": 4298346, "end": 4308444}, {"filename": "/Data/Item/Polearms03.OZJ", "start": 4308444, "end": 4318886}, {"filename": "/Data/Item/Polearms04.OZJ", "start": 4318886, "end": 4328783}, {"filename": "/Data/Item/Polearms05.OZJ", "start": 4328783, "end": 4340416}, {"filename": "/Data/Item/Potion01.bmd", "start": 4340416, "end": 4345096}, {"filename": "/Data/Item/Potion02.bmd", "start": 4345096, "end": 4347996}, {"filename": "/Data/Item/Potion03.bmd", "start": 4347996, "end": 4351776}, {"filename": "/Data/Item/Potion04.bmd", "start": 4351776, "end": 4358532}, {"filename": "/Data/Item/Potion05.bmd", "start": 4358532, "end": 4361432}, {"filename": "/Data/Item/Potion06.bmd", "start": 4361432, "end": 4365212}, {"filename": "/Data/Item/Potion07.bmd", "start": 4365212, "end": 4371976}, {"filename": "/Data/Item/Quest00.bmd", "start": 4371976, "end": 4377609}, {"filename": "/Data/Item/Quest01.bmd", "start": 4377609, "end": 4389002}, {"filename": "/Data/Item/Quest02.bmd", "start": 4389002, "end": 4394887}, {"filename": "/Data/Item/Quest03.bmd", "start": 4394887, "end": 4407596}, {"filename": "/Data/Item/Quest04.bmd", "start": 4407596, "end": 4409070}, {"filename": "/Data/Item/Quest05.bmd", "start": 4409070, "end": 4419812}, {"filename": "/Data/Item/QuestItem3rd00.bmd", "start": 4419812, "end": 4426213}, {"filename": "/Data/Item/QuestItem3rd01.bmd", "start": 4426213, "end": 4434359}, {"filename": "/Data/Item/RedDragonT.OZJ", "start": 4434359, "end": 4456438}, {"filename": "/Data/Item/Ring01.bmd", "start": 4456438, "end": 4461196}, {"filename": "/Data/Item/Ring02.bmd", "start": 4461196, "end": 4465694}, {"filename": "/Data/Item/RingOfLordEvent.OZJ", "start": 4465694, "end": 4474241}, {"filename": "/Data/Item/RingOfLordEvent00.bmd", "start": 4474241, "end": 4484601}, {"filename": "/Data/Item/RingPenOfLordEvent.OZJ", "start": 4484601, "end": 4493481}, {"filename": "/Data/Item/Scroll01.bmd", "start": 4493481, "end": 4500891}, {"filename": "/Data/Item/Shield01.bmd", "start": 4500891, "end": 4502861}, {"filename": "/Data/Item/Shield02.bmd", "start": 4502861, "end": 4505763}, {"filename": "/Data/Item/Shield03.bmd", "start": 4505763, "end": 4508305}, {"filename": "/Data/Item/Shield04.bmd", "start": 4508305, "end": 4512641}, {"filename": "/Data/Item/Shield05.bmd", "start": 4512641, "end": 4514883}, {"filename": "/Data/Item/Shield06.bmd", "start": 4514883, "end": 4517319}, {"filename": "/Data/Item/Shield07.bmd", "start": 4517319, "end": 4527439}, {"filename": "/Data/Item/Shield08.bmd", "start": 4527439, "end": 4532877}, {"filename": "/Data/Item/Shield09.bmd", "start": 4532877, "end": 4535283}, {"filename": "/Data/Item/Shield10.bmd", "start": 4535283, "end": 4537509}, {"filename": "/Data/Item/Shield11.bmd", "start": 4537509, "end": 4540831}, {"filename": "/Data/Item/Shield12.bmd", "start": 4540831, "end": 4548046}, {"filename": "/Data/Item/Shield13.bmd", "start": 4548046, "end": 4558945}, {"filename": "/Data/Item/Shield14.bmd", "start": 4558945, "end": 4575176}, {"filename": "/Data/Item/Shield15.bmd", "start": 4575176, "end": 4590251}, {"filename": "/Data/Item/SkillScroll01.bmd", "start": 4590251, "end": 4591913}, {"filename": "/Data/Item/SkillScroll02.bmd", "start": 4591913, "end": 4593575}, {"filename": "/Data/Item/SkillScroll03.bmd", "start": 4593575, "end": 4595237}, {"filename": "/Data/Item/SkillScroll04.bmd", "start": 4595237, "end": 4596899}, {"filename": "/Data/Item/Spear01.bmd", "start": 4596899, "end": 4608085}, {"filename": "/Data/Item/Spear02.bmd", "start": 4608085, "end": 4617501}, {"filename": "/Data/Item/Spear03.bmd", "start": 4617501, "end": 4621759}, {"filename": "/Data/Item/Spear04.bmd", "start": 4621759, "end": 4627729}, {"filename": "/Data/Item/Spear05.bmd", "start": 4627729, "end": 4638679}, {"filename": "/Data/Item/Spear06.bmd", "start": 4638679, "end": 4644833}, {"filename": "/Data/Item/Spear07.bmd", "start": 4644833, "end": 4650031}, {"filename": "/Data/Item/Spear08.bmd", "start": 4650031, "end": 4660485}, {"filename": "/Data/Item/Spear09.bmd", "start": 4660485, "end": 4673819}, {"filename": "/Data/Item/Spear10.bmd", "start": 4673819, "end": 4687393}, {"filename": "/Data/Item/Spear11.bmd", "start": 4687393, "end": 4703830}, {"filename": "/Data/Item/Staff01.bmd", "start": 4703830, "end": 4717144}, {"filename": "/Data/Item/Staff02.bmd", "start": 4717144, "end": 4721944}, {"filename": "/Data/Item/Staff03.bmd", "start": 4721944, "end": 4728466}, {"filename": "/Data/Item/Staff04.bmd", "start": 4728466, "end": 4738588}, {"filename": "/Data/Item/Staff05.bmd", "start": 4738588, "end": 4759530}, {"filename": "/Data/Item/Staff06.bmd", "start": 4759530, "end": 4787341}, {"filename": "/Data/Item/Staff07.bmd", "start": 4787341, "end": 4837673}, {"filename": "/Data/Item/Staff08.bmd", "start": 4837673, "end": 4888048}, {"filename": "/Data/Item/Staff09.bmd", "start": 4888048, "end": 4893789}, {"filename": "/Data/Item/Staff10.bmd", "start": 4893789, "end": 4934369}, {"filename": "/Data/Item/Staff11.bmd", "start": 4934369, "end": 4970709}, {"filename": "/Data/Item/Staff12.bmd", "start": 4970709, "end": 5051067}, {"filename": "/Data/Item/Stts.OZJ", "start": 5051067, "end": 5053305}, {"filename": "/Data/Item/Sword01.bmd", "start": 5053305, "end": 5060171}, {"filename": "/Data/Item/Sword02.bmd", "start": 5060171, "end": 5064821}, {"filename": "/Data/Item/Sword03.bmd", "start": 5064821, "end": 5069579}, {"filename": "/Data/Item/Sword04.bmd", "start": 5069579, "end": 5079269}, {"filename": "/Data/Item/Sword05.bmd", "start": 5079269, "end": 5085495}, {"filename": "/Data/Item/Sword06.bmd", "start": 5085495, "end": 5094939}, {"filename": "/Data/Item/Sword07.bmd", "start": 5094939, "end": 5101101}, {"filename": "/Data/Item/Sword08.bmd", "start": 5101101, "end": 5110371}, {"filename": "/Data/Item/Sword09.bmd", "start": 5110371, "end": 5118113}, {"filename": "/Data/Item/Sword10.bmd", "start": 5118113, "end": 5125809}, {"filename": "/Data/Item/Sword11.bmd", "start": 5125809, "end": 5131987}, {"filename": "/Data/Item/Sword12.bmd", "start": 5131987, "end": 5145489}, {"filename": "/Data/Item/Sword13.bmd", "start": 5145489, "end": 5163932}, {"filename": "/Data/Item/Sword14.bmd", "start": 5163932, "end": 5179972}, {"filename": "/Data/Item/Sword15.bmd", "start": 5179972, "end": 5188982}, {"filename": "/Data/Item/Sword16.bmd", "start": 5188982, "end": 5191540}, {"filename": "/Data/Item/Sword17.bmd", "start": 5191540, "end": 5214210}, {"filename": "/Data/Item/Sword18.bmd", "start": 5214210, "end": 5233742}, {"filename": "/Data/Item/Sword19.bmd", "start": 5233742, "end": 5250624}, {"filename": "/Data/Item/Sword20.bmd", "start": 5250624, "end": 5278332}, {"filename": "/Data/Item/Sword32.bmd", "start": 5278332, "end": 5312819}, {"filename": "/Data/Item/WDNN.OZJ", "start": 5312819, "end": 5317362}, {"filename": "/Data/Item/WD_R.OZJ", "start": 5317362, "end": 5319743}, {"filename": "/Data/Item/WD_a.OZJ", "start": 5319743, "end": 5325254}, {"filename": "/Data/Item/WD_t.OZJ", "start": 5325254, "end": 5327384}, {"filename": "/Data/Item/WDn.OZJ", "start": 5327384, "end": 5329428}, {"filename": "/Data/Item/WDn.OZT", "start": 5329428, "end": 5362244}, {"filename": "/Data/Item/W_S.OZJ", "start": 5362244, "end": 5367463}, {"filename": "/Data/Item/Wing01.bmd", "start": 5367463, "end": 5371507}, {"filename": "/Data/Item/Wing02.bmd", "start": 5371507, "end": 5378014}, {"filename": "/Data/Item/Wing03.bmd", "start": 5378014, "end": 5383385}, {"filename": "/Data/Item/Wing04.bmd", "start": 5383385, "end": 5396760}, {"filename": "/Data/Item/Wing05.bmd", "start": 5396760, "end": 5501146}, {"filename": "/Data/Item/Wing06.bmd", "start": 5501146, "end": 5564155}, {"filename": "/Data/Item/Wing07.bmd", "start": 5564155, "end": 5598978}, {"filename": "/Data/Item/a9.OZJ", "start": 5598978, "end": 5607991}, {"filename": "/Data/Item/a_2.OZJ", "start": 5607991, "end": 5612932}, {"filename": "/Data/Item/a_a.OZJ", "start": 5612932, "end": 5618724}, {"filename": "/Data/Item/af.OZT", "start": 5618724, "end": 5651540}, {"filename": "/Data/Item/agnecklace.OZJ", "start": 5651540, "end": 5662023}, {"filename": "/Data/Item/agnecklace.bmd", "start": 5662023, "end": 5672243}, {"filename": "/Data/Item/angel_wing.OZT", "start": 5672243, "end": 5737827}, {"filename": "/Data/Item/angelscroll01.OZT", "start": 5737827, "end": 5754259}, {"filename": "/Data/Item/apple.OZJ", "start": 5754259, "end": 5759375}, {"filename": "/Data/Item/bloodbone02.OZJ", "start": 5759375, "end": 5768118}, {"filename": "/Data/Item/blue_jewel.OZJ", "start": 5768118, "end": 5773022}, {"filename": "/Data/Item/bone02.OZT", "start": 5773022, "end": 5789454}, {"filename": "/Data/Item/book.OZJ", "start": 5789454, "end": 5801137}, {"filename": "/Data/Item/bottle.OZT", "start": 5801137, "end": 5805281}, {"filename": "/Data/Item/bow01.OZJ", "start": 5805281, "end": 5811409}, {"filename": "/Data/Item/bow02.OZJ", "start": 5811409, "end": 5821187}, {"filename": "/Data/Item/bow03.OZJ", "start": 5821187, "end": 5832886}, {"filename": "/Data/Item/bow04.OZJ", "start": 5832886, "end": 5845608}, {"filename": "/Data/Item/bow05.OZJ", "start": 5845608, "end": 5858918}, {"filename": "/Data/Item/bow05.OZT", "start": 5858918, "end": 5863062}, {"filename": "/Data/Item/bow06.OZJ", "start": 5863062, "end": 5875290}, {"filename": "/Data/Item/bow77.OZJ", "start": 5875290, "end": 5894128}, {"filename": "/Data/Item/bowbox.OZJ", "start": 5894128, "end": 5904683}, {"filename": "/Data/Item/box.OZJ", "start": 5904683, "end": 5911087}, {"filename": "/Data/Item/change.OZJ", "start": 5911087, "end": 5919798}, {"filename": "/Data/Item/chip.OZJ", "start": 5919798, "end": 5922227}, {"filename": "/Data/Item/crossbow01.OZJ", "start": 5922227, "end": 5928092}, {"filename": "/Data/Item/crossbow02.OZJ", "start": 5928092, "end": 5937303}, {"filename": "/Data/Item/crossbow03.OZJ", "start": 5937303, "end": 5947180}, {"filename": "/Data/Item/crossbow04.OZJ", "start": 5947180, "end": 5958593}, {"filename": "/Data/Item/crossbow05.OZJ", "start": 5958593, "end": 5985005}, {"filename": "/Data/Item/crossbow06.OZJ", "start": 5985005, "end": 5992510}, {"filename": "/Data/Item/crossbow06_2.OZJ", "start": 5992510, "end": 6000002}, {"filename": "/Data/Item/crossbow06_2.OZT", "start": 6000002, "end": 6008242}, {"filename": "/Data/Item/crossbow06_R.OZJ", "start": 6008242, "end": 6015645}, {"filename": "/Data/Item/crossbow_box.OZJ", "start": 6015645, "end": 6022004}, {"filename": "/Data/Item/darkhorn.OZJ", "start": 6022004, "end": 6033225}, {"filename": "/Data/Item/darksoul_r.OZJ", "start": 6033225, "end": 6042274}, {"filename": "/Data/Item/darkstone8.OZJ", "start": 6042274, "end": 6051046}, {"filename": "/Data/Item/darkstonered.OZJ", "start": 6051046, "end": 6059485}, {"filename": "/Data/Item/devil_wing.OZT", "start": 6059485, "end": 6125069}, {"filename": "/Data/Item/devileye.OZJ", "start": 6125069, "end": 6129625}, {"filename": "/Data/Item/devileye2.OZJ", "start": 6129625, "end": 6132370}, {"filename": "/Data/Item/devilkey.OZJ", "start": 6132370, "end": 6139011}, {"filename": "/Data/Item/dkScroll.OZJ", "start": 6139011, "end": 6145935}, {"filename": "/Data/Item/dkScroll2_R.OZJ", "start": 6145935, "end": 6150814}, {"filename": "/Data/Item/dkScroll_R.OZJ", "start": 6150814, "end": 6159287}, {"filename": "/Data/Item/du_shield1.OZJ", "start": 6159287, "end": 6166148}, {"filename": "/Data/Item/du_shield2.OZJ", "start": 6166148, "end": 6172621}, {"filename": "/Data/Item/elfin_wing.OZJ", "start": 6172621, "end": 6182303}, {"filename": "/Data/Item/etcring.OZJ", "start": 6182303, "end": 6194206}, {"filename": "/Data/Item/fairy.OZJ", "start": 6194206, "end": 6199200}, {"filename": "/Data/Item/fairy2.OZJ", "start": 6199200, "end": 6204714}, {"filename": "/Data/Item/firecracker.OZJ", "start": 6204714, "end": 6208162}, {"filename": "/Data/Item/firering.OZJ", "start": 6208162, "end": 6217239}, {"filename": "/Data/Item/firering.bmd", "start": 6217239, "end": 6224523}, {"filename": "/Data/Item/flail00.OZT", "start": 6224523, "end": 6225595}, {"filename": "/Data/Item/flail02.OZJ", "start": 6225595, "end": 6231862}, {"filename": "/Data/Item/ft6.OZJ", "start": 6231862, "end": 6249323}, {"filename": "/Data/Item/ft72.OZJ", "start": 6249323, "end": 6255133}, {"filename": "/Data/Item/gloryring.OZJ", "start": 6255133, "end": 6265812}, {"filename": "/Data/Item/godest01.OZJ", "start": 6265812, "end": 6276043}, {"filename": "/Data/Item/godest02.OZJ", "start": 6276043, "end": 6284552}, {"filename": "/Data/Item/godest03.OZJ", "start": 6284552, "end": 6293061}, {"filename": "/Data/Item/godesteel.bmd", "start": 6293061, "end": 6301387}, {"filename": "/Data/Item/godesteel.smd", "start": 6301387, "end": 6320796}, {"filename": "/Data/Item/gold.OZJ", "start": 6320796, "end": 6326042}, {"filename": "/Data/Item/goldmedal.OZJ", "start": 6326042, "end": 6331720}, {"filename": "/Data/Item/groundring.OZJ", "start": 6331720, "end": 6340363}, {"filename": "/Data/Item/groundring.bmd", "start": 6340363, "end": 6345887}, {"filename": "/Data/Item/hellasmap.OZT", "start": 6345887, "end": 6350031}, {"filename": "/Data/Item/hhj.OZJ", "start": 6350031, "end": 6354995}, {"filename": "/Data/Item/hound_shield1.OZT", "start": 6354995, "end": 6363235}, {"filename": "/Data/Item/hound_shield2.OZJ", "start": 6363235, "end": 6375466}, {"filename": "/Data/Item/hound_sword1.OZJ", "start": 6375466, "end": 6384954}, {"filename": "/Data/Item/icenecklace.OZJ", "start": 6384954, "end": 6395252}, {"filename": "/Data/Item/icenecklace.bmd", "start": 6395252, "end": 6404984}, {"filename": "/Data/Item/item.bmd", "start": 6404984, "end": 6433144}, {"filename": "/Data/Item/items.OZJ", "start": 6433144, "end": 6440530}, {"filename": "/Data/Item/jewel22.bmd", "start": 6440530, "end": 6444230}, {"filename": "/Data/Item/jh01.OZJ", "start": 6444230, "end": 6458717}, {"filename": "/Data/Item/jh02.OZJ", "start": 6458717, "end": 6465707}, {"filename": "/Data/Item/jh03.OZT", "start": 6465707, "end": 6498523}, {"filename": "/Data/Item/jk00.OZJ", "start": 6498523, "end": 6513585}, {"filename": "/Data/Item/jk01.OZJ", "start": 6513585, "end": 6520236}, {"filename": "/Data/Item/jo00.OZJ", "start": 6520236, "end": 6534817}, {"filename": "/Data/Item/jo01.OZJ", "start": 6534817, "end": 6542286}, {"filename": "/Data/Item/kmap.OZJ", "start": 6542286, "end": 6552871}, {"filename": "/Data/Item/kmap02.OZJ", "start": 6552871, "end": 6561628}, {"filename": "/Data/Item/ksing01.OZJ", "start": 6561628, "end": 6573300}, {"filename": "/Data/Item/ksing02.OZJ", "start": 6573300, "end": 6584985}, {"filename": "/Data/Item/ksing02.OZT", "start": 6584985, "end": 6589129}, {"filename": "/Data/Item/ksing03.OZJ", "start": 6589129, "end": 6597983}, {"filename": "/Data/Item/kundunStic.OZJ", "start": 6597983, "end": 6610890}, {"filename": "/Data/Item/kundunStic2.OZJ", "start": 6610890, "end": 6623540}, {"filename": "/Data/Item/kundunStic_R.OZJ", "start": 6623540, "end": 6629244}, {"filename": "/Data/Item/lopi00.OZJ", "start": 6629244, "end": 6635366}, {"filename": "/Data/Item/loveB.OZJ", "start": 6635366, "end": 6638402}, {"filename": "/Data/Item/lower_14m.OZT", "start": 6638402, "end": 6654834}, {"filename": "/Data/Item/mace.OZJ", "start": 6654834, "end": 6662634}, {"filename": "/Data/Item/mace02.OZJ", "start": 6662634, "end": 6668333}, {"filename": "/Data/Item/mace03.OZJ", "start": 6668333, "end": 6673327}, {"filename": "/Data/Item/maceB.OZJ", "start": 6673327, "end": 6677323}, {"filename": "/Data/Item/magictext.OZJ", "start": 6677323, "end": 6683704}, {"filename": "/Data/Item/manaring.OZJ", "start": 6683704, "end": 6692231}, {"filename": "/Data/Item/manaring.bmd", "start": 6692231, "end": 6698787}, {"filename": "/Data/Item/mangto04.OZJ", "start": 6698787, "end": 6714720}, {"filename": "/Data/Item/maul.OZJ", "start": 6714720, "end": 6735925}, {"filename": "/Data/Item/maul03.OZJ", "start": 6735925, "end": 6742928}, {"filename": "/Data/Item/maulB.OZJ", "start": 6742928, "end": 6760883}, {"filename": "/Data/Item/medal.OZJ", "start": 6760883, "end": 6767045}, {"filename": "/Data/Item/medal1.OZJ", "start": 6767045, "end": 6770480}, {"filename": "/Data/Item/medal2.OZJ", "start": 6770480, "end": 6775099}, {"filename": "/Data/Item/medicine1.OZJ", "start": 6775099, "end": 6781024}, {"filename": "/Data/Item/medicine2.OZJ", "start": 6781024, "end": 6786047}, {"filename": "/Data/Item/nds01.OZJ", "start": 6786047, "end": 6801732}, {"filename": "/Data/Item/nds02.OZJ", "start": 6801732, "end": 6814943}, {"filename": "/Data/Item/nds03.OZJ", "start": 6814943, "end": 6823737}, {"filename": "/Data/Item/nfb.OZJ", "start": 6823737, "end": 6858389}, {"filename": "/Data/Item/nfb01.OZJ", "start": 6858389, "end": 6890184}, {"filename": "/Data/Item/nfb02.OZJ", "start": 6890184, "end": 6911054}, {"filename": "/Data/Item/nfb2_R.OZJ", "start": 6911054, "end": 6923009}, {"filename": "/Data/Item/nfb4.OZT", "start": 6923009, "end": 6939441}, {"filename": "/Data/Item/nfb_R.OZJ", "start": 6939441, "end": 6947730}, {"filename": "/Data/Item/nfm01.OZJ", "start": 6947730, "end": 6977821}, {"filename": "/Data/Item/nfm02.OZT", "start": 6977821, "end": 7010637}, {"filename": "/Data/Item/nfm03.OZJ", "start": 7010637, "end": 7019386}, {"filename": "/Data/Item/ni99.OZJ", "start": 7019386, "end": 7035414}, {"filename": "/Data/Item/nks01.OZJ", "start": 7035414, "end": 7046193}, {"filename": "/Data/Item/nks02.OZJ", "start": 7046193, "end": 7063663}, {"filename": "/Data/Item/nks03.OZJ", "start": 7063663, "end": 7072959}, {"filename": "/Data/Item/nks04.OZJ", "start": 7072959, "end": 7083834}, {"filename": "/Data/Item/olive.OZJ", "start": 7083834, "end": 7086306}, {"filename": "/Data/Item/pe.OZJ", "start": 7086306, "end": 7092951}, {"filename": "/Data/Item/pearl.OZJ", "start": 7092951, "end": 7099023}, {"filename": "/Data/Item/poket.OZJ", "start": 7099023, "end": 7106261}, {"filename": "/Data/Item/pot3.OZT", "start": 7106261, "end": 7110405}, {"filename": "/Data/Item/power_a.OZT", "start": 7110405, "end": 7143221}, {"filename": "/Data/Item/power_a3.OZT", "start": 7143221, "end": 7159653}, {"filename": "/Data/Item/red.OZJ", "start": 7159653, "end": 7164548}, {"filename": "/Data/Item/red_jewel.OZJ", "start": 7164548, "end": 7169485}, {"filename": "/Data/Item/ring.OZJ", "start": 7169485, "end": 7181388}, {"filename": "/Data/Item/rok.OZT", "start": 7181388, "end": 7183484}, {"filename": "/Data/Item/satan.OZJ", "start": 7183484, "end": 7188590}, {"filename": "/Data/Item/satan2.OZT", "start": 7188590, "end": 7192734}, {"filename": "/Data/Item/sep01.OZJ", "start": 7192734, "end": 7204459}, {"filename": "/Data/Item/sep011.OZJ", "start": 7204459, "end": 7215464}, {"filename": "/Data/Item/sep02.OZJ", "start": 7215464, "end": 7237985}, {"filename": "/Data/Item/sep0202.OZJ", "start": 7237985, "end": 7259569}, {"filename": "/Data/Item/sep03.OZJ", "start": 7259569, "end": 7281745}, {"filename": "/Data/Item/sep0303.OZJ", "start": 7281745, "end": 7294235}, {"filename": "/Data/Item/sep03030303.OZJ", "start": 7294235, "end": 7303167}, {"filename": "/Data/Item/sep03_R.OZJ", "start": 7303167, "end": 7311636}, {"filename": "/Data/Item/sep04.OZJ", "start": 7311636, "end": 7323574}, {"filename": "/Data/Item/sep0404.OZJ", "start": 7323574, "end": 7335182}, {"filename": "/Data/Item/sep05.OZJ", "start": 7335182, "end": 7355368}, {"filename": "/Data/Item/sep055.OZJ", "start": 7355368, "end": 7365847}, {"filename": "/Data/Item/sep06.OZJ", "start": 7365847, "end": 7430735}, {"filename": "/Data/Item/sep0606.OZJ", "start": 7430735, "end": 7455795}, {"filename": "/Data/Item/sep062.OZJ", "start": 7455795, "end": 7478587}, {"filename": "/Data/Item/sep063.OZJ", "start": 7478587, "end": 7511151}, {"filename": "/Data/Item/sep064.OZJ", "start": 7511151, "end": 7520727}, {"filename": "/Data/Item/sep065.OZJ", "start": 7520727, "end": 7528993}, {"filename": "/Data/Item/sep06e_R.OZJ", "start": 7528993, "end": 7538500}, {"filename": "/Data/Item/sep06effe.OZJ", "start": 7538500, "end": 7548002}, {"filename": "/Data/Item/shield02.OZJ", "start": 7548002, "end": 7561732}, {"filename": "/Data/Item/shield03.OZJ", "start": 7561732, "end": 7573216}, {"filename": "/Data/Item/shield04.OZJ", "start": 7573216, "end": 7580183}, {"filename": "/Data/Item/shield04.OZT", "start": 7580183, "end": 7588423}, {"filename": "/Data/Item/shield05.OZJ", "start": 7588423, "end": 7600639}, {"filename": "/Data/Item/shield06.OZJ", "start": 7600639, "end": 7625396}, {"filename": "/Data/Item/shield07.OZJ", "start": 7625396, "end": 7633121}, {"filename": "/Data/Item/shield07.OZT", "start": 7633121, "end": 7641361}, {"filename": "/Data/Item/shield08.OZJ", "start": 7641361, "end": 7661041}, {"filename": "/Data/Item/shield082.OZJ", "start": 7661041, "end": 7665586}, {"filename": "/Data/Item/shield09.OZJ", "start": 7665586, "end": 7674772}, {"filename": "/Data/Item/shield092.OZJ", "start": 7674772, "end": 7679432}, {"filename": "/Data/Item/shield10.OZJ", "start": 7679432, "end": 7688430}, {"filename": "/Data/Item/shield102.OZJ", "start": 7688430, "end": 7693092}, {"filename": "/Data/Item/shield11.OZT", "start": 7693092, "end": 7709524}, {"filename": "/Data/Item/shield11_a.OZJ", "start": 7709524, "end": 7714986}, {"filename": "/Data/Item/shield16.bmd", "start": 7714986, "end": 7725031}, {"filename": "/Data/Item/shield17.bmd", "start": 7725031, "end": 7747279}, {"filename": "/Data/Item/shield_a_01.OZJ", "start": 7747279, "end": 7756161}, {"filename": "/Data/Item/shield_a_02.OZJ", "start": 7756161, "end": 7763979}, {"filename": "/Data/Item/skillScroll.bmd", "start": 7763979, "end": 7771516}, {"filename": "/Data/Item/spiritbill.bmd", "start": 7771516, "end": 7781486}, {"filename": "/Data/Item/star.OZJ", "start": 7781486, "end": 7783484}, {"filename": "/Data/Item/stone02.OZJ", "start": 7783484, "end": 7793903}, {"filename": "/Data/Item/sword015.OZJ", "start": 7793903, "end": 7807564}, {"filename": "/Data/Item/sword015_2.OZJ", "start": 7807564, "end": 7813798}, {"filename": "/Data/Item/sword02.OZJ", "start": 7813798, "end": 7820114}, {"filename": "/Data/Item/sword03.OZJ", "start": 7820114, "end": 7828973}, {"filename": "/Data/Item/sword04.OZJ", "start": 7828973, "end": 7835551}, {"filename": "/Data/Item/sword05.OZJ", "start": 7835551, "end": 7841899}, {"filename": "/Data/Item/sword05.OZT", "start": 7841899, "end": 7841963}, {"filename": "/Data/Item/sword06.OZJ", "start": 7841963, "end": 7849892}, {"filename": "/Data/Item/sword07.OZJ", "start": 7849892, "end": 7862943}, {"filename": "/Data/Item/sword077.OZJ", "start": 7862943, "end": 7870193}, {"filename": "/Data/Item/sword07_2.OZJ", "start": 7870193, "end": 7876537}, {"filename": "/Data/Item/sword08.OZJ", "start": 7876537, "end": 7885919}, {"filename": "/Data/Item/sword09.OZJ", "start": 7885919, "end": 7898902}, {"filename": "/Data/Item/sword11.OZJ", "start": 7898902, "end": 7905719}, {"filename": "/Data/Item/sword11.OZT", "start": 7905719, "end": 7907815}, {"filename": "/Data/Item/sword12.OZJ", "start": 7907815, "end": 7913392}, {"filename": "/Data/Item/sword12_2.OZJ", "start": 7913392, "end": 7918774}, {"filename": "/Data/Item/sword12_3.OZJ", "start": 7918774, "end": 7924267}, {"filename": "/Data/Item/sword13.OZJ", "start": 7924267, "end": 7937783}, {"filename": "/Data/Item/sword14.OZJ", "start": 7937783, "end": 7947119}, {"filename": "/Data/Item/sword14.OZT", "start": 7947119, "end": 7951263}, {"filename": "/Data/Item/sword15.OZJ", "start": 7951263, "end": 7964345}, {"filename": "/Data/Item/sword15_2.OZJ", "start": 7964345, "end": 7976725}, {"filename": "/Data/Item/sword16.OZJ", "start": 7976725, "end": 7983155}, {"filename": "/Data/Item/sword16_2.OZJ", "start": 7983155, "end": 7990290}, {"filename": "/Data/Item/sword17.OZJ", "start": 7990290, "end": 7997855}, {"filename": "/Data/Item/sword22.bmd", "start": 7997855, "end": 8034112}, {"filename": "/Data/Item/sword442.OZJ", "start": 8034112, "end": 8041329}, {"filename": "/Data/Item/sword44_R.OZJ", "start": 8041329, "end": 8047442}, {"filename": "/Data/Item/t_lower_14m.OZT", "start": 8047442, "end": 8063874}, {"filename": "/Data/Item/u2u.OZJ", "start": 8063874, "end": 8072943}, {"filename": "/Data/Item/u2u2.OZJ", "start": 8072943, "end": 8078088}, {"filename": "/Data/Item/u2u3.OZJ", "start": 8078088, "end": 8083201}, {"filename": "/Data/Item/unicon.OZJ", "start": 8083201, "end": 8110225}, {"filename": "/Data/Item/unicon01.OZT", "start": 8110225, "end": 8114369}, {"filename": "/Data/Item/visitor.OZJ", "start": 8114369, "end": 8121549}, {"filename": "/Data/Item/visitor2.OZJ", "start": 8121549, "end": 8124149}, {"filename": "/Data/Item/wand01.OZJ", "start": 8124149, "end": 8131071}, {"filename": "/Data/Item/wand02.OZJ", "start": 8131071, "end": 8145589}, {"filename": "/Data/Item/wand03.OZJ", "start": 8145589, "end": 8152297}, {"filename": "/Data/Item/wand03.OZT", "start": 8152297, "end": 8153369}, {"filename": "/Data/Item/wand04.OZJ", "start": 8153369, "end": 8164644}, {"filename": "/Data/Item/wand05.OZJ", "start": 8164644, "end": 8174644}, {"filename": "/Data/Item/wand06.OZJ", "start": 8174644, "end": 8186919}, {"filename": "/Data/Item/wand10.OZJ", "start": 8186919, "end": 8194044}, {"filename": "/Data/Item/wand10.OZT", "start": 8194044, "end": 8202284}, {"filename": "/Data/Item/wand10_2.OZJ", "start": 8202284, "end": 8208589}, {"filename": "/Data/Item/wand44.OZJ", "start": 8208589, "end": 8215988}, {"filename": "/Data/Item/wand44_R.OZJ", "start": 8215988, "end": 8223577}, {"filename": "/Data/Item/waternecklace.OZJ", "start": 8223577, "end": 8233613}, {"filename": "/Data/Item/waternecklace.bmd", "start": 8233613, "end": 8243393}, {"filename": "/Data/Item/waterring.bmd", "start": 8243393, "end": 8250677}, {"filename": "/Data/Item/wdn_R.OZJ", "start": 8250677, "end": 8253040}, {"filename": "/Data/Item/windnecklace.OZJ", "start": 8253040, "end": 8263218}, {"filename": "/Data/Item/windnecklace.bmd", "start": 8263218, "end": 8273866}, {"filename": "/Data/Item/windring.OZJ", "start": 8273866, "end": 8282972}, {"filename": "/Data/Item/windring.bmd", "start": 8282972, "end": 8289920}, {"filename": "/Data/Item/wolf02.OZJ", "start": 8289920, "end": 8294796}, {"filename": "/Data/Item/wwa.OZJ", "start": 8294796, "end": 8300057}, {"filename": "/Data/Item/wwe.OZJ", "start": 8300057, "end": 8311474}, {"filename": "/Data/Item/wwe00.OZJ", "start": 8311474, "end": 8319567}, {"filename": "/Data/Item/yellow_jewel.OZJ", "start": 8319567, "end": 8324508}, {"filename": "/Data/Local/Dialog.bmd", "start": 8324508, "end": 8529308}, {"filename": "/Data/Local/Dialog_Eng.bmd", "start": 8529308, "end": 8734108}, {"filename": "/Data/Local/Dialog_Por.bmd", "start": 8734108, "end": 8938908}, {"filename": "/Data/Local/Dialog_Spn.bmd", "start": 8938908, "end": 9143708}, {"filename": "/Data/Local/Everyone.OZJ", "start": 9143708, "end": 9169897}, {"filename": "/Data/Local/Filter.bmd", "start": 9169897, "end": 9189901}, {"filename": "/Data/Local/FilterName.bmd", "start": 9189901, "end": 9209905}, {"filename": "/Data/Local/Item.bmd", "start": 9209905, "end": 9242677}, {"filename": "/Data/Local/Loading01.OZJ", "start": 9242677, "end": 9268359}, {"filename": "/Data/Local/Loading02.OZJ", "start": 9268359, "end": 9320887}, {"filename": "/Data/Local/Loading03.OZJ", "start": 9320887, "end": 9346869}, {"filename": "/Data/Local/NPCName(kor).txt", "start": 9346869, "end": 9350178}, {"filename": "/Data/Local/NPCName.txt", "start": 9350178, "end": 9353502}, {"filename": "/Data/Local/Quest.bmd", "start": 9353502, "end": 9470302}, {"filename": "/Data/Local/Skill.bmd", "start": 9470302, "end": 9472866}, {"filename": "/Data/Local/Text.bmd", "start": 9472866, "end": 9772866}, {"filename": "/Data/Local/Text_Eng.bmd", "start": 9772866, "end": 10072866}, {"filename": "/Data/Local/Text_Por.bmd", "start": 10072866, "end": 10372866}, {"filename": "/Data/Local/Text_Spn.bmd", "start": 10372866, "end": 10672866}, {"filename": "/Data/Local/Webzenlogo.OZJ", "start": 10672866, "end": 10724254}, {"filename": "/Data/Logo/0account.OZT", "start": 10724254, "end": 10940302}, {"filename": "/Data/Logo/0account_new.OZT", "start": 10940302, "end": 11156350}, {"filename": "/Data/Logo/0box.OZJ", "start": 11156350, "end": 11165148}, {"filename": "/Data/Logo/0new_account01.OZT", "start": 11165148, "end": 11427340}, {"filename": "/Data/Logo/0new_account02.OZT", "start": 11427340, "end": 11506236}, {"filename": "/Data/Logo/0on_botton.OZJ", "start": 11506236, "end": 11512222}, {"filename": "/Data/Logo/0on_botton2.OZJ", "start": 11512222, "end": 11518440}, {"filename": "/Data/Logo/0text_box.OZJ", "start": 11518440, "end": 11524578}, {"filename": "/Data/Logo/Cface01.OZJ", "start": 11524578, "end": 11561389}, {"filename": "/Data/Logo/Cface02.OZJ", "start": 11561389, "end": 11574199}, {"filename": "/Data/Logo/Cface04.OZT", "start": 11574199, "end": 11575271}, {"filename": "/Data/Logo/Cface09.OZT", "start": 11575271, "end": 11583511}, {"filename": "/Data/Logo/Delete01.OZT", "start": 11583511, "end": 11655719}, {"filename": "/Data/Logo/Delete02.OZJ", "start": 11655719, "end": 11662987}, {"filename": "/Data/Logo/Face01.bmd", "start": 11662987, "end": 11802311}, {"filename": "/Data/Logo/Face02.bmd", "start": 11802311, "end": 11948171}, {"filename": "/Data/Logo/Face03.bmd", "start": 11948171, "end": 12125358}, {"filename": "/Data/Logo/Face04.bmd", "start": 12125358, "end": 12310850}, {"filename": "/Data/Logo/Fairy_back.OZJ", "start": 12310850, "end": 12323257}, {"filename": "/Data/Logo/Interface01.OZT", "start": 12323257, "end": 12411369}, {"filename": "/Data/Logo/Interface02.OZT", "start": 12411369, "end": 12476953}, {"filename": "/Data/Logo/Interface03.OZT", "start": 12476953, "end": 12534345}, {"filename": "/Data/Logo/Interface04.OZT", "start": 12534345, "end": 12567161}, {"filename": "/Data/Logo/Logo.OZJ", "start": 12567161, "end": 12601104}, {"filename": "/Data/Logo/Logo01.bmd", "start": 12601104, "end": 12603069}, {"filename": "/Data/Logo/Logo02.bmd", "start": 12603069, "end": 12608883}, {"filename": "/Data/Logo/Logo03.bmd", "start": 12608883, "end": 12682602}, {"filename": "/Data/Logo/Logo04.bmd", "start": 12682602, "end": 12689785}, {"filename": "/Data/Logo/Logo05.bmd", "start": 12689785, "end": 12841879}, {"filename": "/Data/Logo/Logo2.OZJ", "start": 12841879, "end": 12865584}, {"filename": "/Data/Logo/Magic_01.OZJ", "start": 12865584, "end": 12892531}, {"filename": "/Data/Logo/Magic_02.OZT", "start": 12892531, "end": 13023651}, {"filename": "/Data/Logo/Magic_03.OZJ", "start": 13023651, "end": 13036061}, {"filename": "/Data/Logo/Magic_09.OZJ", "start": 13036061, "end": 13072431}, {"filename": "/Data/Logo/Magic_09_2.OZJ", "start": 13072431, "end": 13083717}, {"filename": "/Data/Logo/Main_earth.OZJ", "start": 13083717, "end": 13161266}, {"filename": "/Data/Logo/Main_stone.OZJ", "start": 13161266, "end": 13170557}, {"filename": "/Data/Logo/Main_wood1.OZJ", "start": 13170557, "end": 13194872}, {"filename": "/Data/Logo/Main_wood2.OZJ", "start": 13194872, "end": 13205880}, {"filename": "/Data/Logo/Main_wood3.OZT", "start": 13205880, "end": 13222312}, {"filename": "/Data/Logo/Main_wood4.OZT", "start": 13222312, "end": 13226456}, {"filename": "/Data/Logo/Main_wood5.OZT", "start": 13226456, "end": 13242888}, {"filename": "/Data/Logo/Main_wood6.OZJ", "start": 13242888, "end": 13248156}, {"filename": "/Data/Logo/Main_wood6.OZT", "start": 13248156, "end": 13264588}, {"filename": "/Data/Logo/Mulogo_01.OZJ", "start": 13264588, "end": 13291959}, {"filename": "/Data/Logo/New_character001.OZJ", "start": 13291959, "end": 13297737}, {"filename": "/Data/Logo/New_character002.OZJ", "start": 13297737, "end": 13303550}, {"filename": "/Data/Logo/New_character003.OZJ", "start": 13303550, "end": 13309369}, {"filename": "/Data/Logo/New_character004.OZJ", "start": 13309369, "end": 13315187}, {"filename": "/Data/Logo/New_character01.OZT", "start": 13315187, "end": 13533347}, {"filename": "/Data/Logo/New_character02.OZT", "start": 13533347, "end": 13634783}, {"filename": "/Data/Logo/New_character201.OZT", "start": 13634783, "end": 13721595}, {"filename": "/Data/Logo/New_character202.OZJ", "start": 13721595, "end": 13730023}, {"filename": "/Data/Logo/New_character_cancel.OZJ", "start": 13730023, "end": 13737630}, {"filename": "/Data/Logo/New_character_ok.OZJ", "start": 13737630, "end": 13744990}, {"filename": "/Data/Logo/Ok01.OZT", "start": 13744990, "end": 13817198}, {"filename": "/Data/Logo/Ok02.OZJ", "start": 13817198, "end": 13824131}, {"filename": "/Data/Logo/Sky0.OZJ", "start": 13824131, "end": 13904496}, {"filename": "/Data/Logo/Sky2.OZJ", "start": 13904496, "end": 13911804}, {"filename": "/Data/Logo/Sky3.OZJ", "start": 13911804, "end": 13926595}, {"filename": "/Data/Logo/Sky4.OZJ", "start": 13926595, "end": 13933456}, {"filename": "/Data/Logo/Sky5.OZJ", "start": 13933456, "end": 13997267}, {"filename": "/Data/Logo/Titel01.OZJ", "start": 13997267, "end": 14004354}, {"filename": "/Data/Logo/Titel02.OZJ", "start": 14004354, "end": 14013934}, {"filename": "/Data/Logo/Warrior.OZJ", "start": 14013934, "end": 14040846}, {"filename": "/Data/Logo/Warrior02.OZJ", "start": 14040846, "end": 14053280}, {"filename": "/Data/Logo/Warrior03.OZT", "start": 14053280, "end": 14061520}, {"filename": "/Data/Logo/Warrior_back.OZJ", "start": 14061520, "end": 14070245}, {"filename": "/Data/Logo/Wave.OZJ", "start": 14070245, "end": 14088849}, {"filename": "/Data/Logo/back1.OZJ", "start": 14088849, "end": 14125551}, {"filename": "/Data/Logo/back2.OZJ", "start": 14125551, "end": 14168512}, {"filename": "/Data/Macro.txt", "start": 14168512, "end": 14168522}, {"filename": "/Data/Monster/BGcl.OZT", "start": 14168522, "end": 14184954}, {"filename": "/Data/Monster/Karane/Boss_Karane_body.OZJ", "start": 14184954, "end": 14194849}, {"filename": "/Data/Monster/Karane/Boss_Karane_cloth.OZT", "start": 14194849, "end": 14325969}, {"filename": "/Data/Monster/Karane/Boss_Karane_head.OZJ", "start": 14325969, "end": 14328582}, {"filename": "/Data/Monster/Karane/Boss_Karane_pants.OZJ", "start": 14328582, "end": 14336802}, {"filename": "/Data/Monster/Karane/Boss_Karane_r.OZJ", "start": 14336802, "end": 14337821}, {"filename": "/Data/Monster/Karane/Karane.bmd", "start": 14337821, "end": 14818358}, {"filename": "/Data/Monster/King11.OZJ", "start": 14818358, "end": 14884886}, {"filename": "/Data/Monster/Kni000.OZJ", "start": 14884886, "end": 14921789}, {"filename": "/Data/Monster/Kni011.OZJ", "start": 14921789, "end": 14941775}, {"filename": "/Data/Monster/Kni022.OZJ", "start": 14941775, "end": 14951783}, {"filename": "/Data/Monster/Ktutl.OZJ", "start": 14951783, "end": 15029836}, {"filename": "/Data/Monster/Monster01.bmd", "start": 15029836, "end": 15188392}, {"filename": "/Data/Monster/Monster02.bmd", "start": 15188392, "end": 15301781}, {"filename": "/Data/Monster/Monster03.bmd", "start": 15301781, "end": 15389775}, {"filename": "/Data/Monster/Monster04.bmd", "start": 15389775, "end": 15555840}, {"filename": "/Data/Monster/Monster05.bmd", "start": 15555840, "end": 15715385}, {"filename": "/Data/Monster/Monster06.bmd", "start": 15715385, "end": 15879660}, {"filename": "/Data/Monster/Monster07.bmd", "start": 15879660, "end": 15919832}, {"filename": "/Data/Monster/Monster08.bmd", "start": 15919832, "end": 15982014}, {"filename": "/Data/Monster/Monster09.bmd", "start": 15982014, "end": 16085701}, {"filename": "/Data/Monster/Monster10.bmd", "start": 16085701, "end": 16137377}, {"filename": "/Data/Monster/Monster11.bmd", "start": 16137377, "end": 16278064}, {"filename": "/Data/Monster/Monster12.bmd", "start": 16278064, "end": 16433208}, {"filename": "/Data/Monster/Monster13.bmd", "start": 16433208, "end": 16579389}, {"filename": "/Data/Monster/Monster14.bmd", "start": 16579389, "end": 16764657}, {"filename": "/Data/Monster/Monster15.bmd", "start": 16764657, "end": 16881283}, {"filename": "/Data/Monster/Monster16.bmd", "start": 16881283, "end": 16963884}, {"filename": "/Data/Monster/Monster17.bmd", "start": 16963884, "end": 17090518}, {"filename": "/Data/Monster/Monster18.bmd", "start": 17090518, "end": 17148295}, {"filename": "/Data/Monster/Monster19.bmd", "start": 17148295, "end": 17370807}, {"filename": "/Data/Monster/Monster20.bmd", "start": 17370807, "end": 17460921}, {"filename": "/Data/Monster/Monster21.bmd", "start": 17460921, "end": 17492933}, {"filename": "/Data/Monster/Monster22.bmd", "start": 17492933, "end": 17614072}, {"filename": "/Data/Monster/Monster23.bmd", "start": 17614072, "end": 17715606}, {"filename": "/Data/Monster/Monster24.bmd", "start": 17715606, "end": 17846152}, {"filename": "/Data/Monster/Monster25.bmd", "start": 17846152, "end": 17963470}, {"filename": "/Data/Monster/Monster26.bmd", "start": 17963470, "end": 18052378}, {"filename": "/Data/Monster/Monster27.bmd", "start": 18052378, "end": 18167436}, {"filename": "/Data/Monster/Monster28.bmd", "start": 18167436, "end": 18397493}, {"filename": "/Data/Monster/Monster29.bmd", "start": 18397493, "end": 18507248}, {"filename": "/Data/Monster/Monster30.bmd", "start": 18507248, "end": 18693984}, {"filename": "/Data/Monster/Monster31.bmd", "start": 18693984, "end": 18883538}, {"filename": "/Data/Monster/Monster32.bmd", "start": 18883538, "end": 19211988}, {"filename": "/Data/Monster/Monster33.bmd", "start": 19211988, "end": 19375052}, {"filename": "/Data/Monster/Monster34.bmd", "start": 19375052, "end": 19506902}, {"filename": "/Data/Monster/Monster35.bmd", "start": 19506902, "end": 19615502}, {"filename": "/Data/Monster/Monster36.bmd", "start": 19615502, "end": 19733050}, {"filename": "/Data/Monster/Monster37.bmd", "start": 19733050, "end": 19909664}, {"filename": "/Data/Monster/Monster38.bmd", "start": 19909664, "end": 20185316}, {"filename": "/Data/Monster/Monster39.bmd", "start": 20185316, "end": 20229089}, {"filename": "/Data/Monster/Monster40.bmd", "start": 20229089, "end": 20454661}, {"filename": "/Data/Monster/Monster41.bmd", "start": 20454661, "end": 20605076}, {"filename": "/Data/Monster/Monster42.bmd", "start": 20605076, "end": 20753974}, {"filename": "/Data/Monster/Monster43.bmd", "start": 20753974, "end": 20962939}, {"filename": "/Data/Monster/Monster44.bmd", "start": 20962939, "end": 21082985}, {"filename": "/Data/Monster/Monster45.bmd", "start": 21082985, "end": 21293602}, {"filename": "/Data/Monster/Monster46.bmd", "start": 21293602, "end": 21413581}, {"filename": "/Data/Monster/Monster47.bmd", "start": 21413581, "end": 21510188}, {"filename": "/Data/Monster/Monster48.bmd", "start": 21510188, "end": 21619882}, {"filename": "/Data/Monster/Monster49.bmd", "start": 21619882, "end": 21782575}, {"filename": "/Data/Monster/Monster51.bmd", "start": 21782575, "end": 21927271}, {"filename": "/Data/Monster/Monster52.bmd", "start": 21927271, "end": 22069357}, {"filename": "/Data/Monster/Monster53.bmd", "start": 22069357, "end": 22209483}, {"filename": "/Data/Monster/Monster54.bmd", "start": 22209483, "end": 22389063}, {"filename": "/Data/Monster/Monster55.bmd", "start": 22389063, "end": 22657949}, {"filename": "/Data/Monster/Monster56.bmd", "start": 22657949, "end": 22838145}, {"filename": "/Data/Monster/Monster57.bmd", "start": 22838145, "end": 22959010}, {"filename": "/Data/Monster/Monster58.bmd", "start": 22959010, "end": 23106154}, {"filename": "/Data/Monster/Monster59.bmd", "start": 23106154, "end": 23347946}, {"filename": "/Data/Monster/Monster60.bmd", "start": 23347946, "end": 23478377}, {"filename": "/Data/Monster/Monster61.bmd", "start": 23478377, "end": 23521204}, {"filename": "/Data/Monster/Monster62.bmd", "start": 23521204, "end": 23536871}, {"filename": "/Data/Monster/Monster63.bmd", "start": 23536871, "end": 23683033}, {"filename": "/Data/Monster/Monster64.bmd", "start": 23683033, "end": 23861811}, {"filename": "/Data/Monster/Monster66.bmd", "start": 23861811, "end": 24072880}, {"filename": "/Data/Monster/Monster67.bmd", "start": 24072880, "end": 24269986}, {"filename": "/Data/Monster/Monster70.bmd", "start": 24269986, "end": 24616195}, {"filename": "/Data/Monster/Monster71.bmd", "start": 24616195, "end": 24735383}, {"filename": "/Data/Monster/Monster72.bmd", "start": 24735383, "end": 24852411}, {"filename": "/Data/Monster/Monster73.bmd", "start": 24852411, "end": 24976999}, {"filename": "/Data/Monster/Monster74.bmd", "start": 24976999, "end": 24986255}, {"filename": "/Data/Monster/Pichula/Boss_Karane_body.OZJ", "start": 24986255, "end": 24996150}, {"filename": "/Data/Monster/Pichula/Boss_Karane_cloth.OZT", "start": 24996150, "end": 25127270}, {"filename": "/Data/Monster/Pichula/Boss_Karane_head.OZJ", "start": 25127270, "end": 25129883}, {"filename": "/Data/Monster/Pichula/Boss_Karane_pants.OZJ", "start": 25129883, "end": 25138103}, {"filename": "/Data/Monster/Pichula/Boss_Karane_r.OZJ", "start": 25138103, "end": 25139122}, {"filename": "/Data/Monster/Pichula/Pichula.bmd", "start": 25139122, "end": 25619659}, {"filename": "/Data/Monster/Pnix.OZJ", "start": 25619659, "end": 25743897}, {"filename": "/Data/Monster/Polearms03.OZJ", "start": 25743897, "end": 25754339}, {"filename": "/Data/Monster/Tamachan.bmd", "start": 25754339, "end": 25900501}, {"filename": "/Data/Monster/ar1.OZJ", "start": 25900501, "end": 25937511}, {"filename": "/Data/Monster/armor_lower2.OZJ", "start": 25937511, "end": 25962690}, {"filename": "/Data/Monster/armor_up2.OZJ", "start": 25962690, "end": 25990414}, {"filename": "/Data/Monster/as.OZJ", "start": 25990414, "end": 26074258}, {"filename": "/Data/Monster/as_1.OZJ", "start": 26074258, "end": 26081117}, {"filename": "/Data/Monster/b4.OZJ", "start": 26081117, "end": 26186699}, {"filename": "/Data/Monster/baron.OZT", "start": 26186699, "end": 26203131}, {"filename": "/Data/Monster/baron01.OZJ", "start": 26203131, "end": 26244366}, {"filename": "/Data/Monster/bbb01.OZT", "start": 26244366, "end": 26309950}, {"filename": "/Data/Monster/bbb02.OZT", "start": 26309950, "end": 26318190}, {"filename": "/Data/Monster/bbbb.OZJ", "start": 26318190, "end": 26362347}, {"filename": "/Data/Monster/bbbb00.OZJ", "start": 26362347, "end": 26414140}, {"filename": "/Data/Monster/bbbb02.OZJ", "start": 26414140, "end": 26419800}, {"filename": "/Data/Monster/bbbb03.OZJ", "start": 26419800, "end": 26424789}, {"filename": "/Data/Monster/bee03_r.OZJ", "start": 26424789, "end": 26438380}, {"filename": "/Data/Monster/big_spider.OZJ", "start": 26438380, "end": 26468567}, {"filename": "/Data/Monster/blast_r.OZJ", "start": 26468567, "end": 26488808}, {"filename": "/Data/Monster/bons.OZJ", "start": 26488808, "end": 26516607}, {"filename": "/Data/Monster/boots2.OZJ", "start": 26516607, "end": 26526496}, {"filename": "/Data/Monster/boss.OZJ", "start": 26526496, "end": 26610849}, {"filename": "/Data/Monster/boss_eye.OZJ", "start": 26610849, "end": 26616026}, {"filename": "/Data/Monster/boss_pattern1.OZJ", "start": 26616026, "end": 26634010}, {"filename": "/Data/Monster/boss_pattern2.OZJ", "start": 26634010, "end": 26648122}, {"filename": "/Data/Monster/bossblack.OZJ", "start": 26648122, "end": 26656376}, {"filename": "/Data/Monster/bossmap1.OZJ", "start": 26656376, "end": 26723456}, {"filename": "/Data/Monster/bossmap1_r.OZJ", "start": 26723456, "end": 26741734}, {"filename": "/Data/Monster/bossmap2.OZJ", "start": 26741734, "end": 26812775}, {"filename": "/Data/Monster/bossseptormap2.OZJ", "start": 26812775, "end": 26871492}, {"filename": "/Data/Monster/bosswing.OZJ", "start": 26871492, "end": 26876120}, {"filename": "/Data/Monster/bosswing.OZT", "start": 26876120, "end": 26892552}, {"filename": "/Data/Monster/bosswingbone.OZJ", "start": 26892552, "end": 26911675}, {"filename": "/Data/Monster/bow01.OZJ", "start": 26911675, "end": 26917803}, {"filename": "/Data/Monster/bow05.OZT", "start": 26917803, "end": 26921947}, {"filename": "/Data/Monster/branch.OZJ", "start": 26921947, "end": 26938575}, {"filename": "/Data/Monster/bsh01.OZJ", "start": 26938575, "end": 26976498}, {"filename": "/Data/Monster/bsh02.OZT", "start": 26976498, "end": 26984738}, {"filename": "/Data/Monster/bsh03.OZT", "start": 26984738, "end": 26988882}, {"filename": "/Data/Monster/bug.OZJ", "start": 26988882, "end": 27017157}, {"filename": "/Data/Monster/bug2.OZJ", "start": 27017157, "end": 27024017}, {"filename": "/Data/Monster/bug3.OZJ", "start": 27024017, "end": 27032645}, {"filename": "/Data/Monster/bulldug.OZJ", "start": 27032645, "end": 27091567}, {"filename": "/Data/Monster/bulldughair.OZT", "start": 27091567, "end": 27095711}, {"filename": "/Data/Monster/bv01.OZJ", "start": 27095711, "end": 27120856}, {"filename": "/Data/Monster/bv01_2.OZJ", "start": 27120856, "end": 27131436}, {"filename": "/Data/Monster/bv02.OZJ", "start": 27131436, "end": 27171999}, {"filename": "/Data/Monster/bv02_2.OZJ", "start": 27171999, "end": 27194776}, {"filename": "/Data/Monster/bv03.OZJ", "start": 27194776, "end": 27199608}, {"filename": "/Data/Monster/cannon.OZJ", "start": 27199608, "end": 27278368}, {"filename": "/Data/Monster/cd71a.bmd", "start": 27278368, "end": 27291038}, {"filename": "/Data/Monster/cd71b.bmd", "start": 27291038, "end": 27303708}, {"filename": "/Data/Monster/cd71c.bmd", "start": 27303708, "end": 27329364}, {"filename": "/Data/Monster/cd71d.bmd", "start": 27329364, "end": 27356332}, {"filename": "/Data/Monster/cd71e.bmd", "start": 27356332, "end": 27383300}, {"filename": "/Data/Monster/cd71f.bmd", "start": 27383300, "end": 27488765}, {"filename": "/Data/Monster/cd71g.bmd", "start": 27488765, "end": 27525267}, {"filename": "/Data/Monster/cd71h.bmd", "start": 27525267, "end": 27558965}, {"filename": "/Data/Monster/chain.OZT", "start": 27558965, "end": 27560037}, {"filename": "/Data/Monster/chest.OZJ", "start": 27560037, "end": 27587785}, {"filename": "/Data/Monster/chest_R.OZJ", "start": 27587785, "end": 27603458}, {"filename": "/Data/Monster/cloak.OZT", "start": 27603458, "end": 27734578}, {"filename": "/Data/Monster/cloak_R.OZJ", "start": 27734578, "end": 27746994}, {"filename": "/Data/Monster/cr_balgass.OZT", "start": 27746994, "end": 27878114}, {"filename": "/Data/Monster/cr_balgass02.OZT", "start": 27878114, "end": 28009234}, {"filename": "/Data/Monster/cr_werewolf01.OZJ", "start": 28009234, "end": 28120478}, {"filename": "/Data/Monster/cr_werewolf02.OZJ", "start": 28120478, "end": 28230007}, {"filename": "/Data/Monster/cundun1.OZJ", "start": 28230007, "end": 28296832}, {"filename": "/Data/Monster/cundun2.OZJ", "start": 28296832, "end": 28309324}, {"filename": "/Data/Monster/cundun3.OZJ", "start": 28309324, "end": 28347997}, {"filename": "/Data/Monster/cundun4.OZJ", "start": 28347997, "end": 28362136}, {"filename": "/Data/Monster/cundun4.OZT", "start": 28362136, "end": 28362696}, {"filename": "/Data/Monster/cundun5.OZJ", "start": 28362696, "end": 28382969}, {"filename": "/Data/Monster/cundunHead.OZJ", "start": 28382969, "end": 28411450}, {"filename": "/Data/Monster/cundun_gone.bmd", "start": 28411450, "end": 28615190}, {"filename": "/Data/Monster/cundunend.OZJ", "start": 28615190, "end": 28619864}, {"filename": "/Data/Monster/cundunend.OZT", "start": 28619864, "end": 28624008}, {"filename": "/Data/Monster/cundunskin.OZJ", "start": 28624008, "end": 28630230}, {"filename": "/Data/Monster/defencenpc_1_head.OZJ", "start": 28630230, "end": 28650774}, {"filename": "/Data/Monster/defencenpc_1_should.OZJ", "start": 28650774, "end": 28655105}, {"filename": "/Data/Monster/defencenpc_2_food.OZJ", "start": 28655105, "end": 28673526}, {"filename": "/Data/Monster/defencenpc_2_head.OZJ", "start": 28673526, "end": 28691824}, {"filename": "/Data/Monster/defencenpc_2_should.OZJ", "start": 28691824, "end": 28712595}, {"filename": "/Data/Monster/defencenpc_body.OZJ", "start": 28712595, "end": 28816710}, {"filename": "/Data/Monster/defencenpc_weapon.OZJ", "start": 28816710, "end": 28829065}, {"filename": "/Data/Monster/devil.OZJ", "start": 28829065, "end": 28883930}, {"filename": "/Data/Monster/devilhair.OZT", "start": 28883930, "end": 28888074}, {"filename": "/Data/Monster/devilwing.OZJ", "start": 28888074, "end": 28913047}, {"filename": "/Data/Monster/doorc01.OZJ", "start": 28913047, "end": 28955662}, {"filename": "/Data/Monster/drr_01.OZJ", "start": 28955662, "end": 29044737}, {"filename": "/Data/Monster/drr_02.OZJ", "start": 29044737, "end": 29116618}, {"filename": "/Data/Monster/drr_03.OZJ", "start": 29116618, "end": 29193804}, {"filename": "/Data/Monster/drt00.OZJ", "start": 29193804, "end": 29203780}, {"filename": "/Data/Monster/drt01.OZJ", "start": 29203780, "end": 29268451}, {"filename": "/Data/Monster/drt02.OZJ", "start": 29268451, "end": 29315110}, {"filename": "/Data/Monster/drt02.OZT", "start": 29315110, "end": 29331542}, {"filename": "/Data/Monster/drt03.OZJ", "start": 29331542, "end": 29338287}, {"filename": "/Data/Monster/drt03.OZT", "start": 29338287, "end": 29354719}, {"filename": "/Data/Monster/drt05.OZJ", "start": 29354719, "end": 29360148}, {"filename": "/Data/Monster/eagle.OZT", "start": 29360148, "end": 29368388}, {"filename": "/Data/Monster/eagle01.OZJ", "start": 29368388, "end": 29376920}, {"filename": "/Data/Monster/epiboss_armor.OZJ", "start": 29376920, "end": 29459357}, {"filename": "/Data/Monster/epibossskin.OZJ", "start": 29459357, "end": 29534013}, {"filename": "/Data/Monster/epibosswing.OZJ", "start": 29534013, "end": 29555489}, {"filename": "/Data/Monster/fireeffect.OZJ", "start": 29555489, "end": 29616262}, {"filename": "/Data/Monster/fmammor.OZJ", "start": 29616262, "end": 29722177}, {"filename": "/Data/Monster/fmbody_r.OZJ", "start": 29722177, "end": 29761672}, {"filename": "/Data/Monster/forestgost.OZJ", "start": 29761672, "end": 29899928}, {"filename": "/Data/Monster/forestgost_should.OZJ", "start": 29899928, "end": 29938544}, {"filename": "/Data/Monster/fr00.OZJ", "start": 29938544, "end": 30004765}, {"filename": "/Data/Monster/fs00.OZJ", "start": 30004765, "end": 30055577}, {"filename": "/Data/Monster/fs01.OZT", "start": 30055577, "end": 30121161}, {"filename": "/Data/Monster/fs02.OZJ", "start": 30121161, "end": 30125954}, {"filename": "/Data/Monster/garp.OZJ", "start": 30125954, "end": 30136533}, {"filename": "/Data/Monster/gate.OZJ", "start": 30136533, "end": 30178636}, {"filename": "/Data/Monster/gh1.OZJ", "start": 30178636, "end": 30243223}, {"filename": "/Data/Monster/gh2.OZJ", "start": 30243223, "end": 30313130}, {"filename": "/Data/Monster/gh3.OZJ", "start": 30313130, "end": 30318259}, {"filename": "/Data/Monster/gloves2.OZJ", "start": 30318259, "end": 30338465}, {"filename": "/Data/Monster/gp01.OZJ", "start": 30338465, "end": 30394022}, {"filename": "/Data/Monster/gp02.OZT", "start": 30394022, "end": 30410454}, {"filename": "/Data/Monster/h_r.OZT", "start": 30410454, "end": 30443270}, {"filename": "/Data/Monster/head.OZJ", "start": 30443270, "end": 30452849}, {"filename": "/Data/Monster/helmat_01.OZJ", "start": 30452849, "end": 30458636}, {"filename": "/Data/Monster/helmat_02.OZJ", "start": 30458636, "end": 30463828}, {"filename": "/Data/Monster/helmet2.OZJ", "start": 30463828, "end": 30473881}, {"filename": "/Data/Monster/ho9_11.OZJ", "start": 30473881, "end": 30580933}, {"filename": "/Data/Monster/ho9_2.OZJ", "start": 30580933, "end": 30592256}, {"filename": "/Data/Monster/hop01.OZJ", "start": 30592256, "end": 30665063}, {"filename": "/Data/Monster/hound_head01.OZJ", "start": 30665063, "end": 30676770}, {"filename": "/Data/Monster/hound_head02.OZJ", "start": 30676770, "end": 30688447}, {"filename": "/Data/Monster/hound_lower.OZJ", "start": 30688447, "end": 30720023}, {"filename": "/Data/Monster/hp00.OZJ", "start": 30720023, "end": 30756116}, {"filename": "/Data/Monster/hp01.OZT", "start": 30756116, "end": 30821700}, {"filename": "/Data/Monster/ice_m.OZJ", "start": 30821700, "end": 30843099}, {"filename": "/Data/Monster/it.OZJ", "start": 30843099, "end": 30871970}, {"filename": "/Data/Monster/iui01.OZT", "start": 30871970, "end": 31134162}, {"filename": "/Data/Monster/iui02.OZJ", "start": 31134162, "end": 31145988}, {"filename": "/Data/Monster/iui02.OZT", "start": 31145988, "end": 31154228}, {"filename": "/Data/Monster/iui03.OZJ", "start": 31154228, "end": 31178648}, {"filename": "/Data/Monster/iui03.OZT", "start": 31178648, "end": 31186888}, {"filename": "/Data/Monster/iui06.OZJ", "start": 31186888, "end": 31189495}, {"filename": "/Data/Monster/king01.OZJ", "start": 31189495, "end": 31209603}, {"filename": "/Data/Monster/king08.OZT", "start": 31209603, "end": 31211699}, {"filename": "/Data/Monster/king09.OZJ", "start": 31211699, "end": 31271701}, {"filename": "/Data/Monster/kni00.OZJ", "start": 31271701, "end": 31314161}, {"filename": "/Data/Monster/kni01.OZJ", "start": 31314161, "end": 31338195}, {"filename": "/Data/Monster/kni02.OZJ", "start": 31338195, "end": 31348264}, {"filename": "/Data/Monster/kuo00.OZJ", "start": 31348264, "end": 31408875}, {"filename": "/Data/Monster/kuo01.OZJ", "start": 31408875, "end": 31422315}, {"filename": "/Data/Monster/kuo02.OZJ", "start": 31422315, "end": 31450050}, {"filename": "/Data/Monster/leaves.OZT", "start": 31450050, "end": 31466482}, {"filename": "/Data/Monster/legs.OZJ", "start": 31466482, "end": 31490433}, {"filename": "/Data/Monster/legs_R.OZJ", "start": 31490433, "end": 31507058}, {"filename": "/Data/Monster/lobfur.OZT", "start": 31507058, "end": 31511202}, {"filename": "/Data/Monster/lobster.OZJ", "start": 31511202, "end": 31561676}, {"filename": "/Data/Monster/lpo01.OZT", "start": 31561676, "end": 31823868}, {"filename": "/Data/Monster/m1.OZT", "start": 31823868, "end": 31954988}, {"filename": "/Data/Monster/ma001.OZT", "start": 31954988, "end": 31963228}, {"filename": "/Data/Monster/ma002.OZJ", "start": 31963228, "end": 31964025}, {"filename": "/Data/Monster/ma1.OZJ", "start": 31964025, "end": 31978622}, {"filename": "/Data/Monster/ma2.OZJ", "start": 31978622, "end": 31979294}, {"filename": "/Data/Monster/ma_1.OZJ", "start": 31979294, "end": 32019195}, {"filename": "/Data/Monster/magic_BB.OZT", "start": 32019195, "end": 32035627}, {"filename": "/Data/Monster/magic_H.OZT", "start": 32035627, "end": 32039771}, {"filename": "/Data/Monster/manto.OZT", "start": 32039771, "end": 32170891}, {"filename": "/Data/Monster/mon2_01.OZJ", "start": 32170891, "end": 32254230}, {"filename": "/Data/Monster/mon2_02.OZJ", "start": 32254230, "end": 32298689}, {"filename": "/Data/Monster/mon3_03.OZJ", "start": 32298689, "end": 32333634}, {"filename": "/Data/Monster/mon_01.OZJ", "start": 32333634, "end": 32363264}, {"filename": "/Data/Monster/mon_05.OZJ", "start": 32363264, "end": 32374459}, {"filename": "/Data/Monster/mono3.OZJ", "start": 32374459, "end": 32471542}, {"filename": "/Data/Monster/mono3eye.OZJ", "start": 32471542, "end": 32482041}, {"filename": "/Data/Monster/monster(1).bmd", "start": 32482041, "end": 32723131}, {"filename": "/Data/Monster/monster.bmd", "start": 32723131, "end": 32894818}, {"filename": "/Data/Monster/monster101.bmd", "start": 32894818, "end": 33197065}, {"filename": "/Data/Monster/monster102.bmd", "start": 33197065, "end": 33373737}, {"filename": "/Data/Monster/monster103.bmd", "start": 33373737, "end": 33607883}, {"filename": "/Data/Monster/monster104.bmd", "start": 33607883, "end": 33810809}, {"filename": "/Data/Monster/monster105.bmd", "start": 33810809, "end": 33986610}, {"filename": "/Data/Monster/monster106.bmd", "start": 33986610, "end": 34353934}, {"filename": "/Data/Monster/monster65.bmd", "start": 34353934, "end": 34868610}, {"filename": "/Data/Monster/monster68.bmd", "start": 34868610, "end": 35045103}, {"filename": "/Data/Monster/monster69.bmd", "start": 35045103, "end": 35212066}, {"filename": "/Data/Monster/monster75.bmd", "start": 35212066, "end": 35292423}, {"filename": "/Data/Monster/monster77.bmd", "start": 35292423, "end": 35441160}, {"filename": "/Data/Monster/monster78.bmd", "start": 35441160, "end": 35593908}, {"filename": "/Data/Monster/monster79.bmd", "start": 35593908, "end": 35601500}, {"filename": "/Data/Monster/monster80.bmd", "start": 35601500, "end": 35675438}, {"filename": "/Data/Monster/monster81.OZJ", "start": 35675438, "end": 35689860}, {"filename": "/Data/Monster/monster81_r.OZJ", "start": 35689860, "end": 35702298}, {"filename": "/Data/Monster/monster81_r2.OZJ", "start": 35702298, "end": 35714368}, {"filename": "/Data/Monster/monster82.bmd", "start": 35714368, "end": 35889007}, {"filename": "/Data/Monster/monster83.bmd", "start": 35889007, "end": 36094148}, {"filename": "/Data/Monster/monster84.bmd", "start": 36094148, "end": 36290776}, {"filename": "/Data/Monster/monster85.bmd", "start": 36290776, "end": 36523703}, {"filename": "/Data/Monster/monster86.bmd", "start": 36523703, "end": 36680560}, {"filename": "/Data/Monster/monster87.bmd", "start": 36680560, "end": 36701777}, {"filename": "/Data/Monster/monster88.bmd", "start": 36701777, "end": 37084628}, {"filename": "/Data/Monster/monster90.bmd", "start": 37084628, "end": 37304684}, {"filename": "/Data/Monster/monster91.bmd", "start": 37304684, "end": 37537966}, {"filename": "/Data/Monster/monster92.bmd", "start": 37537966, "end": 37803688}, {"filename": "/Data/Monster/monster93.bmd", "start": 37803688, "end": 37997229}, {"filename": "/Data/Monster/monster94.bmd", "start": 37997229, "end": 38197338}, {"filename": "/Data/Monster/monster95.bmd", "start": 38197338, "end": 38385352}, {"filename": "/Data/Monster/monster96.bmd", "start": 38385352, "end": 38633148}, {"filename": "/Data/Monster/monster97.bmd", "start": 38633148, "end": 38843024}, {"filename": "/Data/Monster/monster98.bmd", "start": 38843024, "end": 39035218}, {"filename": "/Data/Monster/monster99.bmd", "start": 39035218, "end": 39267828}, {"filename": "/Data/Monster/monster_wolf_weapon.OZJ", "start": 39267828, "end": 39307128}, {"filename": "/Data/Monster/monster_worlf.OZJ", "start": 39307128, "end": 39395699}, {"filename": "/Data/Monster/monx01.OZJ", "start": 39395699, "end": 39497192}, {"filename": "/Data/Monster/monx02.OZT", "start": 39497192, "end": 39562776}, {"filename": "/Data/Monster/mop01.OZJ", "start": 39562776, "end": 39602687}, {"filename": "/Data/Monster/mop02.OZJ", "start": 39602687, "end": 39685829}, {"filename": "/Data/Monster/mop03.OZJ", "start": 39685829, "end": 39695649}, {"filename": "/Data/Monster/mop03.OZT", "start": 39695649, "end": 39728465}, {"filename": "/Data/Monster/mopmop.OZJ", "start": 39728465, "end": 39755088}, {"filename": "/Data/Monster/mopmop.OZT", "start": 39755088, "end": 39787904}, {"filename": "/Data/Monster/mopmop02.OZJ", "start": 39787904, "end": 39812707}, {"filename": "/Data/Monster/mopmop03.OZJ", "start": 39812707, "end": 39826353}, {"filename": "/Data/Monster/npc_a_01.OZJ", "start": 39826353, "end": 39837102}, {"filename": "/Data/Monster/npc_a_02.OZJ", "start": 39837102, "end": 39847496}, {"filename": "/Data/Monster/npc_a_03.OZJ", "start": 39847496, "end": 39853443}, {"filename": "/Data/Monster/npc_a_04.OZJ", "start": 39853443, "end": 39861331}, {"filename": "/Data/Monster/npc_a_05.OZJ", "start": 39861331, "end": 39868767}, {"filename": "/Data/Monster/npc_a_06.OZJ", "start": 39868767, "end": 39874118}, {"filename": "/Data/Monster/npc_a_07.OZJ", "start": 39874118, "end": 39880534}, {"filename": "/Data/Monster/npc_a_08_01.OZJ", "start": 39880534, "end": 39890692}, {"filename": "/Data/Monster/npc_a_08_02.OZJ", "start": 39890692, "end": 39900838}, {"filename": "/Data/Monster/npc_a_09_01.OZJ", "start": 39900838, "end": 39911127}, {"filename": "/Data/Monster/npc_a_09_02.OZJ", "start": 39911127, "end": 39921441}, {"filename": "/Data/Monster/npc_a_clothes.OZT", "start": 39921441, "end": 39925585}, {"filename": "/Data/Monster/npc_b1.OZJ", "start": 39925585, "end": 39951870}, {"filename": "/Data/Monster/npc_g.OZJ", "start": 39951870, "end": 39979049}, {"filename": "/Data/Monster/ob2.OZJ", "start": 39979049, "end": 40003649}, {"filename": "/Data/Monster/ogre.OZJ", "start": 40003649, "end": 40032032}, {"filename": "/Data/Monster/p_d.OZJ", "start": 40032032, "end": 40059078}, {"filename": "/Data/Monster/p_d.OZT", "start": 40059078, "end": 40075510}, {"filename": "/Data/Monster/poisongolem.OZT", "start": 40075510, "end": 40337702}, {"filename": "/Data/Monster/poisongolem01.OZJ", "start": 40337702, "end": 40349536}, {"filename": "/Data/Monster/prizm.OZJ", "start": 40349536, "end": 40363944}, {"filename": "/Data/Monster/pt.OZJ", "start": 40363944, "end": 40407678}, {"filename": "/Data/Monster/pt2.OZJ", "start": 40407678, "end": 40450907}, {"filename": "/Data/Monster/pt3.OZJ", "start": 40450907, "end": 40482876}, {"filename": "/Data/Monster/remonelf.OZJ", "start": 40482876, "end": 40590805}, {"filename": "/Data/Monster/rt03.OZJ", "start": 40590805, "end": 40670336}, {"filename": "/Data/Monster/sander.OZJ", "start": 40670336, "end": 40718008}, {"filename": "/Data/Monster/sander.OZT", "start": 40718008, "end": 40722152}, {"filename": "/Data/Monster/sander2.OZJ", "start": 40722152, "end": 40737754}, {"filename": "/Data/Monster/satan_a.OZT", "start": 40737754, "end": 40999946}, {"filename": "/Data/Monster/seta.OZJ", "start": 40999946, "end": 41100389}, {"filename": "/Data/Monster/setb.OZT", "start": 41100389, "end": 41165973}, {"filename": "/Data/Monster/shadow_a.OZJ", "start": 41165973, "end": 41173480}, {"filename": "/Data/Monster/shadow_b.OZJ", "start": 41173480, "end": 41178762}, {"filename": "/Data/Monster/shadow_c.OZJ", "start": 41178762, "end": 41188013}, {"filename": "/Data/Monster/skR.OZJ", "start": 41188013, "end": 41228652}, {"filename": "/Data/Monster/smoke04.OZJ", "start": 41228652, "end": 41240019}, {"filename": "/Data/Monster/snake.OZJ", "start": 41240019, "end": 41247488}, {"filename": "/Data/Monster/snake02.OZT", "start": 41247488, "end": 41251632}, {"filename": "/Data/Monster/snow_queen01.OZJ", "start": 41251632, "end": 41272665}, {"filename": "/Data/Monster/snow_queen02.OZJ", "start": 41272665, "end": 41280336}, {"filename": "/Data/Monster/snow_queen03.OZJ", "start": 41280336, "end": 41286263}, {"filename": "/Data/Monster/snowking.OZJ", "start": 41286263, "end": 41307524}, {"filename": "/Data/Monster/snowman.OZJ", "start": 41307524, "end": 41332789}, {"filename": "/Data/Monster/snowman02.OZJ", "start": 41332789, "end": 41359332}, {"filename": "/Data/Monster/soram01.OZJ", "start": 41359332, "end": 41474543}, {"filename": "/Data/Monster/soram02.OZJ", "start": 41474543, "end": 41515251}, {"filename": "/Data/Monster/spider01.OZT", "start": 41515251, "end": 41523491}, {"filename": "/Data/Monster/spider02.OZJ", "start": 41523491, "end": 41533087}, {"filename": "/Data/Monster/st091.OZJ", "start": 41533087, "end": 41572889}, {"filename": "/Data/Monster/starp00.OZJ", "start": 41572889, "end": 41634727}, {"filename": "/Data/Monster/stmop01.OZJ", "start": 41634727, "end": 41711893}, {"filename": "/Data/Monster/stmop02.OZJ", "start": 41711893, "end": 41733258}, {"filename": "/Data/Monster/stmop03.OZJ", "start": 41733258, "end": 41748882}, {"filename": "/Data/Monster/ston1.OZJ", "start": 41748882, "end": 41761426}, {"filename": "/Data/Monster/stonegolem.OZJ", "start": 41761426, "end": 41892354}, {"filename": "/Data/Monster/sword05.OZJ", "start": 41892354, "end": 41898702}, {"filename": "/Data/Monster/tgh03.OZT", "start": 41898702, "end": 41906942}, {"filename": "/Data/Monster/towergate_r.OZJ", "start": 41906942, "end": 41909584}, {"filename": "/Data/Monster/treemonster01.OZT", "start": 41909584, "end": 41975168}, {"filename": "/Data/Monster/treemonster02.OZJ", "start": 41975168, "end": 42096704}, {"filename": "/Data/Monster/uo00.OZJ", "start": 42096704, "end": 42111839}, {"filename": "/Data/Monster/uo01.OZT", "start": 42111839, "end": 42120079}, {"filename": "/Data/Monster/w.OZJ", "start": 42120079, "end": 42179332}, {"filename": "/Data/Monster/w_merchant_a.OZJ", "start": 42179332, "end": 42213660}, {"filename": "/Data/Monster/wa1.OZJ", "start": 42213660, "end": 42249755}, {"filename": "/Data/Monster/wa2.OZJ", "start": 42249755, "end": 42290162}, {"filename": "/Data/Monster/wa3.OZJ", "start": 42290162, "end": 42335014}, {"filename": "/Data/Monster/weapon64.bmd", "start": 42335014, "end": 42366564}, {"filename": "/Data/Monster/wheel.OZJ", "start": 42366564, "end": 42436144}, {"filename": "/Data/Monster/wizard_gloves_02.OZJ", "start": 42436144, "end": 42444550}, {"filename": "/Data/Monster/wizard_head_02.OZJ", "start": 42444550, "end": 42456840}, {"filename": "/Data/Monster/wizard_lower_02.OZJ", "start": 42456840, "end": 42468677}, {"filename": "/Data/Monster/wizard_upper_02.OZJ", "start": 42468677, "end": 42477885}, {"filename": "/Data/Monster/wolf01.OZJ", "start": 42477885, "end": 42521109}, {"filename": "/Data/Monster/wolf03.OZT", "start": 42521109, "end": 42586693}, {"filename": "/Data/Monster/wolfa01.OZJ", "start": 42586693, "end": 42626595}, {"filename": "/Data/Monster/wolfa02.OZJ", "start": 42626595, "end": 42665912}, {"filename": "/Data/Monster/wolfa02.OZT", "start": 42665912, "end": 42715112}, {"filename": "/Data/Monster/wolfbody.OZJ", "start": 42715112, "end": 42755994}, {"filename": "/Data/Monster/wwo.OZJ", "start": 42755994, "end": 42784901}, {"filename": "/Data/Music/Atlans.mp3", "start": 42784901, "end": 47311297, "audio": 1}, {"filename": "/Data/Music/Cathedral.mp3", "start": 47311297, "end": 52330697, "audio": 1}, {"filename": "/Data/Music/Devias.mp3", "start": 52330697, "end": 58620275, "audio": 1}, {"filename": "/Data/Music/DuelArena.mp3", "start": 58620275, "end": 59506247, "audio": 1}, {"filename": "/Data/Music/Dungeon.mp3", "start": 59506247, "end": 65336279, "audio": 1}, {"filename": "/Data/Music/Icarus.mp3", "start": 65336279, "end": 68629278, "audio": 1}, {"filename": "/Data/Music/Lorencia.mp3", "start": 68629278, "end": 73657455, "audio": 1}, {"filename": "/Data/Music/MuTheme.mp3", "start": 73657455, "end": 78685632, "audio": 1}, {"filename": "/Data/Music/Noria.mp3", "start": 78685632, "end": 83222032, "audio": 1}, {"filename": "/Data/Music/PK_Field.mp3", "start": 83222032, "end": 84054505, "audio": 1}, {"filename": "/Data/Music/Pub.mp3", "start": 84054505, "end": 87347059, "audio": 1}, {"filename": "/Data/Music/devil_square_intro.mp3", "start": 87347059, "end": 88277334, "audio": 1}, {"filename": "/Data/Music/devil_square_outro.mp3", "start": 88277334, "end": 90125030, "audio": 1}, {"filename": "/Data/Music/login_theme.mp3", "start": 90125030, "end": 92944662, "audio": 1}, {"filename": "/Data/Music/lost_tower_a.mp3", "start": 92944662, "end": 96979538, "audio": 1}, {"filename": "/Data/Music/lost_tower_b.mp3", "start": 96979538, "end": 100067319, "audio": 1}, {"filename": "/Data/Music/main_theme.mp3", "start": 100067319, "end": 102217617, "audio": 1}, {"filename": "/Data/Music/tarkan.mp3", "start": 102217617, "end": 105266945, "audio": 1}, {"filename": "/Data/NPC/BloodCastle01.bmd", "start": 105266945, "end": 105352451}, {"filename": "/Data/NPC/BloodCastle02.bmd", "start": 105352451, "end": 105441186}, {"filename": "/Data/NPC/Breeder.bmd", "start": 105441186, "end": 105568402}, {"filename": "/Data/NPC/DeviasTrader01.bmd", "start": 105568402, "end": 105663658}, {"filename": "/Data/NPC/DevilNpc01.bmd", "start": 105663658, "end": 105712950}, {"filename": "/Data/NPC/Elf01.bmd", "start": 105712950, "end": 105780382}, {"filename": "/Data/NPC/ElfMerchant01.bmd", "start": 105780382, "end": 105847814}, {"filename": "/Data/NPC/ElfWizard01.bmd", "start": 105847814, "end": 105942009}, {"filename": "/Data/NPC/Female01.bmd", "start": 105942009, "end": 105984827}, {"filename": "/Data/NPC/FemaleBoots01.bmd", "start": 105984827, "end": 105999051}, {"filename": "/Data/NPC/FemaleBoots02.bmd", "start": 105999051, "end": 106011843}, {"filename": "/Data/NPC/FemaleHead01.bmd", "start": 106011843, "end": 106023475}, {"filename": "/Data/NPC/FemaleHead02.bmd", "start": 106023475, "end": 106035107}, {"filename": "/Data/NPC/FemaleLower01.bmd", "start": 106035107, "end": 106045801}, {"filename": "/Data/NPC/FemaleLower02.bmd", "start": 106045801, "end": 106059015}, {"filename": "/Data/NPC/FemaleUpper01.bmd", "start": 106059015, "end": 106084253}, {"filename": "/Data/NPC/FemaleUpper02.bmd", "start": 106084253, "end": 106107937}, {"filename": "/Data/NPC/Girl01.bmd", "start": 106107937, "end": 106141366}, {"filename": "/Data/NPC/GirlHead01.bmd", "start": 106141366, "end": 106151476}, {"filename": "/Data/NPC/GirlHead02.bmd", "start": 106151476, "end": 106161586}, {"filename": "/Data/NPC/GirlLower01.bmd", "start": 106161586, "end": 106179356}, {"filename": "/Data/NPC/GirlLower02.bmd", "start": 106179356, "end": 106187638}, {"filename": "/Data/NPC/GirlUpper01.bmd", "start": 106187638, "end": 106210590}, {"filename": "/Data/NPC/GirlUpper02.bmd", "start": 106210590, "end": 106232228}, {"filename": "/Data/NPC/Man01.bmd", "start": 106232228, "end": 106252763}, {"filename": "/Data/NPC/ManBoots01.bmd", "start": 106252763, "end": 106264621}, {"filename": "/Data/NPC/ManBoots02.bmd", "start": 106264621, "end": 106277007}, {"filename": "/Data/NPC/ManGloves01.bmd", "start": 106277007, "end": 106291012}, {"filename": "/Data/NPC/ManGloves02.bmd", "start": 106291012, "end": 106304969}, {"filename": "/Data/NPC/ManHead01.bmd", "start": 106304969, "end": 106315427}, {"filename": "/Data/NPC/ManHead02.bmd", "start": 106315427, "end": 106326089}, {"filename": "/Data/NPC/ManUpper01.bmd", "start": 106326089, "end": 106350931}, {"filename": "/Data/NPC/ManUpper02.bmd", "start": 106350931, "end": 106378325}, {"filename": "/Data/NPC/Master01.bmd", "start": 106378325, "end": 106479628}, {"filename": "/Data/NPC/MixNpc01.bmd", "start": 106479628, "end": 106544765}, {"filename": "/Data/NPC/Sevina01.bmd", "start": 106544765, "end": 106627473}, {"filename": "/Data/NPC/Smith01.bmd", "start": 106627473, "end": 106742925}, {"filename": "/Data/NPC/SnowMerchant01.bmd", "start": 106742925, "end": 106835941}, {"filename": "/Data/NPC/SnowSmith01.bmd", "start": 106835941, "end": 106936566}, {"filename": "/Data/NPC/SnowWizard01.bmd", "start": 106936566, "end": 107015473}, {"filename": "/Data/NPC/Storage01.bmd", "start": 107015473, "end": 107183908}, {"filename": "/Data/NPC/Tournament01.bmd", "start": 107183908, "end": 107301054}, {"filename": "/Data/NPC/Wizard01.bmd", "start": 107301054, "end": 107401570}, {"filename": "/Data/NPC/agic_shop01.OZT", "start": 107401570, "end": 107409810}, {"filename": "/Data/NPC/birdnpc.OZJ", "start": 107409810, "end": 107450038}, {"filename": "/Data/NPC/blackhole.OZJ", "start": 107450038, "end": 107469320}, {"filename": "/Data/NPC/bnpc01.OZT", "start": 107469320, "end": 107502136}, {"filename": "/Data/NPC/bnpc02.OZT", "start": 107502136, "end": 107506280}, {"filename": "/Data/NPC/boots_07.OZJ", "start": 107506280, "end": 107515771}, {"filename": "/Data/NPC/boots_12.OZJ", "start": 107515771, "end": 107526349}, {"filename": "/Data/NPC/caterf.OZJ", "start": 107526349, "end": 107598650}, {"filename": "/Data/NPC/caterf2.OZJ", "start": 107598650, "end": 107677078}, {"filename": "/Data/NPC/crown.OZJ", "start": 107677078, "end": 107685341}, {"filename": "/Data/NPC/dksbody.OZT", "start": 107685341, "end": 107750925}, {"filename": "/Data/NPC/dkshelmet.OZJ", "start": 107750925, "end": 107761226}, {"filename": "/Data/NPC/dkswing.OZJ", "start": 107761226, "end": 107773370}, {"filename": "/Data/NPC/elder.OZJ", "start": 107773370, "end": 107869032}, {"filename": "/Data/NPC/fire_02.OZJ", "start": 107869032, "end": 107874871}, {"filename": "/Data/NPC/fire_03.OZJ", "start": 107874871, "end": 107882391}, {"filename": "/Data/NPC/foot.OZJ", "start": 107882391, "end": 107892206}, {"filename": "/Data/NPC/gggi01.OZJ", "start": 107892206, "end": 107908847}, {"filename": "/Data/NPC/gggi02.OZJ", "start": 107908847, "end": 107952411}, {"filename": "/Data/NPC/girl_a.OZJ", "start": 107952411, "end": 107975789}, {"filename": "/Data/NPC/girl_b.OZJ", "start": 107975789, "end": 108005306}, {"filename": "/Data/NPC/gloves_07.OZJ", "start": 108005306, "end": 108015457}, {"filename": "/Data/NPC/gloves_12.OZJ", "start": 108015457, "end": 108026977}, {"filename": "/Data/NPC/guard_gold2.OZJ", "start": 108026977, "end": 108093513}, {"filename": "/Data/NPC/guard_hair.OZT", "start": 108093513, "end": 108097657}, {"filename": "/Data/NPC/head_02.OZJ", "start": 108097657, "end": 108109941}, {"filename": "/Data/NPC/head_07.OZJ", "start": 108109941, "end": 108118892}, {"filename": "/Data/NPC/head_12.OZJ", "start": 108118892, "end": 108128666}, {"filename": "/Data/NPC/hide.OZJ", "start": 108128666, "end": 108133206}, {"filename": "/Data/NPC/hound_sword1.OZJ", "start": 108133206, "end": 108142694}, {"filename": "/Data/NPC/hpp.OZJ", "start": 108142694, "end": 108183181}, {"filename": "/Data/NPC/hugerock02.OZJ", "start": 108183181, "end": 108212575}, {"filename": "/Data/NPC/ju01_R.OZJ", "start": 108212575, "end": 108226984}, {"filename": "/Data/NPC/knifestone.OZJ", "start": 108226984, "end": 108246196}, {"filename": "/Data/NPC/lnn01.OZT", "start": 108246196, "end": 108279012}, {"filename": "/Data/NPC/lower_12.OZJ", "start": 108279012, "end": 108307425}, {"filename": "/Data/NPC/lplower.OZJ", "start": 108307425, "end": 108322287}, {"filename": "/Data/NPC/lptgq.OZT", "start": 108322287, "end": 108355103}, {"filename": "/Data/NPC/lpwing.OZJ", "start": 108355103, "end": 108365649}, {"filename": "/Data/NPC/magic_shop012.OZT", "start": 108365649, "end": 108373889}, {"filename": "/Data/NPC/magic_shop01a.OZJ", "start": 108373889, "end": 108398873}, {"filename": "/Data/NPC/magic_shop01b.OZJ", "start": 108398873, "end": 108424030}, {"filename": "/Data/NPC/magic_shop02.OZT", "start": 108424030, "end": 108428174}, {"filename": "/Data/NPC/magic_shop022.OZT", "start": 108428174, "end": 108432318}, {"filename": "/Data/NPC/man.OZJ", "start": 108432318, "end": 108473875}, {"filename": "/Data/NPC/merchant_moster_b01.OZJ", "start": 108473875, "end": 108514359}, {"filename": "/Data/NPC/model_npc_catapult_att.bmd", "start": 108514359, "end": 108773080}, {"filename": "/Data/NPC/model_npc_catapult_def.bmd", "start": 108773080, "end": 109035612}, {"filename": "/Data/NPC/mon_01.OZJ", "start": 109035612, "end": 109097680}, {"filename": "/Data/NPC/mon_011.OZJ", "start": 109097680, "end": 109155686}, {"filename": "/Data/NPC/mon_02.OZJ", "start": 109155686, "end": 109170406}, {"filename": "/Data/NPC/mon_022.OZJ", "start": 109170406, "end": 109184663}, {"filename": "/Data/NPC/ng01.OZJ", "start": 109184663, "end": 109265315}, {"filename": "/Data/NPC/npc.OZJ", "start": 109265315, "end": 109310199}, {"filename": "/Data/NPC/npc_mulyak.bmd", "start": 109310199, "end": 109374173}, {"filename": "/Data/NPC/npc_mulyak01.OZJ", "start": 109374173, "end": 109478459}, {"filename": "/Data/NPC/npcbarrier.bmd", "start": 109478459, "end": 109481909}, {"filename": "/Data/NPC/npccheckfloor.OZJ", "start": 109481909, "end": 109507324}, {"filename": "/Data/NPC/npccheckfloor.bmd", "start": 109507324, "end": 109539796}, {"filename": "/Data/NPC/npccheckfloor_r.OZJ", "start": 109539796, "end": 109547972}, {"filename": "/Data/NPC/npcclerk.bmd", "start": 109547972, "end": 109672999}, {"filename": "/Data/NPC/npccrown.bmd", "start": 109672999, "end": 109693525}, {"filename": "/Data/NPC/npcgateswitch.OZJ", "start": 109693525, "end": 109717762}, {"filename": "/Data/NPC/npcgateswitch.bmd", "start": 109717762, "end": 109733208}, {"filename": "/Data/NPC/npcsenatus.bmd", "start": 109733208, "end": 109864061}, {"filename": "/Data/NPC/ob.OZJ", "start": 109864061, "end": 109888724}, {"filename": "/Data/NPC/ob3.OZJ", "start": 109888724, "end": 109916836}, {"filename": "/Data/NPC/obj_donkey.bmd", "start": 109916836, "end": 110004264}, {"filename": "/Data/NPC/obj_flag.bmd", "start": 110004264, "end": 110009018}, {"filename": "/Data/NPC/receiptnpc_1.OZJ", "start": 110009018, "end": 110112988}, {"filename": "/Data/NPC/receiptnpc_2.OZT", "start": 110112988, "end": 110145804}, {"filename": "/Data/NPC/science.OZJ", "start": 110145804, "end": 110171690}, {"filename": "/Data/NPC/science02.OZT", "start": 110171690, "end": 110175834}, {"filename": "/Data/NPC/sebina.OZJ", "start": 110175834, "end": 110204846}, {"filename": "/Data/NPC/skin_barbarian_01.OZJ", "start": 110204846, "end": 110263136}, {"filename": "/Data/NPC/skin_special_01.OZJ", "start": 110263136, "end": 110337315}, {"filename": "/Data/NPC/smith.OZJ", "start": 110337315, "end": 110363262}, {"filename": "/Data/NPC/snow_girl.OZJ", "start": 110363262, "end": 110396855}, {"filename": "/Data/NPC/snow_girl02.OZT", "start": 110396855, "end": 110400999}, {"filename": "/Data/NPC/snows.OZJ", "start": 110400999, "end": 110426454}, {"filename": "/Data/NPC/tile_02.OZJ", "start": 110426454, "end": 110436826}, {"filename": "/Data/NPC/tile_03.OZJ", "start": 110436826, "end": 110446574}, {"filename": "/Data/NPC/towergate_r2.OZJ", "start": 110446574, "end": 110454837}, {"filename": "/Data/NPC/treasure_chest.OZJ", "start": 110454837, "end": 110484594}, {"filename": "/Data/NPC/twlight.OZJ", "start": 110484594, "end": 110527874}, {"filename": "/Data/NPC/twlight2.OZJ", "start": 110527874, "end": 110581502}, {"filename": "/Data/NPC/upper_02_m.OZJ", "start": 110581502, "end": 110603909}, {"filename": "/Data/NPC/upper_02b_m.OZT", "start": 110603909, "end": 110608053}, {"filename": "/Data/NPC/upper_12.OZJ", "start": 110608053, "end": 110633510}, {"filename": "/Data/NPC/w_merchant_a.OZJ", "start": 110633510, "end": 110665268}, {"filename": "/Data/NPC/w_merchant_b.OZJ", "start": 110665268, "end": 110695460}, {"filename": "/Data/NPC/warp01.bmd", "start": 110695460, "end": 110704390}, {"filename": "/Data/NPC/warp02.bmd", "start": 110704390, "end": 110713320}, {"filename": "/Data/NPC/warp03.bmd", "start": 110713320, "end": 110713714}, {"filename": "/Data/NPC/yellow_jewel.OZJ", "start": 110713714, "end": 110718655}, {"filename": "/Data/Object1/Beer01.bmd", "start": 110718655, "end": 110739721}, {"filename": "/Data/Object1/Beer02.bmd", "start": 110739721, "end": 110761034}, {"filename": "/Data/Object1/Beer03.bmd", "start": 110761034, "end": 110770784}, {"filename": "/Data/Object1/Bird01.bmd", "start": 110770784, "end": 110784026}, {"filename": "/Data/Object1/Bonfire01.bmd", "start": 110784026, "end": 110795531}, {"filename": "/Data/Object1/Bridge01.bmd", "start": 110795531, "end": 110813042}, {"filename": "/Data/Object1/BridgeStone01.bmd", "start": 110813042, "end": 110820817}, {"filename": "/Data/Object1/Butterfly.OZT", "start": 110820817, "end": 110824961}, {"filename": "/Data/Object1/Butterfly01.bmd", "start": 110824961, "end": 110828369}, {"filename": "/Data/Object1/Candle01.bmd", "start": 110828369, "end": 110841085}, {"filename": "/Data/Object1/Cannon01.bmd", "start": 110841085, "end": 110856935}, {"filename": "/Data/Object1/Cannon02.bmd", "start": 110856935, "end": 110870785}, {"filename": "/Data/Object1/Cannon03.bmd", "start": 110870785, "end": 110877731}, {"filename": "/Data/Object1/Carriage01.bmd", "start": 110877731, "end": 110910598}, {"filename": "/Data/Object1/Carriage02.bmd", "start": 110910598, "end": 110934215}, {"filename": "/Data/Object1/Carriage03.bmd", "start": 110934215, "end": 110965568}, {"filename": "/Data/Object1/Carriage04.bmd", "start": 110965568, "end": 111000204}, {"filename": "/Data/Object1/Curtain01.bmd", "start": 111000204, "end": 111011426}, {"filename": "/Data/Object1/DoungeonGate01.bmd", "start": 111011426, "end": 111041962}, {"filename": "/Data/Object1/Fence01.bmd", "start": 111041962, "end": 111045552}, {"filename": "/Data/Object1/Fence02.bmd", "start": 111045552, "end": 111047246}, {"filename": "/Data/Object1/Fence03.bmd", "start": 111047246, "end": 111048356}, {"filename": "/Data/Object1/Fence04.bmd", "start": 111048356, "end": 111049466}, {"filename": "/Data/Object1/FireLight01.bmd", "start": 111049466, "end": 111054676}, {"filename": "/Data/Object1/FireLight02.bmd", "start": 111054676, "end": 111058353}, {"filename": "/Data/Object1/Fish01.bmd", "start": 111058353, "end": 111070702}, {"filename": "/Data/Object1/Furniture01.bmd", "start": 111070702, "end": 111095317}, {"filename": "/Data/Object1/Furniture02.bmd", "start": 111095317, "end": 111133713}, {"filename": "/Data/Object1/Furniture03.bmd", "start": 111133713, "end": 111137671}, {"filename": "/Data/Object1/Furniture04.bmd", "start": 111137671, "end": 111141625}, {"filename": "/Data/Object1/Furniture05.bmd", "start": 111141625, "end": 111144823}, {"filename": "/Data/Object1/Furniture06.bmd", "start": 111144823, "end": 111149899}, {"filename": "/Data/Object1/Furniture07.bmd", "start": 111149899, "end": 111154377}, {"filename": "/Data/Object1/Grass01.bmd", "start": 111154377, "end": 111167591}, {"filename": "/Data/Object1/Grass02.bmd", "start": 111167591, "end": 111180805}, {"filename": "/Data/Object1/Grass03.bmd", "start": 111180805, "end": 111195466}, {"filename": "/Data/Object1/Grass04.bmd", "start": 111195466, "end": 111210127}, {"filename": "/Data/Object1/Grass05.bmd", "start": 111210127, "end": 111222846}, {"filename": "/Data/Object1/Grass06.bmd", "start": 111222846, "end": 111235565}, {"filename": "/Data/Object1/Grass07.bmd", "start": 111235565, "end": 111249141}, {"filename": "/Data/Object1/Grass08.bmd", "start": 111249141, "end": 111255081}, {"filename": "/Data/Object1/Hanging01.bmd", "start": 111255081, "end": 111272320}, {"filename": "/Data/Object1/House01.bmd", "start": 111272320, "end": 111287695}, {"filename": "/Data/Object1/House02.bmd", "start": 111287695, "end": 111303095}, {"filename": "/Data/Object1/House03.bmd", "start": 111303095, "end": 111328119}, {"filename": "/Data/Object1/House04.bmd", "start": 111328119, "end": 111371789}, {"filename": "/Data/Object1/House05.bmd", "start": 111371789, "end": 111405866}, {"filename": "/Data/Object1/HouseEtc01.bmd", "start": 111405866, "end": 111409250}, {"filename": "/Data/Object1/HouseEtc02.bmd", "start": 111409250, "end": 111430616}, {"filename": "/Data/Object1/HouseEtc03.bmd", "start": 111430616, "end": 111432320}, {"filename": "/Data/Object1/HouseWall01.bmd", "start": 111432320, "end": 111436010}, {"filename": "/Data/Object1/HouseWall02.bmd", "start": 111436010, "end": 111442962}, {"filename": "/Data/Object1/HouseWall03.bmd", "start": 111442962, "end": 111444840}, {"filename": "/Data/Object1/HouseWall04.bmd", "start": 111444840, "end": 111450646}, {"filename": "/Data/Object1/HouseWall05.bmd", "start": 111450646, "end": 111453718}, {"filename": "/Data/Object1/HouseWall06.bmd", "start": 111453718, "end": 111456546}, {"filename": "/Data/Object1/Light01.bmd", "start": 111456546, "end": 111457740}, {"filename": "/Data/Object1/Light02.bmd", "start": 111457740, "end": 111458934}, {"filename": "/Data/Object1/Light03.bmd", "start": 111458934, "end": 111460128}, {"filename": "/Data/Object1/MerchantAnimal01.bmd", "start": 111460128, "end": 111597413}, {"filename": "/Data/Object1/MerchantAnimal02.bmd", "start": 111597413, "end": 111668453}, {"filename": "/Data/Object1/PoseBox01.bmd", "start": 111668453, "end": 111669255}, {"filename": "/Data/Object1/Ship01.bmd", "start": 111669255, "end": 111756686}, {"filename": "/Data/Object1/Sign01.bmd", "start": 111756686, "end": 111762129}, {"filename": "/Data/Object1/Sign02.bmd", "start": 111762129, "end": 111764955}, {"filename": "/Data/Object1/Stair01.bmd", "start": 111764955, "end": 111771597}, {"filename": "/Data/Object1/SteelDoor01.bmd", "start": 111771597, "end": 111777205}, {"filename": "/Data/Object1/SteelStatue01.bmd", "start": 111777205, "end": 111783339}, {"filename": "/Data/Object1/SteelWall01.bmd", "start": 111783339, "end": 111788699}, {"filename": "/Data/Object1/SteelWall02.bmd", "start": 111788699, "end": 111795260}, {"filename": "/Data/Object1/SteelWall03.bmd", "start": 111795260, "end": 111797228}, {"filename": "/Data/Object1/Stone01.bmd", "start": 111797228, "end": 111813352}, {"filename": "/Data/Object1/Stone02.bmd", "start": 111813352, "end": 111829408}, {"filename": "/Data/Object1/Stone03.bmd", "start": 111829408, "end": 111836522}, {"filename": "/Data/Object1/Stone04.bmd", "start": 111836522, "end": 111840824}, {"filename": "/Data/Object1/Stone05.bmd", "start": 111840824, "end": 111851906}, {"filename": "/Data/Object1/StoneMuWall01.bmd", "start": 111851906, "end": 111880016}, {"filename": "/Data/Object1/StoneMuWall02.bmd", "start": 111880016, "end": 111885378}, {"filename": "/Data/Object1/StoneMuWall03.bmd", "start": 111885378, "end": 111891018}, {"filename": "/Data/Object1/StoneMuWall04.bmd", "start": 111891018, "end": 111917266}, {"filename": "/Data/Object1/StoneStatue01.bmd", "start": 111917266, "end": 111925788}, {"filename": "/Data/Object1/StoneStatue02.bmd", "start": 111925788, "end": 111935494}, {"filename": "/Data/Object1/StoneStatue03.bmd", "start": 111935494, "end": 111958022}, {"filename": "/Data/Object1/StoneWall01.bmd", "start": 111958022, "end": 111985166}, {"filename": "/Data/Object1/StoneWall02.bmd", "start": 111985166, "end": 112012310}, {"filename": "/Data/Object1/StoneWall03.bmd", "start": 112012310, "end": 112038649}, {"filename": "/Data/Object1/StoneWall04.bmd", "start": 112038649, "end": 112047514}, {"filename": "/Data/Object1/StoneWall05.bmd", "start": 112047514, "end": 112053245}, {"filename": "/Data/Object1/StoneWall06.bmd", "start": 112053245, "end": 112064615}, {"filename": "/Data/Object1/Straw01.bmd", "start": 112064615, "end": 112075679}, {"filename": "/Data/Object1/Straw02.bmd", "start": 112075679, "end": 112106878}, {"filename": "/Data/Object1/StreetLight01.bmd", "start": 112106878, "end": 112119402}, {"filename": "/Data/Object1/Tent01.bmd", "start": 112119402, "end": 112128851}, {"filename": "/Data/Object1/TileGround03.OZJ", "start": 112128851, "end": 112154185}, {"filename": "/Data/Object1/Tomb01.bmd", "start": 112154185, "end": 112158490}, {"filename": "/Data/Object1/Tomb02.bmd", "start": 112158490, "end": 112162292}, {"filename": "/Data/Object1/Tomb03.bmd", "start": 112162292, "end": 112165246}, {"filename": "/Data/Object1/TreasureChest01.bmd", "start": 112165246, "end": 112172305}, {"filename": "/Data/Object1/TreasureDrum01.bmd", "start": 112172305, "end": 112177899}, {"filename": "/Data/Object1/Tree01.bmd", "start": 112177899, "end": 112227990}, {"filename": "/Data/Object1/Tree02.bmd", "start": 112227990, "end": 112318623}, {"filename": "/Data/Object1/Tree03.bmd", "start": 112318623, "end": 112344453}, {"filename": "/Data/Object1/Tree04.bmd", "start": 112344453, "end": 112370643}, {"filename": "/Data/Object1/Tree05.bmd", "start": 112370643, "end": 112378961}, {"filename": "/Data/Object1/Tree06.bmd", "start": 112378961, "end": 112388399}, {"filename": "/Data/Object1/Tree07.bmd", "start": 112388399, "end": 112397135}, {"filename": "/Data/Object1/Tree08.bmd", "start": 112397135, "end": 112413593}, {"filename": "/Data/Object1/Tree09.bmd", "start": 112413593, "end": 112436039}, {"filename": "/Data/Object1/Tree10.bmd", "start": 112436039, "end": 112477020}, {"filename": "/Data/Object1/Tree11.bmd", "start": 112477020, "end": 112500299}, {"filename": "/Data/Object1/Tree12.bmd", "start": 112500299, "end": 112546499}, {"filename": "/Data/Object1/Tree13.bmd", "start": 112546499, "end": 112593518}, {"filename": "/Data/Object1/Tree_a.OZT", "start": 112593518, "end": 112659102}, {"filename": "/Data/Object1/Waterspout01.bmd", "start": 112659102, "end": 112722248}, {"filename": "/Data/Object1/Well01.bmd", "start": 112722248, "end": 112759918}, {"filename": "/Data/Object1/Well02.bmd", "start": 112759918, "end": 112771608}, {"filename": "/Data/Object1/Well03.bmd", "start": 112771608, "end": 112789855}, {"filename": "/Data/Object1/Well04.bmd", "start": 112789855, "end": 112825034}, {"filename": "/Data/Object1/angel_stone_statue.OZJ", "start": 112825034, "end": 112844270}, {"filename": "/Data/Object1/apple.OZJ", "start": 112844270, "end": 112849386}, {"filename": "/Data/Object1/badge_01.OZJ", "start": 112849386, "end": 112855021}, {"filename": "/Data/Object1/badge_02.OZT", "start": 112855021, "end": 112863261}, {"filename": "/Data/Object1/badge_03.OZT", "start": 112863261, "end": 112879693}, {"filename": "/Data/Object1/bird.OZT", "start": 112879693, "end": 112887933}, {"filename": "/Data/Object1/bookshelf.OZJ", "start": 112887933, "end": 112926319}, {"filename": "/Data/Object1/bottle.OZT", "start": 112926319, "end": 112930463}, {"filename": "/Data/Object1/bridge_01.OZJ", "start": 112930463, "end": 112976818}, {"filename": "/Data/Object1/bridge_shadow01.OZT", "start": 112976818, "end": 112977122}, {"filename": "/Data/Object1/c_wall04.OZJ", "start": 112977122, "end": 113004920}, {"filename": "/Data/Object1/c_wall05.OZJ", "start": 113004920, "end": 113037481}, {"filename": "/Data/Object1/c_wall06.OZJ", "start": 113037481, "end": 113070526}, {"filename": "/Data/Object1/candle.OZJ", "start": 113070526, "end": 113078154}, {"filename": "/Data/Object1/candle2.OZJ", "start": 113078154, "end": 113083567}, {"filename": "/Data/Object1/chair2.OZT", "start": 113083567, "end": 113087711}, {"filename": "/Data/Object1/copra_gate.OZJ", "start": 113087711, "end": 113108604}, {"filename": "/Data/Object1/desk_big.OZJ", "start": 113108604, "end": 113148632}, {"filename": "/Data/Object1/doorknob.OZT", "start": 113148632, "end": 113149704}, {"filename": "/Data/Object1/drum.OZJ", "start": 113149704, "end": 113174757}, {"filename": "/Data/Object1/fire_01.OZJ", "start": 113174757, "end": 113180970}, {"filename": "/Data/Object1/fire_02.OZJ", "start": 113180970, "end": 113186809}, {"filename": "/Data/Object1/fire_light_01.OZT", "start": 113186809, "end": 113189161}, {"filename": "/Data/Object1/fish.OZT", "start": 113189161, "end": 113197401}, {"filename": "/Data/Object1/grass_01.OZT", "start": 113197401, "end": 113205641}, {"filename": "/Data/Object1/grave_01.OZJ", "start": 113205641, "end": 113227960}, {"filename": "/Data/Object1/grave_02.OZJ", "start": 113227960, "end": 113256677}, {"filename": "/Data/Object1/horse_drawn_01.OZJ", "start": 113256677, "end": 113329733}, {"filename": "/Data/Object1/horse_drawn_02.OZT", "start": 113329733, "end": 113333877}, {"filename": "/Data/Object1/horse_drawn_03.OZJ", "start": 113333877, "end": 113343012}, {"filename": "/Data/Object1/jar_01.OZJ", "start": 113343012, "end": 113362064}, {"filename": "/Data/Object1/joint.OZJ", "start": 113362064, "end": 113368606}, {"filename": "/Data/Object1/light.OZT", "start": 113368606, "end": 113385038}, {"filename": "/Data/Object1/light2.OZJ", "start": 113385038, "end": 113390507}, {"filename": "/Data/Object1/light3.OZJ", "start": 113390507, "end": 113396085}, {"filename": "/Data/Object1/light_02.OZJ", "start": 113396085, "end": 113401095}, {"filename": "/Data/Object1/merchant_moster_a01.OZJ", "start": 113401095, "end": 113445380}, {"filename": "/Data/Object1/merchant_moster_a02.OZT", "start": 113445380, "end": 113461812}, {"filename": "/Data/Object1/merchant_moster_b01.OZJ", "start": 113461812, "end": 113489041}, {"filename": "/Data/Object1/mushroom.OZJ", "start": 113489041, "end": 113495303}, {"filename": "/Data/Object1/notice.OZJ", "start": 113495303, "end": 113507175}, {"filename": "/Data/Object1/plate.OZJ", "start": 113507175, "end": 113513571}, {"filename": "/Data/Object1/plate2.OZJ", "start": 113513571, "end": 113520368}, {"filename": "/Data/Object1/pot.OZJ", "start": 113520368, "end": 113527626}, {"filename": "/Data/Object1/pot2.OZJ", "start": 113527626, "end": 113534650}, {"filename": "/Data/Object1/pot3.OZT", "start": 113534650, "end": 113538794}, {"filename": "/Data/Object1/reagon_waterspout.OZJ", "start": 113538794, "end": 113558002}, {"filename": "/Data/Object1/ship01.OZJ", "start": 113558002, "end": 113591110}, {"filename": "/Data/Object1/ship03.OZJ", "start": 113591110, "end": 113600897}, {"filename": "/Data/Object1/ship04.OZJ", "start": 113600897, "end": 113616911}, {"filename": "/Data/Object1/ship05.OZJ", "start": 113616911, "end": 113622965}, {"filename": "/Data/Object1/ship05.OZT", "start": 113622965, "end": 113631205}, {"filename": "/Data/Object1/ship06.OZJ", "start": 113631205, "end": 113636492}, {"filename": "/Data/Object1/ship06.OZT", "start": 113636492, "end": 113636796}, {"filename": "/Data/Object1/ship07.OZJ", "start": 113636796, "end": 113676821}, {"filename": "/Data/Object1/ship07.OZT", "start": 113676821, "end": 113677893}, {"filename": "/Data/Object1/signboard.OZT", "start": 113677893, "end": 113686133}, {"filename": "/Data/Object1/steel.OZJ", "start": 113686133, "end": 113691238}, {"filename": "/Data/Object1/steel_barred_a.OZT", "start": 113691238, "end": 113724054}, {"filename": "/Data/Object1/steel_barred_b.OZJ", "start": 113724054, "end": 113730414}, {"filename": "/Data/Object1/steel_barred_door.OZT", "start": 113730414, "end": 113763230}, {"filename": "/Data/Object1/ston01.OZJ", "start": 113763230, "end": 113785557}, {"filename": "/Data/Object1/ston02.OZJ", "start": 113785557, "end": 113816182}, {"filename": "/Data/Object1/ston02.OZT", "start": 113816182, "end": 113820326}, {"filename": "/Data/Object1/ston03.OZJ", "start": 113820326, "end": 113824866}, {"filename": "/Data/Object1/stone_statue01.OZJ", "start": 113824866, "end": 113842780}, {"filename": "/Data/Object1/stone_statue02.OZJ", "start": 113842780, "end": 113862544}, {"filename": "/Data/Object1/streetlight.OZJ", "start": 113862544, "end": 113876304}, {"filename": "/Data/Object1/streetlight_brightness2.OZJ", "start": 113876304, "end": 113882177}, {"filename": "/Data/Object1/tile_01.OZJ", "start": 113882177, "end": 113891975}, {"filename": "/Data/Object1/tile_02.OZJ", "start": 113891975, "end": 113902347}, {"filename": "/Data/Object1/tile_03.OZJ", "start": 113902347, "end": 113912095}, {"filename": "/Data/Object1/tile_house01.OZJ", "start": 113912095, "end": 113950227}, {"filename": "/Data/Object1/tile_space01.OZJ", "start": 113950227, "end": 113956325}, {"filename": "/Data/Object1/tile_ston01.OZJ", "start": 113956325, "end": 113983152}, {"filename": "/Data/Object1/tile_ston04.OZJ", "start": 113983152, "end": 114008786}, {"filename": "/Data/Object1/tile_ston05.OZJ", "start": 114008786, "end": 114032276}, {"filename": "/Data/Object1/tile_ston06.OZJ", "start": 114032276, "end": 114068539}, {"filename": "/Data/Object1/tile_ston07.OZT", "start": 114068539, "end": 114134123}, {"filename": "/Data/Object1/tile_windows01.OZJ", "start": 114134123, "end": 114146191}, {"filename": "/Data/Object1/tile_wood01.OZJ", "start": 114146191, "end": 114179932}, {"filename": "/Data/Object1/tile_wood02.OZJ", "start": 114179932, "end": 114210786}, {"filename": "/Data/Object1/tile_wood03.OZJ", "start": 114210786, "end": 114232962}, {"filename": "/Data/Object1/tombstone.OZJ", "start": 114232962, "end": 114255143}, {"filename": "/Data/Object1/tombstone_big.OZJ", "start": 114255143, "end": 114280991}, {"filename": "/Data/Object1/treasure_chest.OZJ", "start": 114280991, "end": 114310748}, {"filename": "/Data/Object1/tree.OZJ", "start": 114310748, "end": 114326078}, {"filename": "/Data/Object1/tree_01.OZJ", "start": 114326078, "end": 114341979}, {"filename": "/Data/Object1/tree_01.OZT", "start": 114341979, "end": 114346123}, {"filename": "/Data/Object1/tree_02.OZJ", "start": 114346123, "end": 114367338}, {"filename": "/Data/Object1/tree_02.OZT", "start": 114367338, "end": 114371482}, {"filename": "/Data/Object1/tree_03.OZJ", "start": 114371482, "end": 114386191}, {"filename": "/Data/Object1/tree_04.OZJ", "start": 114386191, "end": 114392330}, {"filename": "/Data/Object1/tree_04.OZT", "start": 114392330, "end": 114408762}, {"filename": "/Data/Object1/tree_05.OZT", "start": 114408762, "end": 114425194}, {"filename": "/Data/Object1/tree_06.OZT", "start": 114425194, "end": 114490778}, {"filename": "/Data/Object1/tree_07.OZT", "start": 114490778, "end": 114494922}, {"filename": "/Data/Object1/tree_08.OZT", "start": 114494922, "end": 114499066}, {"filename": "/Data/Object1/tree_09.OZT", "start": 114499066, "end": 114507306}, {"filename": "/Data/Object1/tub.OZJ", "start": 114507306, "end": 114522085}, {"filename": "/Data/Object1/well.OZJ", "start": 114522085, "end": 114558358}, {"filename": "/Data/Object1/winecup.OZJ", "start": 114558358, "end": 114564706}, {"filename": "/Data/Object10/Javelins03.OZJ", "start": 114564706, "end": 114570627}, {"filename": "/Data/Object10/Object01.bmd", "start": 114570627, "end": 114594713}, {"filename": "/Data/Object10/Object02.bmd", "start": 114594713, "end": 114604823}, {"filename": "/Data/Object10/Object03.bmd", "start": 114604823, "end": 114664252}, {"filename": "/Data/Object10/Object04.bmd", "start": 114664252, "end": 114740222}, {"filename": "/Data/Object10/Object05.bmd", "start": 114740222, "end": 114741488}, {"filename": "/Data/Object10/Object06.bmd", "start": 114741488, "end": 114744512}, {"filename": "/Data/Object10/Object07.bmd", "start": 114744512, "end": 114746240}, {"filename": "/Data/Object10/bacc00.OZJ", "start": 114746240, "end": 114808432}, {"filename": "/Data/Object10/bacc01.OZJ", "start": 114808432, "end": 114832058}, {"filename": "/Data/Object10/boots_11.OZJ", "start": 114832058, "end": 114845202}, {"filename": "/Data/Object10/gloves_11.OZJ", "start": 114845202, "end": 114859170}, {"filename": "/Data/Object10/guard_hair.OZT", "start": 114859170, "end": 114863314}, {"filename": "/Data/Object10/head_11.OZJ", "start": 114863314, "end": 114874396}, {"filename": "/Data/Object10/hide.OZJ", "start": 114874396, "end": 114878936}, {"filename": "/Data/Object10/kni00.OZJ", "start": 114878936, "end": 114919779}, {"filename": "/Data/Object10/kni01.OZJ", "start": 114919779, "end": 114943597}, {"filename": "/Data/Object10/lower_11.OZJ", "start": 114943597, "end": 114978444}, {"filename": "/Data/Object10/shield06.OZJ", "start": 114978444, "end": 115003201}, {"filename": "/Data/Object10/upper_11.OZJ", "start": 115003201, "end": 115040108}, {"filename": "/Data/Object11/Object01.bmd", "start": 115040108, "end": 115041302}, {"filename": "/Data/Object11/Object02.bmd", "start": 115041302, "end": 115042496}, {"filename": "/Data/Object11/Object03.bmd", "start": 115042496, "end": 115043690}, {"filename": "/Data/Object11/Object04.bmd", "start": 115043690, "end": 115044884}, {"filename": "/Data/Object11/Object05.bmd", "start": 115044884, "end": 115046078}, {"filename": "/Data/Object11/Object06.bmd", "start": 115046078, "end": 115047272}, {"filename": "/Data/Object11/Object07.bmd", "start": 115047272, "end": 115048350}, {"filename": "/Data/Object11/Object08.bmd", "start": 115048350, "end": 115053346}, {"filename": "/Data/Object11/Object09.bmd", "start": 115053346, "end": 115059206}, {"filename": "/Data/Object11/Object10.bmd", "start": 115059206, "end": 115065066}, {"filename": "/Data/Object11/Object11.bmd", "start": 115065066, "end": 115081357}, {"filename": "/Data/Object11/Object13.bmd", "start": 115081357, "end": 115115991}, {"filename": "/Data/Object11/Object14.bmd", "start": 115115991, "end": 115125625}, {"filename": "/Data/Object11/Object15.bmd", "start": 115125625, "end": 115174952}, {"filename": "/Data/Object11/Object16.bmd", "start": 115174952, "end": 115176030}, {"filename": "/Data/Object11/cloud.OZJ", "start": 115176030, "end": 115185294}, {"filename": "/Data/Object11/cloud.bmd", "start": 115185294, "end": 115188108}, {"filename": "/Data/Object11/gyg_R.OZJ", "start": 115188108, "end": 115229844}, {"filename": "/Data/Object11/test12_H.OZJ", "start": 115229844, "end": 115231760}, {"filename": "/Data/Object11/top02_R.OZJ", "start": 115231760, "end": 115254767}, {"filename": "/Data/Object11/top03_B.OZJ", "start": 115254767, "end": 115266134}, {"filename": "/Data/Object11/top04_B.OZJ", "start": 115266134, "end": 115278139}, {"filename": "/Data/Object12/Crow01.bmd", "start": 115278139, "end": 115285717}, {"filename": "/Data/Object12/Gate01.bmd", "start": 115285717, "end": 115291243}, {"filename": "/Data/Object12/Gate02.bmd", "start": 115291243, "end": 115294237}, {"filename": "/Data/Object12/Object01.bmd", "start": 115294237, "end": 115299735}, {"filename": "/Data/Object12/Object02.bmd", "start": 115299735, "end": 115304801}, {"filename": "/Data/Object12/Object03.bmd", "start": 115304801, "end": 115309515}, {"filename": "/Data/Object12/Object04.bmd", "start": 115309515, "end": 115314581}, {"filename": "/Data/Object12/Object05.bmd", "start": 115314581, "end": 115320079}, {"filename": "/Data/Object12/Object06.bmd", "start": 115320079, "end": 115320469}, {"filename": "/Data/Object12/Object07.bmd", "start": 115320469, "end": 115321079}, {"filename": "/Data/Object12/Object08.bmd", "start": 115321079, "end": 115322011}, {"filename": "/Data/Object12/Object09.bmd", "start": 115322011, "end": 115356595}, {"filename": "/Data/Object12/Object10.bmd", "start": 115356595, "end": 115357785}, {"filename": "/Data/Object12/Object11.bmd", "start": 115357785, "end": 115429408}, {"filename": "/Data/Object12/Object12.bmd", "start": 115429408, "end": 115436243}, {"filename": "/Data/Object12/Object13.bmd", "start": 115436243, "end": 115438018}, {"filename": "/Data/Object12/Object14.bmd", "start": 115438018, "end": 115476892}, {"filename": "/Data/Object12/Object15.bmd", "start": 115476892, "end": 115490392}, {"filename": "/Data/Object12/Object16.bmd", "start": 115490392, "end": 115513348}, {"filename": "/Data/Object12/Object17.bmd", "start": 115513348, "end": 115640940}, {"filename": "/Data/Object12/Object18.bmd", "start": 115640940, "end": 115646046}, {"filename": "/Data/Object12/Object19.bmd", "start": 115646046, "end": 115647704}, {"filename": "/Data/Object12/Object20.bmd", "start": 115647704, "end": 115648878}, {"filename": "/Data/Object12/Object21.bmd", "start": 115648878, "end": 115651725}, {"filename": "/Data/Object12/Object22.bmd", "start": 115651725, "end": 115658867}, {"filename": "/Data/Object12/Object23.bmd", "start": 115658867, "end": 115661729}, {"filename": "/Data/Object12/Object24.bmd", "start": 115661729, "end": 115668673}, {"filename": "/Data/Object12/Object25.bmd", "start": 115668673, "end": 115669605}, {"filename": "/Data/Object12/Object26.bmd", "start": 115669605, "end": 115676702}, {"filename": "/Data/Object12/Object27.bmd", "start": 115676702, "end": 115710604}, {"filename": "/Data/Object12/Object28.bmd", "start": 115710604, "end": 115716006}, {"filename": "/Data/Object12/Object29.bmd", "start": 115716006, "end": 115800496}, {"filename": "/Data/Object12/Object30.bmd", "start": 115800496, "end": 115878540}, {"filename": "/Data/Object12/Object31.bmd", "start": 115878540, "end": 115943199}, {"filename": "/Data/Object12/Object32.bmd", "start": 115943199, "end": 116013495}, {"filename": "/Data/Object12/Object33.bmd", "start": 116013495, "end": 116014427}, {"filename": "/Data/Object12/Object34.bmd", "start": 116014427, "end": 116016301}, {"filename": "/Data/Object12/Object35.bmd", "start": 116016301, "end": 116017083}, {"filename": "/Data/Object12/Object36.bmd", "start": 116017083, "end": 116020701}, {"filename": "/Data/Object12/Object37.bmd", "start": 116020701, "end": 116028999}, {"filename": "/Data/Object12/Shine01.bmd", "start": 116028999, "end": 116029389}, {"filename": "/Data/Object12/StoneCoffin01.bmd", "start": 116029389, "end": 116032399}, {"filename": "/Data/Object12/StoneCoffin02.bmd", "start": 116032399, "end": 116033953}, {"filename": "/Data/Object12/bird.OZT", "start": 116033953, "end": 116050385}, {"filename": "/Data/Object12/br001.OZJ", "start": 116050385, "end": 116120037}, {"filename": "/Data/Object12/br002.OZT", "start": 116120037, "end": 116120341}, {"filename": "/Data/Object12/bro01.OZJ", "start": 116120341, "end": 116189891}, {"filename": "/Data/Object12/cs001.OZJ", "start": 116189891, "end": 116253036}, {"filename": "/Data/Object12/doorc01.OZJ", "start": 116253036, "end": 116295651}, {"filename": "/Data/Object12/hop01.OZJ", "start": 116295651, "end": 116368458}, {"filename": "/Data/Object12/ju01.OZJ", "start": 116368458, "end": 116447815}, {"filename": "/Data/Object12/ju01_R.OZJ", "start": 116447815, "end": 116462224}, {"filename": "/Data/Object12/king01.OZJ", "start": 116462224, "end": 116482332}, {"filename": "/Data/Object12/light01.OZJ", "start": 116482332, "end": 116488074}, {"filename": "/Data/Object12/light2_R.OZJ", "start": 116488074, "end": 116495918}, {"filename": "/Data/Object12/light_R.OZJ", "start": 116495918, "end": 116502108}, {"filename": "/Data/Object12/lnn01.OZT", "start": 116502108, "end": 116534924}, {"filename": "/Data/Object12/ng01.OZJ", "start": 116534924, "end": 116615576}, {"filename": "/Data/Object12/pan01_B.OZJ", "start": 116615576, "end": 116620990}, {"filename": "/Data/Object12/pan_B.OZJ", "start": 116620990, "end": 116626404}, {"filename": "/Data/Object12/pan_R.OZJ", "start": 116626404, "end": 116631891}, {"filename": "/Data/Object12/pant01.OZJ", "start": 116631891, "end": 116701992}, {"filename": "/Data/Object12/pant01_R.OZJ", "start": 116701992, "end": 116710718}, {"filename": "/Data/Object12/ses.OZJ", "start": 116710718, "end": 116715710}, {"filename": "/Data/Object12/st09.OZJ", "start": 116715710, "end": 116755512}, {"filename": "/Data/Object12/wcd.OZJ", "start": 116755512, "end": 116781083}, {"filename": "/Data/Object12/woodc01.OZJ", "start": 116781083, "end": 116810596}, {"filename": "/Data/Object2/Bat01.bmd", "start": 116810596, "end": 116815533}, {"filename": "/Data/Object2/DungeonStone01.bmd", "start": 116815533, "end": 116816543}, {"filename": "/Data/Object2/Object01.bmd", "start": 116816543, "end": 116821859}, {"filename": "/Data/Object2/Object02.bmd", "start": 116821859, "end": 116822913}, {"filename": "/Data/Object2/Object03.bmd", "start": 116822913, "end": 116835569}, {"filename": "/Data/Object2/Object04.bmd", "start": 116835569, "end": 116844233}, {"filename": "/Data/Object2/Object05.bmd", "start": 116844233, "end": 116849559}, {"filename": "/Data/Object2/Object06.bmd", "start": 116849559, "end": 116854993}, {"filename": "/Data/Object2/Object07.bmd", "start": 116854993, "end": 116861869}, {"filename": "/Data/Object2/Object08.bmd", "start": 116861869, "end": 116870117}, {"filename": "/Data/Object2/Object09.bmd", "start": 116870117, "end": 116877377}, {"filename": "/Data/Object2/Object10.bmd", "start": 116877377, "end": 116890681}, {"filename": "/Data/Object2/Object11.bmd", "start": 116890681, "end": 116903159}, {"filename": "/Data/Object2/Object12.bmd", "start": 116903159, "end": 116923290}, {"filename": "/Data/Object2/Object13.bmd", "start": 116923290, "end": 116929010}, {"filename": "/Data/Object2/Object14.bmd", "start": 116929010, "end": 116932862}, {"filename": "/Data/Object2/Object15.bmd", "start": 116932862, "end": 116933980}, {"filename": "/Data/Object2/Object16.bmd", "start": 116933980, "end": 116973584}, {"filename": "/Data/Object2/Object17.bmd", "start": 116973584, "end": 117012537}, {"filename": "/Data/Object2/Object18.bmd", "start": 117012537, "end": 117013591}, {"filename": "/Data/Object2/Object19.bmd", "start": 117013591, "end": 117076046}, {"filename": "/Data/Object2/Object20.bmd", "start": 117076046, "end": 117095976}, {"filename": "/Data/Object2/Object21.bmd", "start": 117095976, "end": 117099886}, {"filename": "/Data/Object2/Object22.bmd", "start": 117099886, "end": 117102032}, {"filename": "/Data/Object2/Object23.bmd", "start": 117102032, "end": 117122418}, {"filename": "/Data/Object2/Object24.bmd", "start": 117122418, "end": 117142804}, {"filename": "/Data/Object2/Object25.bmd", "start": 117142804, "end": 117167258}, {"filename": "/Data/Object2/Object26.bmd", "start": 117167258, "end": 117170166}, {"filename": "/Data/Object2/Object27.bmd", "start": 117170166, "end": 117173058}, {"filename": "/Data/Object2/Object28.bmd", "start": 117173058, "end": 117218810}, {"filename": "/Data/Object2/Object29.bmd", "start": 117218810, "end": 117226214}, {"filename": "/Data/Object2/Object30.bmd", "start": 117226214, "end": 117252966}, {"filename": "/Data/Object2/Object31.bmd", "start": 117252966, "end": 117257350}, {"filename": "/Data/Object2/Object32.bmd", "start": 117257350, "end": 117299940}, {"filename": "/Data/Object2/Object33.bmd", "start": 117299940, "end": 117342510}, {"filename": "/Data/Object2/Object34.bmd", "start": 117342510, "end": 117343752}, {"filename": "/Data/Object2/Object35.bmd", "start": 117343752, "end": 117350898}, {"filename": "/Data/Object2/Object36.bmd", "start": 117350898, "end": 117360173}, {"filename": "/Data/Object2/Object37.bmd", "start": 117360173, "end": 117368663}, {"filename": "/Data/Object2/Object38.bmd", "start": 117368663, "end": 117371895}, {"filename": "/Data/Object2/Object39.bmd", "start": 117371895, "end": 117390421}, {"filename": "/Data/Object2/Object40.bmd", "start": 117390421, "end": 117392707}, {"filename": "/Data/Object2/Object41.bmd", "start": 117392707, "end": 117396627}, {"filename": "/Data/Object2/Object42.bmd", "start": 117396627, "end": 117401103}, {"filename": "/Data/Object2/Object43.bmd", "start": 117401103, "end": 117407711}, {"filename": "/Data/Object2/Object44.bmd", "start": 117407711, "end": 117458958}, {"filename": "/Data/Object2/Object45.bmd", "start": 117458958, "end": 117501548}, {"filename": "/Data/Object2/Object46.bmd", "start": 117501548, "end": 117544138}, {"filename": "/Data/Object2/Object47.bmd", "start": 117544138, "end": 117583692}, {"filename": "/Data/Object2/Object48.bmd", "start": 117583692, "end": 117608310}, {"filename": "/Data/Object2/Object49.bmd", "start": 117608310, "end": 117643460}, {"filename": "/Data/Object2/Object50.bmd", "start": 117643460, "end": 117678610}, {"filename": "/Data/Object2/Object51.bmd", "start": 117678610, "end": 117683700}, {"filename": "/Data/Object2/Object52.bmd", "start": 117683700, "end": 117689678}, {"filename": "/Data/Object2/Object53.bmd", "start": 117689678, "end": 117690324}, {"filename": "/Data/Object2/Object54.bmd", "start": 117690324, "end": 117753696}, {"filename": "/Data/Object2/Object55.bmd", "start": 117753696, "end": 117768996}, {"filename": "/Data/Object2/Object56.bmd", "start": 117768996, "end": 117783232}, {"filename": "/Data/Object2/Object57.bmd", "start": 117783232, "end": 117784342}, {"filename": "/Data/Object2/Object58.bmd", "start": 117784342, "end": 117787732}, {"filename": "/Data/Object2/Object59.bmd", "start": 117787732, "end": 117788842}, {"filename": "/Data/Object2/Object60.bmd", "start": 117788842, "end": 117789952}, {"filename": "/Data/Object2/Rat01.bmd", "start": 117789952, "end": 117794201}, {"filename": "/Data/Object2/TileRock01.OZJ", "start": 117794201, "end": 117866156}, {"filename": "/Data/Object2/bat01.OZJ", "start": 117866156, "end": 117873137}, {"filename": "/Data/Object2/bat02.OZT", "start": 117873137, "end": 117881377}, {"filename": "/Data/Object2/bons.OZJ", "start": 117881377, "end": 117909176}, {"filename": "/Data/Object2/cobweb.OZJ", "start": 117909176, "end": 117930311}, {"filename": "/Data/Object2/cobweb.OZT", "start": 117930311, "end": 117995895}, {"filename": "/Data/Object2/deep_dragon.OZJ", "start": 117995895, "end": 118014453}, {"filename": "/Data/Object2/deep_wall01.OZJ", "start": 118014453, "end": 118050486}, {"filename": "/Data/Object2/deep_wall02.OZJ", "start": 118050486, "end": 118095080}, {"filename": "/Data/Object2/deep_wall03.OZJ", "start": 118095080, "end": 118119088}, {"filename": "/Data/Object2/deep_wall04.OZJ", "start": 118119088, "end": 118147872}, {"filename": "/Data/Object2/deep_wall05.OZJ", "start": 118147872, "end": 118179372}, {"filename": "/Data/Object2/deep_wall06.OZJ", "start": 118179372, "end": 118203945}, {"filename": "/Data/Object2/deep_wall07.OZJ", "start": 118203945, "end": 118235088}, {"filename": "/Data/Object2/deep_wall08.OZJ", "start": 118235088, "end": 118253633}, {"filename": "/Data/Object2/deep_wall09.OZJ", "start": 118253633, "end": 118281763}, {"filename": "/Data/Object2/deep_wall10.OZJ", "start": 118281763, "end": 118310537}, {"filename": "/Data/Object2/deep_wall11.OZJ", "start": 118310537, "end": 118323343}, {"filename": "/Data/Object2/deep_wall12.OZJ", "start": 118323343, "end": 118401005}, {"filename": "/Data/Object2/fire0a.OZJ", "start": 118401005, "end": 118406911}, {"filename": "/Data/Object2/flower_vase.OZJ", "start": 118406911, "end": 118416094}, {"filename": "/Data/Object2/logo01.OZT", "start": 118416094, "end": 118448910}, {"filename": "/Data/Object2/mouse.OZJ", "start": 118448910, "end": 118455896}, {"filename": "/Data/Object2/squid01.OZJ", "start": 118455896, "end": 118489796}, {"filename": "/Data/Object2/squid02.OZJ", "start": 118489796, "end": 118496510}, {"filename": "/Data/Object2/steel_01.OZT", "start": 118496510, "end": 118504750}, {"filename": "/Data/Object2/steel_02.OZT", "start": 118504750, "end": 118570334}, {"filename": "/Data/Object2/wire_netting01.OZJ", "start": 118570334, "end": 118580943}, {"filename": "/Data/Object2/wood01.OZJ", "start": 118580943, "end": 118645418}, {"filename": "/Data/Object3/Javelins03.OZJ", "start": 118645418, "end": 118651339}, {"filename": "/Data/Object3/Object01.bmd", "start": 118651339, "end": 118674676}, {"filename": "/Data/Object3/Object02.bmd", "start": 118674676, "end": 118678848}, {"filename": "/Data/Object3/Object03.bmd", "start": 118678848, "end": 118709466}, {"filename": "/Data/Object3/Object04.bmd", "start": 118709466, "end": 118715020}, {"filename": "/Data/Object3/Object05.bmd", "start": 118715020, "end": 118730446}, {"filename": "/Data/Object3/Object06.bmd", "start": 118730446, "end": 118733107}, {"filename": "/Data/Object3/Object07.bmd", "start": 118733107, "end": 118734972}, {"filename": "/Data/Object3/Object08.bmd", "start": 118734972, "end": 118737958}, {"filename": "/Data/Object3/Object09.bmd", "start": 118737958, "end": 118739872}, {"filename": "/Data/Object3/Object10.bmd", "start": 118739872, "end": 118744628}, {"filename": "/Data/Object3/Object100.bmd", "start": 118744628, "end": 118752108}, {"filename": "/Data/Object3/Object101.bmd", "start": 118752108, "end": 118752794}, {"filename": "/Data/Object3/Object102.bmd", "start": 118752794, "end": 118833950}, {"filename": "/Data/Object3/Object103.bmd", "start": 118833950, "end": 118840340}, {"filename": "/Data/Object3/Object104.bmd", "start": 118840340, "end": 118901321}, {"filename": "/Data/Object3/Object106.bmd", "start": 118901321, "end": 118905431}, {"filename": "/Data/Object3/Object107.bmd", "start": 118905431, "end": 118984895}, {"filename": "/Data/Object3/Object108.bmd", "start": 118984895, "end": 119014827}, {"filename": "/Data/Object3/Object109.bmd", "start": 119014827, "end": 119044759}, {"filename": "/Data/Object3/Object11.bmd", "start": 119044759, "end": 119049587}, {"filename": "/Data/Object3/Object110.bmd", "start": 119049587, "end": 119062383}, {"filename": "/Data/Object3/Object111.bmd", "start": 119062383, "end": 119092315}, {"filename": "/Data/Object3/Object112.bmd", "start": 119092315, "end": 119098624}, {"filename": "/Data/Object3/Object113.bmd", "start": 119098624, "end": 119107108}, {"filename": "/Data/Object3/Object12.bmd", "start": 119107108, "end": 119122534}, {"filename": "/Data/Object3/Object13.bmd", "start": 119122534, "end": 119136576}, {"filename": "/Data/Object3/Object14.bmd", "start": 119136576, "end": 119142754}, {"filename": "/Data/Object3/Object15.bmd", "start": 119142754, "end": 119147388}, {"filename": "/Data/Object3/Object16.bmd", "start": 119147388, "end": 119151372}, {"filename": "/Data/Object3/Object17.bmd", "start": 119151372, "end": 119157504}, {"filename": "/Data/Object3/Object18.bmd", "start": 119157504, "end": 119164264}, {"filename": "/Data/Object3/Object19.bmd", "start": 119164264, "end": 119171648}, {"filename": "/Data/Object3/Object20.bmd", "start": 119171648, "end": 119178364}, {"filename": "/Data/Object3/Object21.bmd", "start": 119178364, "end": 119196411}, {"filename": "/Data/Object3/Object22.bmd", "start": 119196411, "end": 119202873}, {"filename": "/Data/Object3/Object23.bmd", "start": 119202873, "end": 119211051}, {"filename": "/Data/Object3/Object24.bmd", "start": 119211051, "end": 119214249}, {"filename": "/Data/Object3/Object25.bmd", "start": 119214249, "end": 119214291}, {"filename": "/Data/Object3/Object26.bmd", "start": 119214291, "end": 119220921}, {"filename": "/Data/Object3/Object27.bmd", "start": 119220921, "end": 119220963}, {"filename": "/Data/Object3/Object28.bmd", "start": 119220963, "end": 119224709}, {"filename": "/Data/Object3/Object29.bmd", "start": 119224709, "end": 119231015}, {"filename": "/Data/Object3/Object30.bmd", "start": 119231015, "end": 119236609}, {"filename": "/Data/Object3/Object31.bmd", "start": 119236609, "end": 119241819}, {"filename": "/Data/Object3/Object32.bmd", "start": 119241819, "end": 119249149}, {"filename": "/Data/Object3/Object33.bmd", "start": 119249149, "end": 119249191}, {"filename": "/Data/Object3/Object34.bmd", "start": 119249191, "end": 119253297}, {"filename": "/Data/Object3/Object35.bmd", "start": 119253297, "end": 119259535}, {"filename": "/Data/Object3/Object36.bmd", "start": 119259535, "end": 119265593}, {"filename": "/Data/Object3/Object37.bmd", "start": 119265593, "end": 119274214}, {"filename": "/Data/Object3/Object38.bmd", "start": 119274214, "end": 119284868}, {"filename": "/Data/Object3/Object39.bmd", "start": 119284868, "end": 119295924}, {"filename": "/Data/Object3/Object40.bmd", "start": 119295924, "end": 119302407}, {"filename": "/Data/Object3/Object41.bmd", "start": 119302407, "end": 119307499}, {"filename": "/Data/Object3/Object42.bmd", "start": 119307499, "end": 119311457}, {"filename": "/Data/Object3/Object43.bmd", "start": 119311457, "end": 119314113}, {"filename": "/Data/Object3/Object44.bmd", "start": 119314113, "end": 119317523}, {"filename": "/Data/Object3/Object45.bmd", "start": 119317523, "end": 119321225}, {"filename": "/Data/Object3/Object46.bmd", "start": 119321225, "end": 119325687}, {"filename": "/Data/Object3/Object47.bmd", "start": 119325687, "end": 119329641}, {"filename": "/Data/Object3/Object48.bmd", "start": 119329641, "end": 119350707}, {"filename": "/Data/Object3/Object49.bmd", "start": 119350707, "end": 119372020}, {"filename": "/Data/Object3/Object50.bmd", "start": 119372020, "end": 119381770}, {"filename": "/Data/Object3/Object51.bmd", "start": 119381770, "end": 119421892}, {"filename": "/Data/Object3/Object52.bmd", "start": 119421892, "end": 119460288}, {"filename": "/Data/Object3/Object53.bmd", "start": 119460288, "end": 119484903}, {"filename": "/Data/Object3/Object54.bmd", "start": 119484903, "end": 119487092}, {"filename": "/Data/Object3/Object55.bmd", "start": 119487092, "end": 119499808}, {"filename": "/Data/Object3/Object56.bmd", "start": 119499808, "end": 119504900}, {"filename": "/Data/Object3/Object57.bmd", "start": 119504900, "end": 119517640}, {"filename": "/Data/Object3/Object58.bmd", "start": 119517640, "end": 119528635}, {"filename": "/Data/Object3/Object59.bmd", "start": 119528635, "end": 119533567}, {"filename": "/Data/Object3/Object60.bmd", "start": 119533567, "end": 119538499}, {"filename": "/Data/Object3/Object61.bmd", "start": 119538499, "end": 119543625}, {"filename": "/Data/Object3/Object62.bmd", "start": 119543625, "end": 119551611}, {"filename": "/Data/Object3/Object63.bmd", "start": 119551611, "end": 119558557}, {"filename": "/Data/Object3/Object64.bmd", "start": 119558557, "end": 119566047}, {"filename": "/Data/Object3/Object65.bmd", "start": 119566047, "end": 119572501}, {"filename": "/Data/Object3/Object66.bmd", "start": 119572501, "end": 119590548}, {"filename": "/Data/Object3/Object67.bmd", "start": 119590548, "end": 119602053}, {"filename": "/Data/Object3/Object68.bmd", "start": 119602053, "end": 119622166}, {"filename": "/Data/Object3/Object69.bmd", "start": 119622166, "end": 119631155}, {"filename": "/Data/Object3/Object70.bmd", "start": 119631155, "end": 119639008}, {"filename": "/Data/Object3/Object71.bmd", "start": 119639008, "end": 119646130}, {"filename": "/Data/Object3/Object72.bmd", "start": 119646130, "end": 119650018}, {"filename": "/Data/Object3/Object73.bmd", "start": 119650018, "end": 119680274}, {"filename": "/Data/Object3/Object74.bmd", "start": 119680274, "end": 119682876}, {"filename": "/Data/Object3/Object75.bmd", "start": 119682876, "end": 119708726}, {"filename": "/Data/Object3/Object76.bmd", "start": 119708726, "end": 119732043}, {"filename": "/Data/Object3/Object77.bmd", "start": 119732043, "end": 119737671}, {"filename": "/Data/Object3/Object78.bmd", "start": 119737671, "end": 119741259}, {"filename": "/Data/Object3/Object79.bmd", "start": 119741259, "end": 119748089}, {"filename": "/Data/Object3/Object80.bmd", "start": 119748089, "end": 119750047}, {"filename": "/Data/Object3/Object81.bmd", "start": 119750047, "end": 119756766}, {"filename": "/Data/Object3/Object82.bmd", "start": 119756766, "end": 119759974}, {"filename": "/Data/Object3/Object83.bmd", "start": 119759974, "end": 119762962}, {"filename": "/Data/Object3/Object84.bmd", "start": 119762962, "end": 119772191}, {"filename": "/Data/Object3/Object85.bmd", "start": 119772191, "end": 119781228}, {"filename": "/Data/Object3/Object86.bmd", "start": 119781228, "end": 119790265}, {"filename": "/Data/Object3/Object87.bmd", "start": 119790265, "end": 119799543}, {"filename": "/Data/Object3/Object88.bmd", "start": 119799543, "end": 119871111}, {"filename": "/Data/Object3/Object89.bmd", "start": 119871111, "end": 119889158}, {"filename": "/Data/Object3/Object90.bmd", "start": 119889158, "end": 119889200}, {"filename": "/Data/Object3/Object91.bmd", "start": 119889200, "end": 119897744}, {"filename": "/Data/Object3/Object92.bmd", "start": 119897744, "end": 119898430}, {"filename": "/Data/Object3/Object93.bmd", "start": 119898430, "end": 119919502}, {"filename": "/Data/Object3/Object94.bmd", "start": 119919502, "end": 119933771}, {"filename": "/Data/Object3/Object95.bmd", "start": 119933771, "end": 119941233}, {"filename": "/Data/Object3/Object96.bmd", "start": 119941233, "end": 119953580}, {"filename": "/Data/Object3/Object97.bmd", "start": 119953580, "end": 119956690}, {"filename": "/Data/Object3/Object98.bmd", "start": 119956690, "end": 119958690}, {"filename": "/Data/Object3/Object99.bmd", "start": 119958690, "end": 119966170}, {"filename": "/Data/Object3/apple.OZJ", "start": 119966170, "end": 119971286}, {"filename": "/Data/Object3/art.OZJ", "start": 119971286, "end": 119984841}, {"filename": "/Data/Object3/aurora.OZJ", "start": 119984841, "end": 119997201}, {"filename": "/Data/Object3/badge_01.OZT", "start": 119997201, "end": 120013633}, {"filename": "/Data/Object3/badge_02.OZT", "start": 120013633, "end": 120030065}, {"filename": "/Data/Object3/badge_03.OZT", "start": 120030065, "end": 120046497}, {"filename": "/Data/Object3/blockhead.OZJ", "start": 120046497, "end": 120053869}, {"filename": "/Data/Object3/books.OZJ", "start": 120053869, "end": 120061264}, {"filename": "/Data/Object3/bookshelf.OZJ", "start": 120061264, "end": 120093027}, {"filename": "/Data/Object3/boots_11.OZJ", "start": 120093027, "end": 120106171}, {"filename": "/Data/Object3/bottle.OZT", "start": 120106171, "end": 120110315}, {"filename": "/Data/Object3/bridge01.OZJ", "start": 120110315, "end": 120118059}, {"filename": "/Data/Object3/candle.OZJ", "start": 120118059, "end": 120125687}, {"filename": "/Data/Object3/candle2.OZJ", "start": 120125687, "end": 120131100}, {"filename": "/Data/Object3/chair.OZJ", "start": 120131100, "end": 120142690}, {"filename": "/Data/Object3/chair2.OZT", "start": 120142690, "end": 120146834}, {"filename": "/Data/Object3/deer.OZJ", "start": 120146834, "end": 120165090}, {"filename": "/Data/Object3/desk.OZJ", "start": 120165090, "end": 120192977}, {"filename": "/Data/Object3/desk_big.OZJ", "start": 120192977, "end": 120221161}, {"filename": "/Data/Object3/dog_g99.OZJ", "start": 120221161, "end": 120242649}, {"filename": "/Data/Object3/dog_g991.OZJ", "start": 120242649, "end": 120273410}, {"filename": "/Data/Object3/drum.OZJ", "start": 120273410, "end": 120297863}, {"filename": "/Data/Object3/drum2.OZJ", "start": 120297863, "end": 120317675}, {"filename": "/Data/Object3/drums.OZJ", "start": 120317675, "end": 120342698}, {"filename": "/Data/Object3/feather.OZT", "start": 120342698, "end": 120343770}, {"filename": "/Data/Object3/fire_01.OZJ", "start": 120343770, "end": 120353383}, {"filename": "/Data/Object3/fire_02.OZJ", "start": 120353383, "end": 120359224}, {"filename": "/Data/Object3/fireplace.OZT", "start": 120359224, "end": 120375656}, {"filename": "/Data/Object3/fireplace_down.OZT", "start": 120375656, "end": 120441240}, {"filename": "/Data/Object3/giftbox_blue.OZJ", "start": 120441240, "end": 120479064}, {"filename": "/Data/Object3/giftbox_green.OZJ", "start": 120479064, "end": 120519404}, {"filename": "/Data/Object3/giftbox_red.OZJ", "start": 120519404, "end": 120564469}, {"filename": "/Data/Object3/gloves_11.OZJ", "start": 120564469, "end": 120578437}, {"filename": "/Data/Object3/gold.OZJ", "start": 120578437, "end": 120589216}, {"filename": "/Data/Object3/guard_hair.OZT", "start": 120589216, "end": 120593360}, {"filename": "/Data/Object3/han_ax1.OZJ", "start": 120593360, "end": 120608401}, {"filename": "/Data/Object3/han_ax2.OZT", "start": 120608401, "end": 120641217}, {"filename": "/Data/Object3/han_ctreeax2.OZJ", "start": 120641217, "end": 120658633}, {"filename": "/Data/Object3/han_ctreeax4.OZT", "start": 120658633, "end": 120724217}, {"filename": "/Data/Object3/han_misle.OZT", "start": 120724217, "end": 120789801}, {"filename": "/Data/Object3/han_mistl2.OZJ", "start": 120789801, "end": 120813512}, {"filename": "/Data/Object3/han_xtree.OZT", "start": 120813512, "end": 121075704}, {"filename": "/Data/Object3/head_11.OZJ", "start": 121075704, "end": 121086786}, {"filename": "/Data/Object3/hide.OZJ", "start": 121086786, "end": 121091326}, {"filename": "/Data/Object3/house_stone_out.OZJ", "start": 121091326, "end": 121123529}, {"filename": "/Data/Object3/ice.OZJ", "start": 121123529, "end": 121152411}, {"filename": "/Data/Object3/ice01.OZJ", "start": 121152411, "end": 121167782}, {"filename": "/Data/Object3/ice_block01.OZJ", "start": 121167782, "end": 121250247}, {"filename": "/Data/Object3/ice_block07.OZJ", "start": 121250247, "end": 121328236}, {"filename": "/Data/Object3/leaf.OZT", "start": 121328236, "end": 121344668}, {"filename": "/Data/Object3/light.OZT", "start": 121344668, "end": 121361100}, {"filename": "/Data/Object3/light2.OZJ", "start": 121361100, "end": 121366569}, {"filename": "/Data/Object3/light3.OZJ", "start": 121366569, "end": 121372147}, {"filename": "/Data/Object3/light_02.OZJ", "start": 121372147, "end": 121377157}, {"filename": "/Data/Object3/lower_11.OZJ", "start": 121377157, "end": 121412004}, {"filename": "/Data/Object3/plate.OZJ", "start": 121412004, "end": 121421016}, {"filename": "/Data/Object3/plate2.OZJ", "start": 121421016, "end": 121433163}, {"filename": "/Data/Object3/pot.OZJ", "start": 121433163, "end": 121440421}, {"filename": "/Data/Object3/pot2.OZJ", "start": 121440421, "end": 121447445}, {"filename": "/Data/Object3/pot3.OZT", "start": 121447445, "end": 121451589}, {"filename": "/Data/Object3/sdoorknob.OZT", "start": 121451589, "end": 121452661}, {"filename": "/Data/Object3/shield02.OZJ", "start": 121452661, "end": 121466391}, {"filename": "/Data/Object3/shield03.OZJ", "start": 121466391, "end": 121477875}, {"filename": "/Data/Object3/show_ston01.OZJ", "start": 121477875, "end": 121499995}, {"filename": "/Data/Object3/sky.OZJ", "start": 121499995, "end": 121522632}, {"filename": "/Data/Object3/sky.OZT", "start": 121522632, "end": 121524728}, {"filename": "/Data/Object3/snotice.OZJ", "start": 121524728, "end": 121536862}, {"filename": "/Data/Object3/snotice02.OZJ", "start": 121536862, "end": 121548684}, {"filename": "/Data/Object3/snotice03.OZJ", "start": 121548684, "end": 121556568}, {"filename": "/Data/Object3/snow_ston.OZJ", "start": 121556568, "end": 121575646}, {"filename": "/Data/Object3/snowmachine2.OZJ", "start": 121575646, "end": 121610147}, {"filename": "/Data/Object3/ssignboard.OZT", "start": 121610147, "end": 121618387}, {"filename": "/Data/Object3/sston.OZJ", "start": 121618387, "end": 121642440}, {"filename": "/Data/Object3/sston2.OZJ", "start": 121642440, "end": 121647247}, {"filename": "/Data/Object3/stree.OZJ", "start": 121647247, "end": 121654769}, {"filename": "/Data/Object3/stree.OZT", "start": 121654769, "end": 121720353}, {"filename": "/Data/Object3/sword04.OZJ", "start": 121720353, "end": 121726931}, {"filename": "/Data/Object3/sword08.OZJ", "start": 121726931, "end": 121736313}, {"filename": "/Data/Object3/ti01.OZJ", "start": 121736313, "end": 121757688}, {"filename": "/Data/Object3/ti02.OZJ", "start": 121757688, "end": 121772012}, {"filename": "/Data/Object3/ti03.OZJ", "start": 121772012, "end": 121778697}, {"filename": "/Data/Object3/ti05.OZJ", "start": 121778697, "end": 121800518}, {"filename": "/Data/Object3/ti06.OZJ", "start": 121800518, "end": 121811965}, {"filename": "/Data/Object3/tile_02.OZJ", "start": 121811965, "end": 121822337}, {"filename": "/Data/Object3/tile_wood04.OZJ", "start": 121822337, "end": 121845631}, {"filename": "/Data/Object3/titel_a03.OZJ", "start": 121845631, "end": 121866454}, {"filename": "/Data/Object3/titel_a04.OZJ", "start": 121866454, "end": 121889097}, {"filename": "/Data/Object3/titel_a05.OZJ", "start": 121889097, "end": 121908070}, {"filename": "/Data/Object3/titel_a06.OZJ", "start": 121908070, "end": 121917894}, {"filename": "/Data/Object3/titel_b01.OZJ", "start": 121917894, "end": 121923794}, {"filename": "/Data/Object3/titel_b03.OZJ", "start": 121923794, "end": 121944585}, {"filename": "/Data/Object3/titel_b04.OZJ", "start": 121944585, "end": 121965814}, {"filename": "/Data/Object3/titel_b05.OZJ", "start": 121965814, "end": 121988927}, {"filename": "/Data/Object3/titel_b06.OZJ", "start": 121988927, "end": 122012671}, {"filename": "/Data/Object3/treasure_chest.OZJ", "start": 122012671, "end": 122025264}, {"filename": "/Data/Object3/tree_03.OZJ", "start": 122025264, "end": 122040908}, {"filename": "/Data/Object3/upper_11.OZJ", "start": 122040908, "end": 122077815}, {"filename": "/Data/Object3/wall_door01.OZJ", "start": 122077815, "end": 122099310}, {"filename": "/Data/Object3/wall_door02.OZJ", "start": 122099310, "end": 122109220}, {"filename": "/Data/Object3/wall_door03.OZJ", "start": 122109220, "end": 122131837}, {"filename": "/Data/Object3/winecup.OZJ", "start": 122131837, "end": 122138185}, {"filename": "/Data/Object4/Object01.bmd", "start": 122138185, "end": 122155425}, {"filename": "/Data/Object4/Object02.bmd", "start": 122155425, "end": 122167766}, {"filename": "/Data/Object4/Object03.bmd", "start": 122167766, "end": 122191532}, {"filename": "/Data/Object4/Object04.bmd", "start": 122191532, "end": 122205452}, {"filename": "/Data/Object4/Object05.bmd", "start": 122205452, "end": 122224604}, {"filename": "/Data/Object4/Object06.bmd", "start": 122224604, "end": 122238164}, {"filename": "/Data/Object4/Object07.bmd", "start": 122238164, "end": 122242508}, {"filename": "/Data/Object4/Object08.bmd", "start": 122242508, "end": 122246350}, {"filename": "/Data/Object4/Object09.bmd", "start": 122246350, "end": 122249532}, {"filename": "/Data/Object4/Object10.bmd", "start": 122249532, "end": 122263553}, {"filename": "/Data/Object4/Object11.bmd", "start": 122263553, "end": 122268597}, {"filename": "/Data/Object4/Object12.bmd", "start": 122268597, "end": 122281006}, {"filename": "/Data/Object4/Object13.bmd", "start": 122281006, "end": 122289586}, {"filename": "/Data/Object4/Object14.bmd", "start": 122289586, "end": 122298206}, {"filename": "/Data/Object4/Object15.bmd", "start": 122298206, "end": 122304098}, {"filename": "/Data/Object4/Object16.bmd", "start": 122304098, "end": 122311374}, {"filename": "/Data/Object4/Object17.bmd", "start": 122311374, "end": 122319954}, {"filename": "/Data/Object4/Object18.bmd", "start": 122319954, "end": 122460138}, {"filename": "/Data/Object4/Object19.bmd", "start": 122460138, "end": 122546497}, {"filename": "/Data/Object4/Object20.bmd", "start": 122546497, "end": 122557219}, {"filename": "/Data/Object4/Object21.bmd", "start": 122557219, "end": 122618869}, {"filename": "/Data/Object4/Object22.bmd", "start": 122618869, "end": 122624053}, {"filename": "/Data/Object4/Object23.bmd", "start": 122624053, "end": 122666166}, {"filename": "/Data/Object4/Object24.bmd", "start": 122666166, "end": 122708559}, {"filename": "/Data/Object4/Object25.bmd", "start": 122708559, "end": 122763209}, {"filename": "/Data/Object4/Object26.bmd", "start": 122763209, "end": 122837351}, {"filename": "/Data/Object4/Object27.bmd", "start": 122837351, "end": 122886770}, {"filename": "/Data/Object4/Object28.bmd", "start": 122886770, "end": 122915474}, {"filename": "/Data/Object4/Object29.bmd", "start": 122915474, "end": 122952144}, {"filename": "/Data/Object4/Object30.bmd", "start": 122952144, "end": 122971814}, {"filename": "/Data/Object4/Object31.bmd", "start": 122971814, "end": 123001642}, {"filename": "/Data/Object4/Object32.bmd", "start": 123001642, "end": 123009068}, {"filename": "/Data/Object4/Object33.bmd", "start": 123009068, "end": 123016502}, {"filename": "/Data/Object4/Object34.bmd", "start": 123016502, "end": 123018600}, {"filename": "/Data/Object4/Object35.bmd", "start": 123018600, "end": 123025905}, {"filename": "/Data/Object4/Object36.bmd", "start": 123025905, "end": 123036409}, {"filename": "/Data/Object4/Object37.bmd", "start": 123036409, "end": 123059524}, {"filename": "/Data/Object4/Object38.bmd", "start": 123059524, "end": 123060456}, {"filename": "/Data/Object4/Object39.bmd", "start": 123060456, "end": 123061142}, {"filename": "/Data/Object4/Object40.bmd", "start": 123061142, "end": 123192108}, {"filename": "/Data/Object4/Object41.bmd", "start": 123192108, "end": 123234120}, {"filename": "/Data/Object4/Object42.bmd", "start": 123234120, "end": 123250416}, {"filename": "/Data/Object4/Object43.bmd", "start": 123250416, "end": 123255376}, {"filename": "/Data/Object4/filling_up02.OZJ", "start": 123255376, "end": 123260167}, {"filename": "/Data/Object4/filling_up03.OZJ", "start": 123260167, "end": 123266250}, {"filename": "/Data/Object4/filling_up04.OZT", "start": 123266250, "end": 123270394}, {"filename": "/Data/Object4/filling_up05.OZT", "start": 123270394, "end": 123278634}, {"filename": "/Data/Object4/flower.OZT", "start": 123278634, "end": 123295066}, {"filename": "/Data/Object4/flower02.OZT", "start": 123295066, "end": 123311498}, {"filename": "/Data/Object4/flower03.OZT", "start": 123311498, "end": 123327930}, {"filename": "/Data/Object4/flower05.OZT", "start": 123327930, "end": 123332074}, {"filename": "/Data/Object4/flower10.OZJ", "start": 123332074, "end": 123338255}, {"filename": "/Data/Object4/flower2.OZJ", "start": 123338255, "end": 123368035}, {"filename": "/Data/Object4/flower3.OZJ", "start": 123368035, "end": 123375669}, {"filename": "/Data/Object4/flower4.OZJ", "start": 123375669, "end": 123384899}, {"filename": "/Data/Object4/flower5.OZJ", "start": 123384899, "end": 123394021}, {"filename": "/Data/Object4/flower6.OZJ", "start": 123394021, "end": 123417577}, {"filename": "/Data/Object4/flower7.OZJ", "start": 123417577, "end": 123447706}, {"filename": "/Data/Object4/flower9.OZJ", "start": 123447706, "end": 123482281}, {"filename": "/Data/Object4/htht01.OZJ", "start": 123482281, "end": 123550279}, {"filename": "/Data/Object4/itp01.OZT", "start": 123550279, "end": 123552375}, {"filename": "/Data/Object4/itp02.OZT", "start": 123552375, "end": 123554471}, {"filename": "/Data/Object4/light01.OZJ", "start": 123554471, "end": 123560408}, {"filename": "/Data/Object4/metal01.OZJ", "start": 123560408, "end": 123566709}, {"filename": "/Data/Object4/ob3.OZJ", "start": 123566709, "end": 123594821}, {"filename": "/Data/Object4/ston001.OZJ", "start": 123594821, "end": 123629674}, {"filename": "/Data/Object4/treea00.OZJ", "start": 123629674, "end": 123666037}, {"filename": "/Data/Object4/treea01.OZT", "start": 123666037, "end": 123674277}, {"filename": "/Data/Object4/treea02.OZJ", "start": 123674277, "end": 123690645}, {"filename": "/Data/Object4/treea03.OZJ", "start": 123690645, "end": 123734262}, {"filename": "/Data/Object4/u2u3.OZJ", "start": 123734262, "end": 123739375}, {"filename": "/Data/Object4/wd.OZJ", "start": 123739375, "end": 123750413}, {"filename": "/Data/Object4/wood001.OZJ", "start": 123750413, "end": 123785317}, {"filename": "/Data/Object4/wood002.OZJ", "start": 123785317, "end": 123821092}, {"filename": "/Data/Object4/wood01.OZJ", "start": 123821092, "end": 123838353}, {"filename": "/Data/Object4/wood02.OZJ", "start": 123838353, "end": 123844293}, {"filename": "/Data/Object4/wood03.OZJ", "start": 123844293, "end": 123861837}, {"filename": "/Data/Object4/yellow_jewel.OZJ", "start": 123861837, "end": 123866778}, {"filename": "/Data/Object5/Bug01.bmd", "start": 123866778, "end": 123882221}, {"filename": "/Data/Object5/Object01.bmd", "start": 123882221, "end": 123913835}, {"filename": "/Data/Object5/Object02.bmd", "start": 123913835, "end": 123932881}, {"filename": "/Data/Object5/Object03.bmd", "start": 123932881, "end": 123969699}, {"filename": "/Data/Object5/Object04.bmd", "start": 123969699, "end": 123983465}, {"filename": "/Data/Object5/Object05.bmd", "start": 123983465, "end": 123988701}, {"filename": "/Data/Object5/Object06.bmd", "start": 123988701, "end": 124001663}, {"filename": "/Data/Object5/Object07.bmd", "start": 124001663, "end": 124007333}, {"filename": "/Data/Object5/Object08.bmd", "start": 124007333, "end": 124015502}, {"filename": "/Data/Object5/Object09.bmd", "start": 124015502, "end": 124019055}, {"filename": "/Data/Object5/Object10.bmd", "start": 124019055, "end": 124021313}, {"filename": "/Data/Object5/Object11.bmd", "start": 124021313, "end": 124088532}, {"filename": "/Data/Object5/Object12.bmd", "start": 124088532, "end": 124160178}, {"filename": "/Data/Object5/Object13.bmd", "start": 124160178, "end": 124220053}, {"filename": "/Data/Object5/Object14.bmd", "start": 124220053, "end": 124225499}, {"filename": "/Data/Object5/Object15.bmd", "start": 124225499, "end": 124229829}, {"filename": "/Data/Object5/Object16.bmd", "start": 124229829, "end": 124234343}, {"filename": "/Data/Object5/Object17.bmd", "start": 124234343, "end": 124273897}, {"filename": "/Data/Object5/Object18.bmd", "start": 124273897, "end": 124298515}, {"filename": "/Data/Object5/Object19.bmd", "start": 124298515, "end": 124319625}, {"filename": "/Data/Object5/Object20.bmd", "start": 124319625, "end": 124360462}, {"filename": "/Data/Object5/Object21.bmd", "start": 124360462, "end": 124401299}, {"filename": "/Data/Object5/Object22.bmd", "start": 124401299, "end": 124407845}, {"filename": "/Data/Object5/Object23.bmd", "start": 124407845, "end": 124414391}, {"filename": "/Data/Object5/Object24.bmd", "start": 124414391, "end": 124425224}, {"filename": "/Data/Object5/Object25.bmd", "start": 124425224, "end": 124426418}, {"filename": "/Data/Object5/Object26.bmd", "start": 124426418, "end": 124427028}, {"filename": "/Data/Object5/Object27.bmd", "start": 124427028, "end": 124491158}, {"filename": "/Data/Object5/Object28.bmd", "start": 124491158, "end": 124626120}, {"filename": "/Data/Object5/Object29.bmd", "start": 124626120, "end": 124684602}, {"filename": "/Data/Object5/Object30.bmd", "start": 124684602, "end": 124766188}, {"filename": "/Data/Object5/Object31.bmd", "start": 124766188, "end": 124775710}, {"filename": "/Data/Object5/Object32.bmd", "start": 124775710, "end": 124785232}, {"filename": "/Data/Object5/Object33.bmd", "start": 124785232, "end": 124798242}, {"filename": "/Data/Object5/Object34.bmd", "start": 124798242, "end": 124807764}, {"filename": "/Data/Object5/Object35.bmd", "start": 124807764, "end": 124858539}, {"filename": "/Data/Object5/Object36.bmd", "start": 124858539, "end": 124909314}, {"filename": "/Data/Object5/Object37.bmd", "start": 124909314, "end": 124960089}, {"filename": "/Data/Object5/Object38.bmd", "start": 124960089, "end": 125010864}, {"filename": "/Data/Object5/Object39.bmd", "start": 125010864, "end": 125018058}, {"filename": "/Data/Object5/Object40.bmd", "start": 125018058, "end": 125019316}, {"filename": "/Data/Object5/bons.OZJ", "start": 125019316, "end": 125047115}, {"filename": "/Data/Object5/d_003.OZJ", "start": 125047115, "end": 125126526}, {"filename": "/Data/Object5/guard_gold2.OZJ", "start": 125126526, "end": 125195958}, {"filename": "/Data/Object5/light01.OZJ", "start": 125195958, "end": 125203538}, {"filename": "/Data/Object5/re02.OZT", "start": 125203538, "end": 125236354}, {"filename": "/Data/Object5/re_008.OZJ", "start": 125236354, "end": 125245539}, {"filename": "/Data/Object5/re_02.OZJ", "start": 125245539, "end": 125291685}, {"filename": "/Data/Object5/re_04.OZJ", "start": 125291685, "end": 125308150}, {"filename": "/Data/Object5/re_05.OZJ", "start": 125308150, "end": 125331163}, {"filename": "/Data/Object5/re_06_2.OZJ", "start": 125331163, "end": 125337129}, {"filename": "/Data/Object5/re_06_3.OZJ", "start": 125337129, "end": 125341921}, {"filename": "/Data/Object5/re_07.OZJ", "start": 125341921, "end": 125377071}, {"filename": "/Data/Object5/re_08.OZJ", "start": 125377071, "end": 125387390}, {"filename": "/Data/Object5/t17.OZJ", "start": 125387390, "end": 125397150}, {"filename": "/Data/Object5/t18.OZJ", "start": 125397150, "end": 125404697}, {"filename": "/Data/Object5/t19.OZJ", "start": 125404697, "end": 125410894}, {"filename": "/Data/Object5/t20.OZJ", "start": 125410894, "end": 125417274}, {"filename": "/Data/Object5/taa01.OZT", "start": 125417274, "end": 125482858}, {"filename": "/Data/Object5/taa02.OZT", "start": 125482858, "end": 125548442}, {"filename": "/Data/Object5/taa03.OZT", "start": 125548442, "end": 125552586}, {"filename": "/Data/Object5/worm.OZT", "start": 125552586, "end": 125556730}, {"filename": "/Data/Object6/Object04.bmd", "start": 125556730, "end": 125561136}, {"filename": "/Data/Object6/Object05.bmd", "start": 125561136, "end": 125572202}, {"filename": "/Data/Object6/Object07.bmd", "start": 125572202, "end": 125635574}, {"filename": "/Data/Object6/Object10.bmd", "start": 125635574, "end": 125640852}, {"filename": "/Data/Object6/Object17.bmd", "start": 125640852, "end": 125648542}, {"filename": "/Data/Object6/Object19.bmd", "start": 125648542, "end": 125668673}, {"filename": "/Data/Object6/Object20.bmd", "start": 125668673, "end": 125682647}, {"filename": "/Data/Object6/Object21.bmd", "start": 125682647, "end": 125716413}, {"filename": "/Data/Object6/Object25.bmd", "start": 125716413, "end": 125754891}, {"filename": "/Data/Object6/Object26.bmd", "start": 125754891, "end": 125768157}, {"filename": "/Data/Object6/Object28.bmd", "start": 125768157, "end": 125777295}, {"filename": "/Data/Object6/Object29.bmd", "start": 125777295, "end": 125785643}, {"filename": "/Data/Object6/Object30.bmd", "start": 125785643, "end": 125794781}, {"filename": "/Data/Object6/Object31.bmd", "start": 125794781, "end": 125882212}, {"filename": "/Data/Object6/Object32.bmd", "start": 125882212, "end": 125889638}, {"filename": "/Data/Object6/Object33.bmd", "start": 125889638, "end": 125897072}, {"filename": "/Data/Object6/Object34.bmd", "start": 125897072, "end": 125899170}, {"filename": "/Data/Object6/Object40.bmd", "start": 125899170, "end": 125993833}, {"filename": "/Data/Object6/Object41.bmd", "start": 125993833, "end": 126073822}, {"filename": "/Data/Object6/TileGround03.OZJ", "start": 126073822, "end": 126099156}, {"filename": "/Data/Object6/bfish07.OZJ", "start": 126099156, "end": 126169827}, {"filename": "/Data/Object6/bfish072.OZJ", "start": 126169827, "end": 126252788}, {"filename": "/Data/Object6/bfish073.OZJ", "start": 126252788, "end": 126330056}, {"filename": "/Data/Object6/hh.OZJ", "start": 126330056, "end": 126342665}, {"filename": "/Data/Object6/ship01.OZJ", "start": 126342665, "end": 126375773}, {"filename": "/Data/Object6/ship03.OZJ", "start": 126375773, "end": 126385560}, {"filename": "/Data/Object6/ship04.OZJ", "start": 126385560, "end": 126401574}, {"filename": "/Data/Object6/ship05.OZJ", "start": 126401574, "end": 126407628}, {"filename": "/Data/Object6/ship05.OZT", "start": 126407628, "end": 126415868}, {"filename": "/Data/Object6/ship06.OZJ", "start": 126415868, "end": 126421155}, {"filename": "/Data/Object6/ship06.OZT", "start": 126421155, "end": 126421459}, {"filename": "/Data/Object6/ship07.OZJ", "start": 126421459, "end": 126461484}, {"filename": "/Data/Object6/ship07.OZT", "start": 126461484, "end": 126462556}, {"filename": "/Data/Object6/sou01.OZJ", "start": 126462556, "end": 126476524}, {"filename": "/Data/Object6/sou02.OZJ", "start": 126476524, "end": 126487606}, {"filename": "/Data/Object6/squid01.OZJ", "start": 126487606, "end": 126521506}, {"filename": "/Data/Object6/squid02.OZJ", "start": 126521506, "end": 126528220}, {"filename": "/Data/Object6/star01.OZJ", "start": 126528220, "end": 126540114}, {"filename": "/Data/Object6/ston00.OZJ", "start": 126540114, "end": 126610619}, {"filename": "/Data/Object6/ston03.OZJ", "start": 126610619, "end": 126707284}, {"filename": "/Data/Object6/ston033.OZJ", "start": 126707284, "end": 126803949}, {"filename": "/Data/Object6/wood00.OZJ", "start": 126803949, "end": 126811228}, {"filename": "/Data/Object6/wood01.OZJ", "start": 126811228, "end": 126823623}, {"filename": "/Data/Object6/wood02.OZJ", "start": 126823623, "end": 126851795}, {"filename": "/Data/Object6/wood03.OZJ", "start": 126851795, "end": 126873288}, {"filename": "/Data/Object6/wood04.OZJ", "start": 126873288, "end": 126910273}, {"filename": "/Data/Object6/wood05.OZJ", "start": 126910273, "end": 127001532}, {"filename": "/Data/Object6/wood052.OZJ", "start": 127001532, "end": 127023456}, {"filename": "/Data/Object6/wooda.OZJ", "start": 127023456, "end": 127048810}, {"filename": "/Data/Object7/Bug01.bmd", "start": 127048810, "end": 127057011}, {"filename": "/Data/Object7/Object01.bmd", "start": 127057011, "end": 127125468}, {"filename": "/Data/Object7/Object02.bmd", "start": 127125468, "end": 127193925}, {"filename": "/Data/Object7/Object03.bmd", "start": 127193925, "end": 127223315}, {"filename": "/Data/Object7/Object04.bmd", "start": 127223315, "end": 127229628}, {"filename": "/Data/Object7/Object05.bmd", "start": 127229628, "end": 127259018}, {"filename": "/Data/Object7/Object06.bmd", "start": 127259018, "end": 127290103}, {"filename": "/Data/Object7/Object07.bmd", "start": 127290103, "end": 127321188}, {"filename": "/Data/Object7/Object08.bmd", "start": 127321188, "end": 127352273}, {"filename": "/Data/Object7/Object09.bmd", "start": 127352273, "end": 127359574}, {"filename": "/Data/Object7/Object10.bmd", "start": 127359574, "end": 127365589}, {"filename": "/Data/Object7/Object11.bmd", "start": 127365589, "end": 127367927}, {"filename": "/Data/Object7/Object12.bmd", "start": 127367927, "end": 127377400}, {"filename": "/Data/Object7/Object13.bmd", "start": 127377400, "end": 127400284}, {"filename": "/Data/Object7/Object14.bmd", "start": 127400284, "end": 127423168}, {"filename": "/Data/Object7/Object15.bmd", "start": 127423168, "end": 127431531}, {"filename": "/Data/Object7/Object16.bmd", "start": 127431531, "end": 127436325}, {"filename": "/Data/Object7/Object17.bmd", "start": 127436325, "end": 127452649}, {"filename": "/Data/Object7/Object18.bmd", "start": 127452649, "end": 127466808}, {"filename": "/Data/Object7/Object19.bmd", "start": 127466808, "end": 127492460}, {"filename": "/Data/Object7/Object20.bmd", "start": 127492460, "end": 127518072}, {"filename": "/Data/Object7/Object21.bmd", "start": 127518072, "end": 127520636}, {"filename": "/Data/Object7/Object22.bmd", "start": 127520636, "end": 127544893}, {"filename": "/Data/Object7/Object23.bmd", "start": 127544893, "end": 127550321}, {"filename": "/Data/Object7/Object24.bmd", "start": 127550321, "end": 127557225}, {"filename": "/Data/Object7/Object25.bmd", "start": 127557225, "end": 127628055}, {"filename": "/Data/Object7/Object26.bmd", "start": 127628055, "end": 127711358}, {"filename": "/Data/Object7/Object27.bmd", "start": 127711358, "end": 127720092}, {"filename": "/Data/Object7/Object28.bmd", "start": 127720092, "end": 127734293}, {"filename": "/Data/Object7/Object29.bmd", "start": 127734293, "end": 127748494}, {"filename": "/Data/Object7/Object30.bmd", "start": 127748494, "end": 127762695}, {"filename": "/Data/Object7/Object31.bmd", "start": 127762695, "end": 127776896}, {"filename": "/Data/Object7/Object32.bmd", "start": 127776896, "end": 127790110}, {"filename": "/Data/Object7/Object33.bmd", "start": 127790110, "end": 127803324}, {"filename": "/Data/Object7/Object34.bmd", "start": 127803324, "end": 127817985}, {"filename": "/Data/Object7/Object35.bmd", "start": 127817985, "end": 127832646}, {"filename": "/Data/Object7/Object36.bmd", "start": 127832646, "end": 127845365}, {"filename": "/Data/Object7/Object37.bmd", "start": 127845365, "end": 127858084}, {"filename": "/Data/Object7/Object38.bmd", "start": 127858084, "end": 127860910}, {"filename": "/Data/Object7/Object39.bmd", "start": 127860910, "end": 127861712}, {"filename": "/Data/Object7/Object40.bmd", "start": 127861712, "end": 127876214}, {"filename": "/Data/Object7/Object41.bmd", "start": 127876214, "end": 127890716}, {"filename": "/Data/Object7/au_01.OZJ", "start": 127890716, "end": 127955552}, {"filename": "/Data/Object7/au_02.OZJ", "start": 127955552, "end": 128019638}, {"filename": "/Data/Object7/au_02.OZT", "start": 128019638, "end": 128020710}, {"filename": "/Data/Object7/au_03.OZJ", "start": 128020710, "end": 128107195}, {"filename": "/Data/Object7/au_03.OZT", "start": 128107195, "end": 128109291}, {"filename": "/Data/Object7/au_04.OZJ", "start": 128109291, "end": 128212196}, {"filename": "/Data/Object7/au_04.OZT", "start": 128212196, "end": 128212756}, {"filename": "/Data/Object7/au_05.OZJ", "start": 128212756, "end": 128310071}, {"filename": "/Data/Object7/au_07.OZJ", "start": 128310071, "end": 128390263}, {"filename": "/Data/Object7/au_09.OZJ", "start": 128390263, "end": 128431052}, {"filename": "/Data/Object7/au_10.OZJ", "start": 128431052, "end": 128533996}, {"filename": "/Data/Object7/au_11.OZJ", "start": 128533996, "end": 128627983}, {"filename": "/Data/Object7/au_12.OZJ", "start": 128627983, "end": 128652944}, {"filename": "/Data/Object7/au_5.OZT", "start": 128652944, "end": 128657088}, {"filename": "/Data/Object7/au_6.OZT", "start": 128657088, "end": 128661232}, {"filename": "/Data/Object7/gggd01.OZT", "start": 128661232, "end": 128665376}, {"filename": "/Data/Object7/gggi01.OZJ", "start": 128665376, "end": 128682017}, {"filename": "/Data/Object7/gggi02.OZJ", "start": 128682017, "end": 128725581}, {"filename": "/Data/Object7/gggi04.OZJ", "start": 128725581, "end": 128765704}, {"filename": "/Data/Object7/gggi05.OZJ", "start": 128765704, "end": 128771642}, {"filename": "/Data/Object7/notice.OZJ", "start": 128771642, "end": 128783514}, {"filename": "/Data/Object7/tree_01.OZT", "start": 128783514, "end": 128787658}, {"filename": "/Data/Object7/tree_02.OZT", "start": 128787658, "end": 128791802}, {"filename": "/Data/Object7/tree_08.OZT", "start": 128791802, "end": 128795946}, {"filename": "/Data/Object7/tree_09.OZT", "start": 128795946, "end": 128804186}, {"filename": "/Data/Object7/water.OZJ", "start": 128804186, "end": 128834758}, {"filename": "/Data/Object8/Fish02.bmd", "start": 128834758, "end": 128839052}, {"filename": "/Data/Object8/Fish03.bmd", "start": 128839052, "end": 128843346}, {"filename": "/Data/Object8/Fish04.bmd", "start": 128843346, "end": 128848248}, {"filename": "/Data/Object8/Fish05.bmd", "start": 128848248, "end": 128853150}, {"filename": "/Data/Object8/Fish06.bmd", "start": 128853150, "end": 128861053}, {"filename": "/Data/Object8/Fish07.bmd", "start": 128861053, "end": 128868956}, {"filename": "/Data/Object8/Fish08.bmd", "start": 128868956, "end": 128886879}, {"filename": "/Data/Object8/Fish09.bmd", "start": 128886879, "end": 128906158}, {"filename": "/Data/Object8/Object01.bmd", "start": 128906158, "end": 129007880}, {"filename": "/Data/Object8/Object02.bmd", "start": 129007880, "end": 129042458}, {"filename": "/Data/Object8/Object03.bmd", "start": 129042458, "end": 129074000}, {"filename": "/Data/Object8/Object04.bmd", "start": 129074000, "end": 129078406}, {"filename": "/Data/Object8/Object05.bmd", "start": 129078406, "end": 129089472}, {"filename": "/Data/Object8/Object06.bmd", "start": 129089472, "end": 129092794}, {"filename": "/Data/Object8/Object07.bmd", "start": 129092794, "end": 129095080}, {"filename": "/Data/Object8/Object08.bmd", "start": 129095080, "end": 129175069}, {"filename": "/Data/Object8/Object09.bmd", "start": 129175069, "end": 129261155}, {"filename": "/Data/Object8/Object10.bmd", "start": 129261155, "end": 129355818}, {"filename": "/Data/Object8/Object11.bmd", "start": 129355818, "end": 129450628}, {"filename": "/Data/Object8/Object12.bmd", "start": 129450628, "end": 129489106}, {"filename": "/Data/Object8/Object13.bmd", "start": 129489106, "end": 129514688}, {"filename": "/Data/Object8/Object14.bmd", "start": 129514688, "end": 129527954}, {"filename": "/Data/Object8/Object15.bmd", "start": 129527954, "end": 129561720}, {"filename": "/Data/Object8/Object16.bmd", "start": 129561720, "end": 129575694}, {"filename": "/Data/Object8/Object17.bmd", "start": 129575694, "end": 129583384}, {"filename": "/Data/Object8/Object18.bmd", "start": 129583384, "end": 129589350}, {"filename": "/Data/Object8/Object19.bmd", "start": 129589350, "end": 129598416}, {"filename": "/Data/Object8/Object20.bmd", "start": 129598416, "end": 129603694}, {"filename": "/Data/Object8/Object21.bmd", "start": 129603694, "end": 129627200}, {"filename": "/Data/Object8/Object22.bmd", "start": 129627200, "end": 129627590}, {"filename": "/Data/Object8/Object23.bmd", "start": 129627590, "end": 129628784}, {"filename": "/Data/Object8/Object24.bmd", "start": 129628784, "end": 129629878}, {"filename": "/Data/Object8/Object25.bmd", "start": 129629878, "end": 129654865}, {"filename": "/Data/Object8/Object26.bmd", "start": 129654865, "end": 129729492}, {"filename": "/Data/Object8/Object27.bmd", "start": 129729492, "end": 129737294}, {"filename": "/Data/Object8/Object28.bmd", "start": 129737294, "end": 129844252}, {"filename": "/Data/Object8/Object29.bmd", "start": 129844252, "end": 129958304}, {"filename": "/Data/Object8/Object30.bmd", "start": 129958304, "end": 129967442}, {"filename": "/Data/Object8/Object31.bmd", "start": 129967442, "end": 129976580}, {"filename": "/Data/Object8/Object32.bmd", "start": 129976580, "end": 129979946}, {"filename": "/Data/Object8/Object33.bmd", "start": 129979946, "end": 129988294}, {"filename": "/Data/Object8/Object34.bmd", "start": 129988294, "end": 129991900}, {"filename": "/Data/Object8/Object35.bmd", "start": 129991900, "end": 130138184}, {"filename": "/Data/Object8/Object36.bmd", "start": 130138184, "end": 130162802}, {"filename": "/Data/Object8/Object37.bmd", "start": 130162802, "end": 130182460}, {"filename": "/Data/Object8/Object38.bmd", "start": 130182460, "end": 130238266}, {"filename": "/Data/Object8/Object39.bmd", "start": 130238266, "end": 130239198}, {"filename": "/Data/Object8/Object40.bmd", "start": 130239198, "end": 130240000}, {"filename": "/Data/Object8/Object41.bmd", "start": 130240000, "end": 130241453}, {"filename": "/Data/Object8/bfish01.OZJ", "start": 130241453, "end": 130253346}, {"filename": "/Data/Object8/bfish02.OZJ", "start": 130253346, "end": 130265087}, {"filename": "/Data/Object8/bfish04.OZJ", "start": 130265087, "end": 130277323}, {"filename": "/Data/Object8/bfish05.OZJ", "start": 130277323, "end": 130290215}, {"filename": "/Data/Object8/bfish06.OZJ", "start": 130290215, "end": 130298916}, {"filename": "/Data/Object8/bfish07.OZJ", "start": 130298916, "end": 130369587}, {"filename": "/Data/Object8/bfish072.OZJ", "start": 130369587, "end": 130452548}, {"filename": "/Data/Object8/bfish073.OZJ", "start": 130452548, "end": 130529816}, {"filename": "/Data/Object8/bfish08.OZJ", "start": 130529816, "end": 130550915}, {"filename": "/Data/Object8/bfish09.OZJ", "start": 130550915, "end": 130571322}, {"filename": "/Data/Object8/bfish10.OZJ", "start": 130571322, "end": 130579531}, {"filename": "/Data/Object8/bons.OZJ", "start": 130579531, "end": 130607330}, {"filename": "/Data/Object8/bu0.OZT", "start": 130607330, "end": 130672914}, {"filename": "/Data/Object8/bu01.OZT", "start": 130672914, "end": 130689346}, {"filename": "/Data/Object8/bu02.OZT", "start": 130689346, "end": 130754930}, {"filename": "/Data/Object8/bu03.OZT", "start": 130754930, "end": 130771362}, {"filename": "/Data/Object8/bu04.OZT", "start": 130771362, "end": 130775506}, {"filename": "/Data/Object8/drop01.OZJ", "start": 130775506, "end": 130782785}, {"filename": "/Data/Object8/ioi01.OZJ", "start": 130782785, "end": 130817914}, {"filename": "/Data/Object8/light01.OZJ", "start": 130817914, "end": 130823851}, {"filename": "/Data/Object8/sea01.OZJ", "start": 130823851, "end": 130895010}, {"filename": "/Data/Object8/star01.OZJ", "start": 130895010, "end": 130906904}, {"filename": "/Data/Object8/ston00.OZJ", "start": 130906904, "end": 130977409}, {"filename": "/Data/Object8/ston033.OZJ", "start": 130977409, "end": 131074074}, {"filename": "/Data/Object8/wood00.OZJ", "start": 131074074, "end": 131081353}, {"filename": "/Data/Object8/wood01.OZJ", "start": 131081353, "end": 131093748}, {"filename": "/Data/Object8/wood02.OZJ", "start": 131093748, "end": 131121920}, {"filename": "/Data/Object8/wood03.OZJ", "start": 131121920, "end": 131143413}, {"filename": "/Data/Object8/wood04.OZJ", "start": 131143413, "end": 131180398}, {"filename": "/Data/Object8/wood05.OZJ", "start": 131180398, "end": 131271657}, {"filename": "/Data/Object8/wood052.OZJ", "start": 131271657, "end": 131293581}, {"filename": "/Data/Object8/wooda.OZJ", "start": 131293581, "end": 131318935}, {"filename": "/Data/Object8/wt00.OZJ", "start": 131318935, "end": 131326555}, {"filename": "/Data/Object8/wt01.OZJ", "start": 131326555, "end": 131334626}, {"filename": "/Data/Object8/wt02.OZJ", "start": 131334626, "end": 131342724}, {"filename": "/Data/Object8/wt03.OZJ", "start": 131342724, "end": 131350877}, {"filename": "/Data/Object8/wt04.OZJ", "start": 131350877, "end": 131358990}, {"filename": "/Data/Object8/wt05.OZJ", "start": 131358990, "end": 131367069}, {"filename": "/Data/Object8/wt06.OZJ", "start": 131367069, "end": 131375163}, {"filename": "/Data/Object8/wt07.OZJ", "start": 131375163, "end": 131383280}, {"filename": "/Data/Object8/wt08.OZJ", "start": 131383280, "end": 131391403}, {"filename": "/Data/Object8/wt09.OZJ", "start": 131391403, "end": 131399537}, {"filename": "/Data/Object8/wt10.OZJ", "start": 131399537, "end": 131407640}, {"filename": "/Data/Object8/wt11.OZJ", "start": 131407640, "end": 131415701}, {"filename": "/Data/Object8/wt12.OZJ", "start": 131415701, "end": 131423794}, {"filename": "/Data/Object8/wt13.OZJ", "start": 131423794, "end": 131431822}, {"filename": "/Data/Object8/wt14.OZJ", "start": 131431822, "end": 131439884}, {"filename": "/Data/Object8/wt15.OZJ", "start": 131439884, "end": 131447928}, {"filename": "/Data/Object8/wt16.OZJ", "start": 131447928, "end": 131455972}, {"filename": "/Data/Object8/wt17.OZJ", "start": 131455972, "end": 131463995}, {"filename": "/Data/Object8/wt18.OZJ", "start": 131463995, "end": 131472050}, {"filename": "/Data/Object8/wt19.OZJ", "start": 131472050, "end": 131480094}, {"filename": "/Data/Object8/wt20.OZJ", "start": 131480094, "end": 131488131}, {"filename": "/Data/Object8/wt21.OZJ", "start": 131488131, "end": 131496209}, {"filename": "/Data/Object8/wt22.OZJ", "start": 131496209, "end": 131504268}, {"filename": "/Data/Object8/wt23.OZJ", "start": 131504268, "end": 131512295}, {"filename": "/Data/Object8/wt24.OZJ", "start": 131512295, "end": 131520317}, {"filename": "/Data/Object8/wt25.OZJ", "start": 131520317, "end": 131528339}, {"filename": "/Data/Object8/wt26.OZJ", "start": 131528339, "end": 131536385}, {"filename": "/Data/Object8/wt27.OZJ", "start": 131536385, "end": 131544437}, {"filename": "/Data/Object8/wt28.OZJ", "start": 131544437, "end": 131552472}, {"filename": "/Data/Object8/wt29.OZJ", "start": 131552472, "end": 131560520}, {"filename": "/Data/Object8/wt30.OZJ", "start": 131560520, "end": 131568591}, {"filename": "/Data/Object8/wt31.OZJ", "start": 131568591, "end": 131576678}, {"filename": "/Data/Object9/Bug02.bmd", "start": 131576678, "end": 131579491}, {"filename": "/Data/Object9/DDD.OZJ", "start": 131579491, "end": 131583500}, {"filename": "/Data/Object9/Df.OZT", "start": 131583500, "end": 131616316}, {"filename": "/Data/Object9/Dr.OZT", "start": 131616316, "end": 131620460}, {"filename": "/Data/Object9/Impack03.OZJ", "start": 131620460, "end": 131631750}, {"filename": "/Data/Object9/Object02.bmd", "start": 131631750, "end": 131675236}, {"filename": "/Data/Object9/Object03.bmd", "start": 131675236, "end": 131682790}, {"filename": "/Data/Object9/Object06.bmd", "start": 131682790, "end": 131726256}, {"filename": "/Data/Object9/Object07.bmd", "start": 131726256, "end": 131729940}, {"filename": "/Data/Object9/Object08.bmd", "start": 131729940, "end": 131730330}, {"filename": "/Data/Object9/Object09.bmd", "start": 131730330, "end": 131735734}, {"filename": "/Data/Object9/Object10.bmd", "start": 131735734, "end": 131757716}, {"filename": "/Data/Object9/Object11.bmd", "start": 131757716, "end": 131767974}, {"filename": "/Data/Object9/Object12.bmd", "start": 131767974, "end": 131778176}, {"filename": "/Data/Object9/Object13.bmd", "start": 131778176, "end": 131786092}, {"filename": "/Data/Object9/Object14.bmd", "start": 131786092, "end": 131796294}, {"filename": "/Data/Object9/Object15.bmd", "start": 131796294, "end": 131811710}, {"filename": "/Data/Object9/Object16.bmd", "start": 131811710, "end": 131824924}, {"filename": "/Data/Object9/Object17.bmd", "start": 131824924, "end": 131838138}, {"filename": "/Data/Object9/Object18.bmd", "start": 131838138, "end": 131852799}, {"filename": "/Data/Object9/Object19.bmd", "start": 131852799, "end": 131867460}, {"filename": "/Data/Object9/Object20.bmd", "start": 131867460, "end": 131880179}, {"filename": "/Data/Object9/Object21.bmd", "start": 131880179, "end": 131890717}, {"filename": "/Data/Object9/Object22.bmd", "start": 131890717, "end": 131902347}, {"filename": "/Data/Object9/Object23.bmd", "start": 131902347, "end": 131907581}, {"filename": "/Data/Object9/Object24.bmd", "start": 131907581, "end": 131912191}, {"filename": "/Data/Object9/Object25.bmd", "start": 131912191, "end": 131925701}, {"filename": "/Data/Object9/Object26.bmd", "start": 131925701, "end": 131935435}, {"filename": "/Data/Object9/Object27.bmd", "start": 131935435, "end": 131939457}, {"filename": "/Data/Object9/Object28.bmd", "start": 131939457, "end": 131944019}, {"filename": "/Data/Object9/Object29.bmd", "start": 131944019, "end": 131947985}, {"filename": "/Data/Object9/Object30.bmd", "start": 131947985, "end": 132000411}, {"filename": "/Data/Object9/Object31.bmd", "start": 132000411, "end": 132003994}, {"filename": "/Data/Object9/Object32.bmd", "start": 132003994, "end": 132021232}, {"filename": "/Data/Object9/Object33.bmd", "start": 132021232, "end": 132038470}, {"filename": "/Data/Object9/Object34.bmd", "start": 132038470, "end": 132074706}, {"filename": "/Data/Object9/Object37.bmd", "start": 132074706, "end": 132095944}, {"filename": "/Data/Object9/Object38.bmd", "start": 132095944, "end": 132106310}, {"filename": "/Data/Object9/Object40.bmd", "start": 132106310, "end": 132110624}, {"filename": "/Data/Object9/Object41.bmd", "start": 132110624, "end": 132122534}, {"filename": "/Data/Object9/Object42.bmd", "start": 132122534, "end": 132129024}, {"filename": "/Data/Object9/Object43.bmd", "start": 132129024, "end": 132137086}, {"filename": "/Data/Object9/Object44.bmd", "start": 132137086, "end": 132142252}, {"filename": "/Data/Object9/Object45.bmd", "start": 132142252, "end": 132156254}, {"filename": "/Data/Object9/Object46.bmd", "start": 132156254, "end": 132164084}, {"filename": "/Data/Object9/Object47.bmd", "start": 132164084, "end": 132179850}, {"filename": "/Data/Object9/Object48.bmd", "start": 132179850, "end": 132187712}, {"filename": "/Data/Object9/Object49.bmd", "start": 132187712, "end": 132231002}, {"filename": "/Data/Object9/Object50.bmd", "start": 132231002, "end": 132262032}, {"filename": "/Data/Object9/Object51.bmd", "start": 132262032, "end": 132383891}, {"filename": "/Data/Object9/Object52.bmd", "start": 132383891, "end": 132403705}, {"filename": "/Data/Object9/Object53.bmd", "start": 132403705, "end": 132410943}, {"filename": "/Data/Object9/Object54.bmd", "start": 132410943, "end": 132412393}, {"filename": "/Data/Object9/Object55.bmd", "start": 132412393, "end": 132427805}, {"filename": "/Data/Object9/Object56.bmd", "start": 132427805, "end": 132432035}, {"filename": "/Data/Object9/Object57.bmd", "start": 132432035, "end": 132443289}, {"filename": "/Data/Object9/Object58.bmd", "start": 132443289, "end": 132622781}, {"filename": "/Data/Object9/Object59.bmd", "start": 132622781, "end": 132629279}, {"filename": "/Data/Object9/Object60.bmd", "start": 132629279, "end": 132637394}, {"filename": "/Data/Object9/Object61.bmd", "start": 132637394, "end": 132638588}, {"filename": "/Data/Object9/Object62.bmd", "start": 132638588, "end": 132650864}, {"filename": "/Data/Object9/Object63.bmd", "start": 132650864, "end": 132661302}, {"filename": "/Data/Object9/Object64.bmd", "start": 132661302, "end": 132662614}, {"filename": "/Data/Object9/Object66.bmd", "start": 132662614, "end": 132676396}, {"filename": "/Data/Object9/Object67.bmd", "start": 132676396, "end": 132690178}, {"filename": "/Data/Object9/Object68.bmd", "start": 132690178, "end": 132703960}, {"filename": "/Data/Object9/Object69.bmd", "start": 132703960, "end": 132771814}, {"filename": "/Data/Object9/Object70.bmd", "start": 132771814, "end": 132835500}, {"filename": "/Data/Object9/Object71.bmd", "start": 132835500, "end": 132836694}, {"filename": "/Data/Object9/Object72.bmd", "start": 132836694, "end": 132927412}, {"filename": "/Data/Object9/Object73.bmd", "start": 132927412, "end": 132937614}, {"filename": "/Data/Object9/Object74.bmd", "start": 132937614, "end": 132947816}, {"filename": "/Data/Object9/Object75.bmd", "start": 132947816, "end": 133015670}, {"filename": "/Data/Object9/Object76.bmd", "start": 133015670, "end": 133025872}, {"filename": "/Data/Object9/Object77.bmd", "start": 133025872, "end": 133027066}, {"filename": "/Data/Object9/Object78.bmd", "start": 133027066, "end": 133028260}, {"filename": "/Data/Object9/Object79.bmd", "start": 133028260, "end": 133049498}, {"filename": "/Data/Object9/Object80.bmd", "start": 133049498, "end": 133059700}, {"filename": "/Data/Object9/Object81.bmd", "start": 133059700, "end": 133064366}, {"filename": "/Data/Object9/Object82.bmd", "start": 133064366, "end": 133067100}, {"filename": "/Data/Object9/Object83.bmd", "start": 133067100, "end": 133068032}, {"filename": "/Data/Object9/Object84.bmd", "start": 133068032, "end": 133069226}, {"filename": "/Data/Object9/R.OZJ", "start": 133069226, "end": 133071817}, {"filename": "/Data/Object9/arrow.OZT", "start": 133071817, "end": 133072121}, {"filename": "/Data/Object9/bug.OZJ", "start": 133072121, "end": 133074212}, {"filename": "/Data/Object9/casket.OZJ", "start": 133074212, "end": 133087495}, {"filename": "/Data/Object9/cl.OZT", "start": 133087495, "end": 133091639}, {"filename": "/Data/Object9/col.OZJ", "start": 133091639, "end": 133129754}, {"filename": "/Data/Object9/col2.OZJ", "start": 133129754, "end": 133137400}, {"filename": "/Data/Object9/face.OZJ", "start": 133137400, "end": 133205290}, {"filename": "/Data/Object9/face2.OZJ", "start": 133205290, "end": 133264092}, {"filename": "/Data/Object9/finger.OZJ", "start": 133264092, "end": 133274774}, {"filename": "/Data/Object9/finger1.OZJ", "start": 133274774, "end": 133285429}, {"filename": "/Data/Object9/flag.OZJ", "start": 133285429, "end": 133290530}, {"filename": "/Data/Object9/flag.OZT", "start": 133290530, "end": 133323346}, {"filename": "/Data/Object9/gaer.OZJ", "start": 133323346, "end": 133350728}, {"filename": "/Data/Object9/gear.OZT", "start": 133350728, "end": 133612920}, {"filename": "/Data/Object9/gearB.OZJ", "start": 133612920, "end": 133615769}, {"filename": "/Data/Object9/hand1.OZJ", "start": 133615769, "end": 133648181}, {"filename": "/Data/Object9/light01.OZJ", "start": 133648181, "end": 133654118}, {"filename": "/Data/Object9/p.OZT", "start": 133654118, "end": 133658262}, {"filename": "/Data/Object9/redB.OZJ", "start": 133658262, "end": 133685676}, {"filename": "/Data/Object9/sand01.OZJ", "start": 133685676, "end": 133707028}, {"filename": "/Data/Object9/sand02.OZJ", "start": 133707028, "end": 133757046}, {"filename": "/Data/Object9/sf.OZJ", "start": 133757046, "end": 133788451}, {"filename": "/Data/Object9/sf2.OZJ", "start": 133788451, "end": 133847788}, {"filename": "/Data/Object9/sf3.OZJ", "start": 133847788, "end": 133871513}, {"filename": "/Data/Object9/sf4.OZJ", "start": 133871513, "end": 133889867}, {"filename": "/Data/Object9/statue.OZJ", "start": 133889867, "end": 133910123}, {"filename": "/Data/Object9/statue2.OZJ", "start": 133910123, "end": 133930024}, {"filename": "/Data/Object9/ston.OZJ", "start": 133930024, "end": 133993589}, {"filename": "/Data/Object9/ston2.OZJ", "start": 133993589, "end": 134027059}, {"filename": "/Data/Object9/stonD.OZJ", "start": 134027059, "end": 134042693}, {"filename": "/Data/Object9/test1.OZT", "start": 134042693, "end": 134050933}, {"filename": "/Data/Object9/test12.OZJ", "start": 134050933, "end": 134077196}, {"filename": "/Data/Object9/test15.OZT", "start": 134077196, "end": 134085436}, {"filename": "/Data/Object9/test16.OZJ", "start": 134085436, "end": 134119083}, {"filename": "/Data/Object9/test17.OZJ", "start": 134119083, "end": 134154808}, {"filename": "/Data/Object9/test18.OZJ", "start": 134154808, "end": 134205812}, {"filename": "/Data/Object9/test2.OZJ", "start": 134205812, "end": 134221963}, {"filename": "/Data/Object9/test2.OZT", "start": 134221963, "end": 134287547}, {"filename": "/Data/Object9/test20.OZJ", "start": 134287547, "end": 134310433}, {"filename": "/Data/Object9/test22.OZJ", "start": 134310433, "end": 134418122}, {"filename": "/Data/Object9/test23.OZJ", "start": 134418122, "end": 134521420}, {"filename": "/Data/Object9/test24.OZJ", "start": 134521420, "end": 134623768}, {"filename": "/Data/Object9/test3.OZJ", "start": 134623768, "end": 134639322}, {"filename": "/Data/Object9/test37.OZJ", "start": 134639322, "end": 134648306}, {"filename": "/Data/Object9/test4.OZJ", "start": 134648306, "end": 134665469}, {"filename": "/Data/Object9/tree_01.OZT", "start": 134665469, "end": 134669613}, {"filename": "/Data/Object9/tree_02.OZT", "start": 134669613, "end": 134673757}, {"filename": "/Data/Object9/tree_08.OZT", "start": 134673757, "end": 134677901}, {"filename": "/Data/Object9/tree_09.OZT", "start": 134677901, "end": 134686141}, {"filename": "/Data/Player/Angel.bmd", "start": 134686141, "end": 134753387}, {"filename": "/Data/Player/ArmorClass01.bmd", "start": 134753387, "end": 134770150}, {"filename": "/Data/Player/ArmorClass02.bmd", "start": 134770150, "end": 134783913}, {"filename": "/Data/Player/ArmorClass03.bmd", "start": 134783913, "end": 134797676}, {"filename": "/Data/Player/ArmorClass04.bmd", "start": 134797676, "end": 134814439}, {"filename": "/Data/Player/ArmorClass05.bmd", "start": 134814439, "end": 134842979}, {"filename": "/Data/Player/ArmorClass201.bmd", "start": 134842979, "end": 134859679}, {"filename": "/Data/Player/ArmorClass202.bmd", "start": 134859679, "end": 134873379}, {"filename": "/Data/Player/ArmorClass203.bmd", "start": 134873379, "end": 134886751}, {"filename": "/Data/Player/ArmorElf01.bmd", "start": 134886751, "end": 134905230}, {"filename": "/Data/Player/ArmorElf02.bmd", "start": 134905230, "end": 134923277}, {"filename": "/Data/Player/ArmorElf03.bmd", "start": 134923277, "end": 134948396}, {"filename": "/Data/Player/ArmorElf04.bmd", "start": 134948396, "end": 134969333}, {"filename": "/Data/Player/ArmorElf05.bmd", "start": 134969333, "end": 134994988}, {"filename": "/Data/Player/ArmorMale01.bmd", "start": 134994988, "end": 135013713}, {"filename": "/Data/Player/ArmorMale02.bmd", "start": 135013713, "end": 135041328}, {"filename": "/Data/Player/ArmorMale03.bmd", "start": 135041328, "end": 135059047}, {"filename": "/Data/Player/ArmorMale04.bmd", "start": 135059047, "end": 135077960}, {"filename": "/Data/Player/ArmorMale05.bmd", "start": 135077960, "end": 135097833}, {"filename": "/Data/Player/ArmorMale06.bmd", "start": 135097833, "end": 135118454}, {"filename": "/Data/Player/ArmorMale07.bmd", "start": 135118454, "end": 135138547}, {"filename": "/Data/Player/ArmorMale08.bmd", "start": 135138547, "end": 135164682}, {"filename": "/Data/Player/ArmorMale09.bmd", "start": 135164682, "end": 135184633}, {"filename": "/Data/Player/ArmorMale10.bmd", "start": 135184633, "end": 135207046}, {"filename": "/Data/Player/ArmorMale16.bmd", "start": 135207046, "end": 135232091}, {"filename": "/Data/Player/ArmorMale17.bmd", "start": 135232091, "end": 135259366}, {"filename": "/Data/Player/ArmorMale18.bmd", "start": 135259366, "end": 135299689}, {"filename": "/Data/Player/ArmorMale19.bmd", "start": 135299689, "end": 135320490}, {"filename": "/Data/Player/ArmorMale20.bmd", "start": 135320490, "end": 135358545}, {"filename": "/Data/Player/ArmorMale21.bmd", "start": 135358545, "end": 135396551}, {"filename": "/Data/Player/ArmorMale22.bmd", "start": 135396551, "end": 135435925}, {"filename": "/Data/Player/ArmorMale23.bmd", "start": 135435925, "end": 135463909}, {"filename": "/Data/Player/ArmorMale24.bmd", "start": 135463909, "end": 135507379}, {"filename": "/Data/Player/ArmorMale25.bmd", "start": 135507379, "end": 135551869}, {"filename": "/Data/Player/ArmorMale26.bmd", "start": 135551869, "end": 135582527}, {"filename": "/Data/Player/ArmorMale27.bmd", "start": 135582527, "end": 135628807}, {"filename": "/Data/Player/ArmorMale28.bmd", "start": 135628807, "end": 135665303}, {"filename": "/Data/Player/ArmorMale29.bmd", "start": 135665303, "end": 135719343}, {"filename": "/Data/Player/BootClass01.bmd", "start": 135719343, "end": 135733146}, {"filename": "/Data/Player/BootClass02.bmd", "start": 135733146, "end": 135746949}, {"filename": "/Data/Player/BootClass03.bmd", "start": 135746949, "end": 135759104}, {"filename": "/Data/Player/BootClass04.bmd", "start": 135759104, "end": 135773819}, {"filename": "/Data/Player/BootClass05.bmd", "start": 135773819, "end": 135791471}, {"filename": "/Data/Player/BootClass201.bmd", "start": 135791471, "end": 135811643}, {"filename": "/Data/Player/BootClass202.bmd", "start": 135811643, "end": 135824615}, {"filename": "/Data/Player/BootClass203.bmd", "start": 135824615, "end": 135838819}, {"filename": "/Data/Player/BootElf01.bmd", "start": 135838819, "end": 135853434}, {"filename": "/Data/Player/BootElf02.bmd", "start": 135853434, "end": 135867471}, {"filename": "/Data/Player/BootElf03.bmd", "start": 135867471, "end": 135881156}, {"filename": "/Data/Player/BootElf04.bmd", "start": 135881156, "end": 135897331}, {"filename": "/Data/Player/BootElf05.bmd", "start": 135897331, "end": 135913246}, {"filename": "/Data/Player/BootMale01.bmd", "start": 135913246, "end": 135930993}, {"filename": "/Data/Player/BootMale02.bmd", "start": 135930993, "end": 135946876}, {"filename": "/Data/Player/BootMale03.bmd", "start": 135946876, "end": 135961883}, {"filename": "/Data/Player/BootMale04.bmd", "start": 135961883, "end": 135976708}, {"filename": "/Data/Player/BootMale05.bmd", "start": 135976708, "end": 135990697}, {"filename": "/Data/Player/BootMale06.bmd", "start": 135990697, "end": 136004718}, {"filename": "/Data/Player/BootMale07.bmd", "start": 136004718, "end": 136020931}, {"filename": "/Data/Player/BootMale08.bmd", "start": 136020931, "end": 136034560}, {"filename": "/Data/Player/BootMale09.bmd", "start": 136034560, "end": 136050373}, {"filename": "/Data/Player/BootMale10.bmd", "start": 136050373, "end": 136069744}, {"filename": "/Data/Player/BootMale16.bmd", "start": 136069744, "end": 136087527}, {"filename": "/Data/Player/BootMale17.bmd", "start": 136087527, "end": 136105942}, {"filename": "/Data/Player/BootMale18.bmd", "start": 136105942, "end": 136127083}, {"filename": "/Data/Player/BootMale19.bmd", "start": 136127083, "end": 136143508}, {"filename": "/Data/Player/BootMale20.bmd", "start": 136143508, "end": 136170379}, {"filename": "/Data/Player/BootMale21.bmd", "start": 136170379, "end": 136191245}, {"filename": "/Data/Player/BootMale22.bmd", "start": 136191245, "end": 136219557}, {"filename": "/Data/Player/BootMale23.bmd", "start": 136219557, "end": 136237349}, {"filename": "/Data/Player/BootMale24.bmd", "start": 136237349, "end": 136259397}, {"filename": "/Data/Player/BootMale25.bmd", "start": 136259397, "end": 136280863}, {"filename": "/Data/Player/BootMale26.bmd", "start": 136280863, "end": 136296535}, {"filename": "/Data/Player/BootMale27.bmd", "start": 136296535, "end": 136324455}, {"filename": "/Data/Player/BootMale28.bmd", "start": 136324455, "end": 136347813}, {"filename": "/Data/Player/BootMale29.bmd", "start": 136347813, "end": 136372645}, {"filename": "/Data/Player/Custom/21/ArmorMale22.bmd", "start": 136372645, "end": 136412019}, {"filename": "/Data/Player/Custom/21/BootMale22.bmd", "start": 136412019, "end": 136440331}, {"filename": "/Data/Player/Custom/21/GloveMale22.bmd", "start": 136440331, "end": 136460757}, {"filename": "/Data/Player/Custom/21/HelmMale22.bmd", "start": 136460757, "end": 136485269}, {"filename": "/Data/Player/Custom/21/PantMale22.bmd", "start": 136485269, "end": 136500331}, {"filename": "/Data/Player/Custom/21/boots22.OZJ", "start": 136500331, "end": 136519417}, {"filename": "/Data/Player/Custom/21/glove22.OZJ", "start": 136519417, "end": 136536262}, {"filename": "/Data/Player/Custom/21/head22.OZJ", "start": 136536262, "end": 136553849}, {"filename": "/Data/Player/Custom/21/hide.OZJ", "start": 136553849, "end": 136558405}, {"filename": "/Data/Player/Custom/21/level_man01.OZJ", "start": 136558405, "end": 136635219}, {"filename": "/Data/Player/Custom/21/pants22.OZJ", "start": 136635219, "end": 136669664}, {"filename": "/Data/Player/Custom/21/pants22.OZT", "start": 136669664, "end": 136686096}, {"filename": "/Data/Player/Custom/21/upper22.OZJ", "start": 136686096, "end": 136730713}, {"filename": "/Data/Player/DarklordRobe.OZT", "start": 136730713, "end": 136861833}, {"filename": "/Data/Player/E_head.OZT", "start": 136861833, "end": 136870073}, {"filename": "/Data/Player/FArmor.OZJ", "start": 136870073, "end": 136912411}, {"filename": "/Data/Player/FBoots.OZJ", "start": 136912411, "end": 136929215}, {"filename": "/Data/Player/FGlove.OZJ", "start": 136929215, "end": 136946395}, {"filename": "/Data/Player/FHelm.OZJ", "start": 136946395, "end": 136965189}, {"filename": "/Data/Player/FPants01.OZJ", "start": 136965189, "end": 136989173}, {"filename": "/Data/Player/FPants02.OZJ", "start": 136989173, "end": 137013561}, {"filename": "/Data/Player/FShoots.OZT", "start": 137013561, "end": 137021801}, {"filename": "/Data/Player/FShoots02.OZT", "start": 137021801, "end": 137030041}, {"filename": "/Data/Player/FShoots_R.OZJ", "start": 137030041, "end": 137040602}, {"filename": "/Data/Player/GloveClass01.bmd", "start": 137040602, "end": 137054781}, {"filename": "/Data/Player/GloveClass02.bmd", "start": 137054781, "end": 137068960}, {"filename": "/Data/Player/GloveClass03.bmd", "start": 137068960, "end": 137083107}, {"filename": "/Data/Player/GloveClass04.bmd", "start": 137083107, "end": 137097286}, {"filename": "/Data/Player/GloveClass05.bmd", "start": 137097286, "end": 137116342}, {"filename": "/Data/Player/GloveClass201.bmd", "start": 137116342, "end": 137130458}, {"filename": "/Data/Player/GloveClass202.bmd", "start": 137130458, "end": 137144574}, {"filename": "/Data/Player/GloveClass203.bmd", "start": 137144574, "end": 137158658}, {"filename": "/Data/Player/GloveElf01.bmd", "start": 137158658, "end": 137175127}, {"filename": "/Data/Player/GloveElf02.bmd", "start": 137175127, "end": 137191016}, {"filename": "/Data/Player/GloveElf03.bmd", "start": 137191016, "end": 137207061}, {"filename": "/Data/Player/GloveElf04.bmd", "start": 137207061, "end": 137224256}, {"filename": "/Data/Player/GloveElf05.bmd", "start": 137224256, "end": 137240827}, {"filename": "/Data/Player/GloveMale01.bmd", "start": 137240827, "end": 137260718}, {"filename": "/Data/Player/GloveMale02.bmd", "start": 137260718, "end": 137277257}, {"filename": "/Data/Player/GloveMale03.bmd", "start": 137277257, "end": 137293750}, {"filename": "/Data/Player/GloveMale04.bmd", "start": 137293750, "end": 137311859}, {"filename": "/Data/Player/GloveMale05.bmd", "start": 137311859, "end": 137328592}, {"filename": "/Data/Player/GloveMale06.bmd", "start": 137328592, "end": 137344645}, {"filename": "/Data/Player/GloveMale07.bmd", "start": 137344645, "end": 137362922}, {"filename": "/Data/Player/GloveMale08.bmd", "start": 137362922, "end": 137378967}, {"filename": "/Data/Player/GloveMale09.bmd", "start": 137378967, "end": 137395414}, {"filename": "/Data/Player/GloveMale10.bmd", "start": 137395414, "end": 137413857}, {"filename": "/Data/Player/GloveMale16.bmd", "start": 137413857, "end": 137430692}, {"filename": "/Data/Player/GloveMale17.bmd", "start": 137430692, "end": 137448201}, {"filename": "/Data/Player/GloveMale18.bmd", "start": 137448201, "end": 137476022}, {"filename": "/Data/Player/GloveMale19.bmd", "start": 137476022, "end": 137495419}, {"filename": "/Data/Player/GloveMale20.bmd", "start": 137495419, "end": 137516362}, {"filename": "/Data/Player/GloveMale21.bmd", "start": 137516362, "end": 137535304}, {"filename": "/Data/Player/GloveMale22.bmd", "start": 137535304, "end": 137555730}, {"filename": "/Data/Player/GloveMale23.bmd", "start": 137555730, "end": 137580698}, {"filename": "/Data/Player/GloveMale24.bmd", "start": 137580698, "end": 137599506}, {"filename": "/Data/Player/GloveMale25.bmd", "start": 137599506, "end": 137619908}, {"filename": "/Data/Player/GloveMale26.bmd", "start": 137619908, "end": 137636564}, {"filename": "/Data/Player/GloveMale27.bmd", "start": 137636564, "end": 137657628}, {"filename": "/Data/Player/GloveMale28.bmd", "start": 137657628, "end": 137675854}, {"filename": "/Data/Player/GloveMale29.bmd", "start": 137675854, "end": 137692254}, {"filename": "/Data/Player/HelmClass01.bmd", "start": 137692254, "end": 137705385}, {"filename": "/Data/Player/HelmClass02.bmd", "start": 137705385, "end": 137719416}, {"filename": "/Data/Player/HelmClass03.bmd", "start": 137719416, "end": 137733991}, {"filename": "/Data/Player/HelmClass04.bmd", "start": 137733991, "end": 137751394}, {"filename": "/Data/Player/HelmClass05.bmd", "start": 137751394, "end": 137770536}, {"filename": "/Data/Player/HelmClass201.bmd", "start": 137770536, "end": 137783644}, {"filename": "/Data/Player/HelmClass202.bmd", "start": 137783644, "end": 137797504}, {"filename": "/Data/Player/HelmClass203.bmd", "start": 137797504, "end": 137813936}, {"filename": "/Data/Player/HelmElf01.bmd", "start": 137813936, "end": 137822791}, {"filename": "/Data/Player/HelmElf02.bmd", "start": 137822791, "end": 137829714}, {"filename": "/Data/Player/HelmElf03.bmd", "start": 137829714, "end": 137836429}, {"filename": "/Data/Player/HelmElf04.bmd", "start": 137836429, "end": 137845868}, {"filename": "/Data/Player/HelmElf05.bmd", "start": 137845868, "end": 137864097}, {"filename": "/Data/Player/HelmMale01.bmd", "start": 137864097, "end": 137873662}, {"filename": "/Data/Player/HelmMale02.bmd", "start": 137873662, "end": 137893995}, {"filename": "/Data/Player/HelmMale03.bmd", "start": 137893995, "end": 137905856}, {"filename": "/Data/Player/HelmMale04.bmd", "start": 137905856, "end": 137918901}, {"filename": "/Data/Player/HelmMale05.bmd", "start": 137918901, "end": 137932722}, {"filename": "/Data/Player/HelmMale06.bmd", "start": 137932722, "end": 137946365}, {"filename": "/Data/Player/HelmMale07.bmd", "start": 137946365, "end": 137962780}, {"filename": "/Data/Player/HelmMale08.bmd", "start": 137962780, "end": 137980101}, {"filename": "/Data/Player/HelmMale09.bmd", "start": 137980101, "end": 137989740}, {"filename": "/Data/Player/HelmMale10.bmd", "start": 137989740, "end": 137996663}, {"filename": "/Data/Player/HelmMale17.bmd", "start": 137996663, "end": 138017124}, {"filename": "/Data/Player/HelmMale18.bmd", "start": 138017124, "end": 138042729}, {"filename": "/Data/Player/HelmMale19.bmd", "start": 138042729, "end": 138057158}, {"filename": "/Data/Player/HelmMale20.bmd", "start": 138057158, "end": 138089501}, {"filename": "/Data/Player/HelmMale22.bmd", "start": 138089501, "end": 138114013}, {"filename": "/Data/Player/HelmMale23.bmd", "start": 138114013, "end": 138128877}, {"filename": "/Data/Player/HelmMale25.bmd", "start": 138128877, "end": 138176771}, {"filename": "/Data/Player/HelmMale26.bmd", "start": 138176771, "end": 138200719}, {"filename": "/Data/Player/HelmMale27.bmd", "start": 138200719, "end": 138231783}, {"filename": "/Data/Player/HelmMale28.bmd", "start": 138231783, "end": 138255363}, {"filename": "/Data/Player/HelmMale29.bmd", "start": 138255363, "end": 138281319}, {"filename": "/Data/Player/Helper01.bmd", "start": 138281319, "end": 138287572}, {"filename": "/Data/Player/Helper02.bmd", "start": 138287572, "end": 138294469}, {"filename": "/Data/Player/Helper03.bmd", "start": 138294469, "end": 138299376}, {"filename": "/Data/Player/Helper04.bmd", "start": 138299376, "end": 138303445}, {"filename": "/Data/Player/KSbp.OZJ", "start": 138303445, "end": 138317746}, {"filename": "/Data/Player/KSgp.OZJ", "start": 138317746, "end": 138325371}, {"filename": "/Data/Player/KShp.OZJ", "start": 138325371, "end": 138333717}, {"filename": "/Data/Player/KSlp.OZJ", "start": 138333717, "end": 138359645}, {"filename": "/Data/Player/KSup.OZJ", "start": 138359645, "end": 138389493}, {"filename": "/Data/Player/KSup2.OZT", "start": 138389493, "end": 138405925}, {"filename": "/Data/Player/Kbpp.OZJ", "start": 138405925, "end": 138419420}, {"filename": "/Data/Player/Kgpp.OZJ", "start": 138419420, "end": 138427473}, {"filename": "/Data/Player/Klpp.OZJ", "start": 138427473, "end": 138453231}, {"filename": "/Data/Player/Kmpp.OZJ", "start": 138453231, "end": 138461381}, {"filename": "/Data/Player/Kupp.OZJ", "start": 138461381, "end": 138489499}, {"filename": "/Data/Player/MaskHelmMale01.bmd", "start": 138489499, "end": 138515500}, {"filename": "/Data/Player/MaskHelmMale06.bmd", "start": 138515500, "end": 138538171}, {"filename": "/Data/Player/MaskHelmMale07.bmd", "start": 138538171, "end": 138565412}, {"filename": "/Data/Player/MaskHelmMale09.bmd", "start": 138565412, "end": 138580007}, {"filename": "/Data/Player/MaskHelmMale10.bmd", "start": 138580007, "end": 138602484}, {"filename": "/Data/Player/PantClass01.bmd", "start": 138602484, "end": 138616439}, {"filename": "/Data/Player/PantClass02.bmd", "start": 138616439, "end": 138628670}, {"filename": "/Data/Player/PantClass03.bmd", "start": 138628670, "end": 138641677}, {"filename": "/Data/Player/PantClass04.bmd", "start": 138641677, "end": 138653028}, {"filename": "/Data/Player/PantClass05.bmd", "start": 138653028, "end": 138666016}, {"filename": "/Data/Player/PantClass201.bmd", "start": 138666016, "end": 138679908}, {"filename": "/Data/Player/PantClass202.bmd", "start": 138679908, "end": 138692076}, {"filename": "/Data/Player/PantClass203.bmd", "start": 138692076, "end": 138705020}, {"filename": "/Data/Player/PantElf01.bmd", "start": 138705020, "end": 138720989}, {"filename": "/Data/Player/PantElf02.bmd", "start": 138720989, "end": 138736370}, {"filename": "/Data/Player/PantElf03.bmd", "start": 138736370, "end": 138754859}, {"filename": "/Data/Player/PantElf04.bmd", "start": 138754859, "end": 138767956}, {"filename": "/Data/Player/PantElf05.bmd", "start": 138767956, "end": 138783903}, {"filename": "/Data/Player/PantMale01.bmd", "start": 138783903, "end": 138798112}, {"filename": "/Data/Player/PantMale02.bmd", "start": 138798112, "end": 138812185}, {"filename": "/Data/Player/PantMale03.bmd", "start": 138812185, "end": 138828174}, {"filename": "/Data/Player/PantMale04.bmd", "start": 138828174, "end": 138842921}, {"filename": "/Data/Player/PantMale05.bmd", "start": 138842921, "end": 138857552}, {"filename": "/Data/Player/PantMale06.bmd", "start": 138857552, "end": 138871937}, {"filename": "/Data/Player/PantMale07.bmd", "start": 138871937, "end": 138885454}, {"filename": "/Data/Player/PantMale08.bmd", "start": 138885454, "end": 138901825}, {"filename": "/Data/Player/PantMale09.bmd", "start": 138901825, "end": 138916332}, {"filename": "/Data/Player/PantMale10.bmd", "start": 138916332, "end": 138928309}, {"filename": "/Data/Player/PantMale16.bmd", "start": 138928309, "end": 138940286}, {"filename": "/Data/Player/PantMale17.bmd", "start": 138940286, "end": 138954767}, {"filename": "/Data/Player/PantMale18.bmd", "start": 138954767, "end": 138976232}, {"filename": "/Data/Player/PantMale19.bmd", "start": 138976232, "end": 138989689}, {"filename": "/Data/Player/PantMale20.bmd", "start": 138989689, "end": 139033454}, {"filename": "/Data/Player/PantMale21.bmd", "start": 139033454, "end": 139054274}, {"filename": "/Data/Player/PantMale22.bmd", "start": 139054274, "end": 139069336}, {"filename": "/Data/Player/PantMale23.bmd", "start": 139069336, "end": 139089663}, {"filename": "/Data/Player/PantMale24.bmd", "start": 139089663, "end": 139112225}, {"filename": "/Data/Player/PantMale25.bmd", "start": 139112225, "end": 139136375}, {"filename": "/Data/Player/PantMale26.bmd", "start": 139136375, "end": 139147943}, {"filename": "/Data/Player/PantMale27.bmd", "start": 139147943, "end": 139158183}, {"filename": "/Data/Player/PantMale28.bmd", "start": 139158183, "end": 139169065}, {"filename": "/Data/Player/PantMale29.bmd", "start": 139169065, "end": 139179353}, {"filename": "/Data/Player/Robe01.OZJ", "start": 139179353, "end": 139191422}, {"filename": "/Data/Player/Robe02.OZJ", "start": 139191422, "end": 139198667}, {"filename": "/Data/Player/Robe03.OZT", "start": 139198667, "end": 139264251}, {"filename": "/Data/Player/Shadow01.bmd", "start": 139264251, "end": 139275922}, {"filename": "/Data/Player/Wing02.bmd", "start": 139275922, "end": 139282429}, {"filename": "/Data/Player/Wing03.bmd", "start": 139282429, "end": 139287800}, {"filename": "/Data/Player/Wing04.bmd", "start": 139287800, "end": 139291844}, {"filename": "/Data/Player/boot_10c.OZJ", "start": 139291844, "end": 139305347}, {"filename": "/Data/Player/boots.OZJ", "start": 139305347, "end": 139324433}, {"filename": "/Data/Player/boots22.OZJ", "start": 139324433, "end": 139343519}, {"filename": "/Data/Player/boots_02.OZJ", "start": 139343519, "end": 139355561}, {"filename": "/Data/Player/boots_03.OZJ", "start": 139355561, "end": 139369579}, {"filename": "/Data/Player/boots_03b.OZJ", "start": 139369579, "end": 139384416}, {"filename": "/Data/Player/boots_04.OZJ", "start": 139384416, "end": 139395842}, {"filename": "/Data/Player/boots_04b.OZT", "start": 139395842, "end": 139399986}, {"filename": "/Data/Player/boots_04c.OZJ", "start": 139399986, "end": 139410751}, {"filename": "/Data/Player/boots_06.OZJ", "start": 139410751, "end": 139420226}, {"filename": "/Data/Player/boots_07.OZJ", "start": 139420226, "end": 139429717}, {"filename": "/Data/Player/boots_08.OZJ", "start": 139429717, "end": 139441551}, {"filename": "/Data/Player/boots_09.OZJ", "start": 139441551, "end": 139451808}, {"filename": "/Data/Player/boots_09c.OZJ", "start": 139451808, "end": 139463917}, {"filename": "/Data/Player/boots_10.OZJ", "start": 139463917, "end": 139476755}, {"filename": "/Data/Player/boots_10b.OZT", "start": 139476755, "end": 139480899}, {"filename": "/Data/Player/boots_11.OZJ", "start": 139480899, "end": 139494043}, {"filename": "/Data/Player/boots_13m.OZJ", "start": 139494043, "end": 139506016}, {"filename": "/Data/Player/boots_14.OZT", "start": 139506016, "end": 139522448}, {"filename": "/Data/Player/boots_14m.OZJ", "start": 139522448, "end": 139533083}, {"filename": "/Data/Player/boots_15.OZT", "start": 139533083, "end": 139549515}, {"filename": "/Data/Player/boots_15m.OZJ", "start": 139549515, "end": 139563495}, {"filename": "/Data/Player/boots_17.OZJ", "start": 139563495, "end": 139574741}, {"filename": "/Data/Player/boots_18.OZJ", "start": 139574741, "end": 139583271}, {"filename": "/Data/Player/boots_E1.OZJ", "start": 139583271, "end": 139593565}, {"filename": "/Data/Player/boots_E1Test.OZJ", "start": 139593565, "end": 139610346}, {"filename": "/Data/Player/boots_bd.OZJ", "start": 139610346, "end": 139622267}, {"filename": "/Data/Player/boots_bld.OZJ", "start": 139622267, "end": 139631465}, {"filename": "/Data/Player/boots_c07.OZJ", "start": 139631465, "end": 139642702}, {"filename": "/Data/Player/devil_wing.OZT", "start": 139642702, "end": 139708286}, {"filename": "/Data/Player/elfin_wing.OZJ", "start": 139708286, "end": 139717968}, {"filename": "/Data/Player/glove.OZJ", "start": 139717968, "end": 139734813}, {"filename": "/Data/Player/glove22.OZJ", "start": 139734813, "end": 139751658}, {"filename": "/Data/Player/gloves_02.OZJ", "start": 139751658, "end": 139764522}, {"filename": "/Data/Player/gloves_03.OZJ", "start": 139764522, "end": 139777698}, {"filename": "/Data/Player/gloves_03b.OZJ", "start": 139777698, "end": 139791733}, {"filename": "/Data/Player/gloves_04.OZJ", "start": 139791733, "end": 139805424}, {"filename": "/Data/Player/gloves_04c.OZJ", "start": 139805424, "end": 139817863}, {"filename": "/Data/Player/gloves_06.OZJ", "start": 139817863, "end": 139829472}, {"filename": "/Data/Player/gloves_07.OZJ", "start": 139829472, "end": 139839623}, {"filename": "/Data/Player/gloves_08.OZJ", "start": 139839623, "end": 139850993}, {"filename": "/Data/Player/gloves_09.OZJ", "start": 139850993, "end": 139862557}, {"filename": "/Data/Player/gloves_09c.OZJ", "start": 139862557, "end": 139875180}, {"filename": "/Data/Player/gloves_10.OZJ", "start": 139875180, "end": 139888812}, {"filename": "/Data/Player/gloves_10c.OZJ", "start": 139888812, "end": 139902951}, {"filename": "/Data/Player/gloves_11.OZJ", "start": 139902951, "end": 139916919}, {"filename": "/Data/Player/gloves_13m.OZJ", "start": 139916919, "end": 139927737}, {"filename": "/Data/Player/gloves_14.OZT", "start": 139927737, "end": 139944169}, {"filename": "/Data/Player/gloves_14m.OZJ", "start": 139944169, "end": 139954425}, {"filename": "/Data/Player/gloves_15.OZT", "start": 139954425, "end": 139970857}, {"filename": "/Data/Player/gloves_15m.OZJ", "start": 139970857, "end": 139979315}, {"filename": "/Data/Player/gloves_17.OZJ", "start": 139979315, "end": 139989852}, {"filename": "/Data/Player/gloves_18.OZJ", "start": 139989852, "end": 139997597}, {"filename": "/Data/Player/gloves_E1.OZJ", "start": 139997597, "end": 140007953}, {"filename": "/Data/Player/gloves_E1Test.OZJ", "start": 140007953, "end": 140018636}, {"filename": "/Data/Player/gloves_bd.OZJ", "start": 140018636, "end": 140032487}, {"filename": "/Data/Player/gloves_bld.OZJ", "start": 140032487, "end": 140041226}, {"filename": "/Data/Player/gloves_c07.OZJ", "start": 140041226, "end": 140052940}, {"filename": "/Data/Player/guard_hair.OZT", "start": 140052940, "end": 140057084}, {"filename": "/Data/Player/hair_R.OZJ", "start": 140057084, "end": 140060663}, {"filename": "/Data/Player/head.OZJ", "start": 140060663, "end": 140078250}, {"filename": "/Data/Player/head22.OZJ", "start": 140078250, "end": 140095837}, {"filename": "/Data/Player/head_02.OZJ", "start": 140095837, "end": 140108121}, {"filename": "/Data/Player/head_03.OZJ", "start": 140108121, "end": 140121848}, {"filename": "/Data/Player/head_04.OZJ", "start": 140121848, "end": 140133731}, {"filename": "/Data/Player/head_06.OZJ", "start": 140133731, "end": 140143290}, {"filename": "/Data/Player/head_07.OZJ", "start": 140143290, "end": 140152241}, {"filename": "/Data/Player/head_08.OZJ", "start": 140152241, "end": 140162993}, {"filename": "/Data/Player/head_09.OZJ", "start": 140162993, "end": 140173438}, {"filename": "/Data/Player/head_09b.OZT", "start": 140173438, "end": 140189870}, {"filename": "/Data/Player/head_10.OZJ", "start": 140189870, "end": 140202326}, {"filename": "/Data/Player/head_11.OZJ", "start": 140202326, "end": 140213408}, {"filename": "/Data/Player/head_13m.OZJ", "start": 140213408, "end": 140225690}, {"filename": "/Data/Player/head_13m.OZT", "start": 140225690, "end": 140227786}, {"filename": "/Data/Player/head_14m.OZJ", "start": 140227786, "end": 140235084}, {"filename": "/Data/Player/head_15m.OZJ", "start": 140235084, "end": 140243716}, {"filename": "/Data/Player/head_17.OZJ", "start": 140243716, "end": 140255409}, {"filename": "/Data/Player/head_18.OZJ", "start": 140255409, "end": 140264249}, {"filename": "/Data/Player/head_E1.OZJ", "start": 140264249, "end": 140272757}, {"filename": "/Data/Player/head_E1Test.OZJ", "start": 140272757, "end": 140282425}, {"filename": "/Data/Player/head_a01.OZJ", "start": 140282425, "end": 140290700}, {"filename": "/Data/Player/head_a02.OZJ", "start": 140290700, "end": 140302205}, {"filename": "/Data/Player/head_a03.OZJ", "start": 140302205, "end": 140314675}, {"filename": "/Data/Player/head_a04.OZJ", "start": 140314675, "end": 140328503}, {"filename": "/Data/Player/head_a05.OZJ", "start": 140328503, "end": 140341025}, {"filename": "/Data/Player/head_a06.OZT", "start": 140341025, "end": 140345169}, {"filename": "/Data/Player/head_bd.OZJ", "start": 140345169, "end": 140356218}, {"filename": "/Data/Player/head_bld.OZJ", "start": 140356218, "end": 140363946}, {"filename": "/Data/Player/hide.OZJ", "start": 140363946, "end": 140368502}, {"filename": "/Data/Player/hide22.OZJ", "start": 140368502, "end": 140373058}, {"filename": "/Data/Player/hide_m.OZJ", "start": 140373058, "end": 140377598}, {"filename": "/Data/Player/kaa.OZT", "start": 140377598, "end": 140394030}, {"filename": "/Data/Player/khair.OZT", "start": 140394030, "end": 140459614}, {"filename": "/Data/Player/level_man01.OZJ", "start": 140459614, "end": 140536428}, {"filename": "/Data/Player/level_man02.OZJ", "start": 140536428, "end": 140593046}, {"filename": "/Data/Player/level_man022.OZJ", "start": 140593046, "end": 140658826}, {"filename": "/Data/Player/level_man033.OZJ", "start": 140658826, "end": 140759162}, {"filename": "/Data/Player/lower2_15m.OZT", "start": 140759162, "end": 140775594}, {"filename": "/Data/Player/lowerTest2_R.OZJ", "start": 140775594, "end": 140780834}, {"filename": "/Data/Player/lowerTest_R.OZJ", "start": 140780834, "end": 140787382}, {"filename": "/Data/Player/lower_02_m.OZJ", "start": 140787382, "end": 140822886}, {"filename": "/Data/Player/lower_03.OZJ", "start": 140822886, "end": 140859705}, {"filename": "/Data/Player/lower_03_m.OZJ", "start": 140859705, "end": 140899541}, {"filename": "/Data/Player/lower_03b.OZT", "start": 140899541, "end": 140915973}, {"filename": "/Data/Player/lower_03b_m.OZT", "start": 140915973, "end": 140932405}, {"filename": "/Data/Player/lower_04.OZJ", "start": 140932405, "end": 140942965}, {"filename": "/Data/Player/lower_04_m.OZJ", "start": 140942965, "end": 140978864}, {"filename": "/Data/Player/lower_04b.OZT", "start": 140978864, "end": 140983008}, {"filename": "/Data/Player/lower_04b_m.OZT", "start": 140983008, "end": 140987152}, {"filename": "/Data/Player/lower_04c.OZT", "start": 140987152, "end": 140991296}, {"filename": "/Data/Player/lower_06.OZJ", "start": 140991296, "end": 141021289}, {"filename": "/Data/Player/lower_07.OZJ", "start": 141021289, "end": 141049702}, {"filename": "/Data/Player/lower_07.OZT", "start": 141049702, "end": 141066134}, {"filename": "/Data/Player/lower_07_m.OZJ", "start": 141066134, "end": 141087973}, {"filename": "/Data/Player/lower_07c.OZT", "start": 141087973, "end": 141104405}, {"filename": "/Data/Player/lower_08_m.OZJ", "start": 141104405, "end": 141137940}, {"filename": "/Data/Player/lower_09.OZJ", "start": 141137940, "end": 141163403}, {"filename": "/Data/Player/lower_09_m.OZJ", "start": 141163403, "end": 141199082}, {"filename": "/Data/Player/lower_09b.OZT", "start": 141199082, "end": 141215514}, {"filename": "/Data/Player/lower_09c.OZT", "start": 141215514, "end": 141219658}, {"filename": "/Data/Player/lower_10_m.OZJ", "start": 141219658, "end": 141248521}, {"filename": "/Data/Player/lower_10b.OZT", "start": 141248521, "end": 141252665}, {"filename": "/Data/Player/lower_10c.OZJ", "start": 141252665, "end": 141291342}, {"filename": "/Data/Player/lower_11.OZJ", "start": 141291342, "end": 141326189}, {"filename": "/Data/Player/lower_13m.OZJ", "start": 141326189, "end": 141346736}, {"filename": "/Data/Player/lower_13m.OZT", "start": 141346736, "end": 141354976}, {"filename": "/Data/Player/lower_14.OZT", "start": 141354976, "end": 141387792}, {"filename": "/Data/Player/lower_14m.OZJ", "start": 141387792, "end": 141404700}, {"filename": "/Data/Player/lower_15.OZT", "start": 141404700, "end": 141437516}, {"filename": "/Data/Player/lower_15m.OZJ", "start": 141437516, "end": 141463703}, {"filename": "/Data/Player/lower_17.OZJ", "start": 141463703, "end": 141483409}, {"filename": "/Data/Player/lower_18.OZJ", "start": 141483409, "end": 141494407}, {"filename": "/Data/Player/lower_E1.OZJ", "start": 141494407, "end": 141522331}, {"filename": "/Data/Player/lower_E1.OZT", "start": 141522331, "end": 141587915}, {"filename": "/Data/Player/lower_E1Test.OZJ", "start": 141587915, "end": 141604817}, {"filename": "/Data/Player/lower_a06.OZT", "start": 141604817, "end": 141608961}, {"filename": "/Data/Player/lower_bd.OZJ", "start": 141608961, "end": 141632242}, {"filename": "/Data/Player/lower_bd.OZT", "start": 141632242, "end": 141648674}, {"filename": "/Data/Player/lower_bld.OZJ", "start": 141648674, "end": 141669792}, {"filename": "/Data/Player/lower_bld.OZT", "start": 141669792, "end": 141686224}, {"filename": "/Data/Player/mg_arm.OZT", "start": 141686224, "end": 141702656}, {"filename": "/Data/Player/mg_boots.OZT", "start": 141702656, "end": 141768240}, {"filename": "/Data/Player/mg_jacket.OZT", "start": 141768240, "end": 141833824}, {"filename": "/Data/Player/mg_under.OZT", "start": 141833824, "end": 141866640}, {"filename": "/Data/Player/pants.OZJ", "start": 141866640, "end": 141901085}, {"filename": "/Data/Player/pants02.OZT", "start": 141901085, "end": 141917517}, {"filename": "/Data/Player/pants22.OZJ", "start": 141917517, "end": 141951962}, {"filename": "/Data/Player/pants22.OZT", "start": 141951962, "end": 141968394}, {"filename": "/Data/Player/player.bmd", "start": 141968394, "end": 143442507}, {"filename": "/Data/Player/skin_E1.OZJ", "start": 143442507, "end": 143447033}, {"filename": "/Data/Player/skin_archer_01.OZJ", "start": 143447033, "end": 143519665}, {"filename": "/Data/Player/skin_barbarian_01.OZJ", "start": 143519665, "end": 143577955}, {"filename": "/Data/Player/skin_ff.OZJ", "start": 143577955, "end": 143589789}, {"filename": "/Data/Player/skin_special_01.OZJ", "start": 143589789, "end": 143663968}, {"filename": "/Data/Player/skin_warrior_01.OZJ", "start": 143663968, "end": 143733989}, {"filename": "/Data/Player/skin_wizard_01.OZJ", "start": 143733989, "end": 143802841}, {"filename": "/Data/Player/upper.OZJ", "start": 143802841, "end": 143847458}, {"filename": "/Data/Player/upper22.OZJ", "start": 143847458, "end": 143892075}, {"filename": "/Data/Player/upper_02_m.OZJ", "start": 143892075, "end": 143914482}, {"filename": "/Data/Player/upper_02b_m.OZT", "start": 143914482, "end": 143918626}, {"filename": "/Data/Player/upper_03.OZJ", "start": 143918626, "end": 143955149}, {"filename": "/Data/Player/upper_03_m.OZJ", "start": 143955149, "end": 143998820}, {"filename": "/Data/Player/upper_04.OZJ", "start": 143998820, "end": 144021389}, {"filename": "/Data/Player/upper_04_m.OZJ", "start": 144021389, "end": 144050623}, {"filename": "/Data/Player/upper_06.OZJ", "start": 144050623, "end": 144074896}, {"filename": "/Data/Player/upper_07.OZJ", "start": 144074896, "end": 144106127}, {"filename": "/Data/Player/upper_07_m.OZJ", "start": 144106127, "end": 144125860}, {"filename": "/Data/Player/upper_07b_m.OZT", "start": 144125860, "end": 144130004}, {"filename": "/Data/Player/upper_08_m.OZJ", "start": 144130004, "end": 144164503}, {"filename": "/Data/Player/upper_09.OZJ", "start": 144164503, "end": 144197550}, {"filename": "/Data/Player/upper_09_m.OZJ", "start": 144197550, "end": 144225285}, {"filename": "/Data/Player/upper_09b_m.OZT", "start": 144225285, "end": 144229429}, {"filename": "/Data/Player/upper_09c.OZT", "start": 144229429, "end": 144233573}, {"filename": "/Data/Player/upper_10_m.OZJ", "start": 144233573, "end": 144268707}, {"filename": "/Data/Player/upper_10c.OZJ", "start": 144268707, "end": 144306720}, {"filename": "/Data/Player/upper_11.OZJ", "start": 144306720, "end": 144343627}, {"filename": "/Data/Player/upper_13m.OZJ", "start": 144343627, "end": 144375095}, {"filename": "/Data/Player/upper_14.OZT", "start": 144375095, "end": 144440679}, {"filename": "/Data/Player/upper_14m.OZJ", "start": 144440679, "end": 144472786}, {"filename": "/Data/Player/upper_15.OZT", "start": 144472786, "end": 144538370}, {"filename": "/Data/Player/upper_15m.OZJ", "start": 144538370, "end": 144566685}, {"filename": "/Data/Player/upper_17.OZJ", "start": 144566685, "end": 144591281}, {"filename": "/Data/Player/upper_18.OZJ", "start": 144591281, "end": 144618536}, {"filename": "/Data/Player/upper_E1.OZJ", "start": 144618536, "end": 144654093}, {"filename": "/Data/Player/upper_E1.OZT", "start": 144654093, "end": 144719677}, {"filename": "/Data/Player/upper_E1Test.OZJ", "start": 144719677, "end": 144747087}, {"filename": "/Data/Player/upper_bd.OZJ", "start": 144747087, "end": 144776410}, {"filename": "/Data/Player/upper_bld.OZJ", "start": 144776410, "end": 144801291}, {"filename": "/Data/Skill/Airforce.bmd", "start": 144801291, "end": 144806909}, {"filename": "/Data/Skill/Arrow.OZJ", "start": 144806909, "end": 144811865}, {"filename": "/Data/Skill/Arrow01.bmd", "start": 144811865, "end": 144816715}, {"filename": "/Data/Skill/Arrowbomb01.bmd", "start": 144816715, "end": 144819859}, {"filename": "/Data/Skill/Arrowdouble01.bmd", "start": 144819859, "end": 144830175}, {"filename": "/Data/Skill/Arrowlaser01.bmd", "start": 144830175, "end": 144830777}, {"filename": "/Data/Skill/Arrownature01.bmd", "start": 144830777, "end": 144856357}, {"filename": "/Data/Skill/Arrowsaw01.bmd", "start": 144856357, "end": 144866535}, {"filename": "/Data/Skill/Arrowsteel01.bmd", "start": 144866535, "end": 144869045}, {"filename": "/Data/Skill/Arrowthunder01.bmd", "start": 144869045, "end": 144871923}, {"filename": "/Data/Skill/Arrowv01.bmd", "start": 144871923, "end": 144873009}, {"filename": "/Data/Skill/Arrowwing01.bmd", "start": 144873009, "end": 144877691}, {"filename": "/Data/Skill/Ball01.bmd", "start": 144877691, "end": 144894890}, {"filename": "/Data/Skill/Bigstone01.bmd", "start": 144894890, "end": 144896996}, {"filename": "/Data/Skill/Bigstone02.bmd", "start": 144896996, "end": 144899102}, {"filename": "/Data/Skill/Blast01.bmd", "start": 144899102, "end": 144900128}, {"filename": "/Data/Skill/Blizzard.bmd", "start": 144900128, "end": 144901850}, {"filename": "/Data/Skill/Bone01.bmd", "start": 144901850, "end": 144909044}, {"filename": "/Data/Skill/Bone02.bmd", "start": 144909044, "end": 144912030}, {"filename": "/Data/Skill/Bons.OZJ", "start": 144912030, "end": 144939829}, {"filename": "/Data/Skill/Bons_a.OZJ", "start": 144939829, "end": 144974833}, {"filename": "/Data/Skill/Bons_a2.OZT", "start": 144974833, "end": 144976929}, {"filename": "/Data/Skill/Bons_b.OZJ", "start": 144976929, "end": 145004487}, {"filename": "/Data/Skill/Bons_particle.OZJ", "start": 145004487, "end": 145014970}, {"filename": "/Data/Skill/Bow_b.OZJ", "start": 145014970, "end": 145026429}, {"filename": "/Data/Skill/Bow_c.OZJ", "start": 145026429, "end": 145031917}, {"filename": "/Data/Skill/Bow_d.OZJ", "start": 145031917, "end": 145037546}, {"filename": "/Data/Skill/Bowtt.OZJ", "start": 145037546, "end": 145040411}, {"filename": "/Data/Skill/Bowtt2.OZJ", "start": 145040411, "end": 145043597}, {"filename": "/Data/Skill/Bu009.OZJ", "start": 145043597, "end": 145049923}, {"filename": "/Data/Skill/Carow.OZJ", "start": 145049923, "end": 145061732}, {"filename": "/Data/Skill/Carow.bmd", "start": 145061732, "end": 145066933}, {"filename": "/Data/Skill/Circle01.bmd", "start": 145066933, "end": 145067787}, {"filename": "/Data/Skill/Circle02.bmd", "start": 145067787, "end": 145077901}, {"filename": "/Data/Skill/Crossb.OZJ", "start": 145077901, "end": 145080077}, {"filename": "/Data/Skill/Ct10.OZJ", "start": 145080077, "end": 145127714}, {"filename": "/Data/Skill/Curer.OZJ", "start": 145127714, "end": 145135482}, {"filename": "/Data/Skill/Dhorss.OZJ", "start": 145135482, "end": 145157613}, {"filename": "/Data/Skill/Dhorss_r.OZJ", "start": 145157613, "end": 145160849}, {"filename": "/Data/Skill/Dragon02.OZJ", "start": 145160849, "end": 145179096}, {"filename": "/Data/Skill/Earow.OZJ", "start": 145179096, "end": 145192289}, {"filename": "/Data/Skill/Earthquake01.bmd", "start": 145192289, "end": 145192679}, {"filename": "/Data/Skill/Earthquake02.bmd", "start": 145192679, "end": 145194617}, {"filename": "/Data/Skill/Earthquake03.bmd", "start": 145194617, "end": 145195007}, {"filename": "/Data/Skill/Earthquake04.bmd", "start": 145195007, "end": 145195397}, {"filename": "/Data/Skill/Earthquake05.bmd", "start": 145195397, "end": 145197319}, {"filename": "/Data/Skill/Earthquake06.bmd", "start": 145197319, "end": 145197709}, {"filename": "/Data/Skill/Earthquake07.bmd", "start": 145197709, "end": 145198099}, {"filename": "/Data/Skill/Earthquake08.bmd", "start": 145198099, "end": 145200037}, {"filename": "/Data/Skill/Ffa1.OZJ", "start": 145200037, "end": 145205819}, {"filename": "/Data/Skill/Ffa2.OZJ", "start": 145205819, "end": 145211105}, {"filename": "/Data/Skill/Fire01.OZJ", "start": 145211105, "end": 145221616}, {"filename": "/Data/Skill/Fire01.bmd", "start": 145221616, "end": 145230711}, {"filename": "/Data/Skill/Fire02.OZJ", "start": 145230711, "end": 145243490}, {"filename": "/Data/Skill/Flashing.bmd", "start": 145243490, "end": 145244980}, {"filename": "/Data/Skill/Flower1.OZT", "start": 145244980, "end": 145249124}, {"filename": "/Data/Skill/Flower2.OZT", "start": 145249124, "end": 145253268}, {"filename": "/Data/Skill/Flower3.OZT", "start": 145253268, "end": 145257412}, {"filename": "/Data/Skill/Foot.OZJ", "start": 145257412, "end": 145267590}, {"filename": "/Data/Skill/Fury.OZJ", "start": 145267590, "end": 145279302}, {"filename": "/Data/Skill/Fury.OZT", "start": 145279302, "end": 145312118}, {"filename": "/Data/Skill/Ground.OZJ", "start": 145312118, "end": 145335795}, {"filename": "/Data/Skill/Groundeff.OZJ", "start": 145335795, "end": 145378915}, {"filename": "/Data/Skill/Groundstone.bmd", "start": 145378915, "end": 145385965}, {"filename": "/Data/Skill/Groundstone2.bmd", "start": 145385965, "end": 145396031}, {"filename": "/Data/Skill/Ice.OZJ", "start": 145396031, "end": 145424913}, {"filename": "/Data/Skill/Ice01.bmd", "start": 145424913, "end": 145454879}, {"filename": "/Data/Skill/Ice02.bmd", "start": 145454879, "end": 145455665}, {"filename": "/Data/Skill/Inferno01.bmd", "start": 145455665, "end": 145515153}, {"filename": "/Data/Skill/Kcross.bmd", "start": 145515153, "end": 145520915}, {"filename": "/Data/Skill/Kcrossb.OZJ", "start": 145520915, "end": 145522893}, {"filename": "/Data/Skill/Kcteil.OZJ", "start": 145522893, "end": 145533622}, {"filename": "/Data/Skill/Kings_r.OZJ", "start": 145533622, "end": 145554852}, {"filename": "/Data/Skill/Laser01.bmd", "start": 145554852, "end": 145561930}, {"filename": "/Data/Skill/M_piercing.OZJ", "start": 145561930, "end": 145573897}, {"filename": "/Data/Skill/M_piercing.OZT", "start": 145573897, "end": 145590329}, {"filename": "/Data/Skill/M_piercing.bmd", "start": 145590329, "end": 145593897}, {"filename": "/Data/Skill/M_piercing02.OZJ", "start": 145593897, "end": 145602635}, {"filename": "/Data/Skill/M_piercing02.OZT", "start": 145602635, "end": 145606779}, {"filename": "/Data/Skill/M_waves.bmd", "start": 145606779, "end": 145609809}, {"filename": "/Data/Skill/Magic01.bmd", "start": 145609809, "end": 145613495}, {"filename": "/Data/Skill/Magic02.bmd", "start": 145613495, "end": 145615449}, {"filename": "/Data/Skill/Magic2.OZJ", "start": 145615449, "end": 145618920}, {"filename": "/Data/Skill/Magic_a01.OZJ", "start": 145618920, "end": 145636843}, {"filename": "/Data/Skill/Magic_a02.OZJ", "start": 145636843, "end": 145649098}, {"filename": "/Data/Skill/Magic_b.OZJ", "start": 145649098, "end": 145662662}, {"filename": "/Data/Skill/Magic_g.OZJ", "start": 145662662, "end": 145677895}, {"filename": "/Data/Skill/Magiccircle01.bmd", "start": 145677895, "end": 145684254}, {"filename": "/Data/Skill/Mmn2.OZJ", "start": 145684254, "end": 145688130}, {"filename": "/Data/Skill/Part.OZT", "start": 145688130, "end": 145704562}, {"filename": "/Data/Skill/Part2.OZT", "start": 145704562, "end": 145720994}, {"filename": "/Data/Skill/Phoenixshield01.bmd", "start": 145720994, "end": 145755594}, {"filename": "/Data/Skill/Piercing.OZJ", "start": 145755594, "end": 145769798}, {"filename": "/Data/Skill/Piercing.bmd", "start": 145769798, "end": 145772228}, {"filename": "/Data/Skill/Pierpart.bmd", "start": 145772228, "end": 145784607}, {"filename": "/Data/Skill/Poison01.bmd", "start": 145784607, "end": 145824967}, {"filename": "/Data/Skill/Protect01.bmd", "start": 145824967, "end": 145829153}, {"filename": "/Data/Skill/Protect02.bmd", "start": 145829153, "end": 145837523}, {"filename": "/Data/Skill/Rdgon.OZJ", "start": 145837523, "end": 145926466}, {"filename": "/Data/Skill/Rdgonw.OZT", "start": 145926466, "end": 145959282}, {"filename": "/Data/Skill/Reddragon_n.OZJ", "start": 145959282, "end": 146042497}, {"filename": "/Data/Skill/Reddragon_n.OZT", "start": 146042497, "end": 146304689}, {"filename": "/Data/Skill/Reddragont.OZJ", "start": 146304689, "end": 146315065}, {"filename": "/Data/Skill/Rider01.bmd", "start": 146315065, "end": 146371605}, {"filename": "/Data/Skill/Rider02.bmd", "start": 146371605, "end": 146561618}, {"filename": "/Data/Skill/Ridingspear01.bmd", "start": 146561618, "end": 146562804}, {"filename": "/Data/Skill/Ring2.OZJ", "start": 146562804, "end": 146572748}, {"filename": "/Data/Skill/Ring3.OZJ", "start": 146572748, "end": 146582225}, {"filename": "/Data/Skill/Ring4.OZJ", "start": 146582225, "end": 146601924}, {"filename": "/Data/Skill/Saw01.bmd", "start": 146601924, "end": 146612102}, {"filename": "/Data/Skill/Skeleton01.bmd", "start": 146612102, "end": 146657357}, {"filename": "/Data/Skill/Skeleton02.bmd", "start": 146657357, "end": 146731190}, {"filename": "/Data/Skill/Skeleton03.bmd", "start": 146731190, "end": 146794058}, {"filename": "/Data/Skill/Skull.OZJ", "start": 146794058, "end": 146796334}, {"filename": "/Data/Skill/Snow01.bmd", "start": 146796334, "end": 146800832}, {"filename": "/Data/Skill/Snow02.bmd", "start": 146800832, "end": 146804486}, {"filename": "/Data/Skill/Snow03.bmd", "start": 146804486, "end": 146805668}, {"filename": "/Data/Skill/Snow_p.OZJ", "start": 146805668, "end": 146811339}, {"filename": "/Data/Skill/Sou01.OZJ", "start": 146811339, "end": 146822477}, {"filename": "/Data/Skill/Sou02.OZJ", "start": 146822477, "end": 146829752}, {"filename": "/Data/Skill/Soul_ba.OZJ", "start": 146829752, "end": 146837113}, {"filename": "/Data/Skill/Spie_r.OZJ", "start": 146837113, "end": 146843352}, {"filename": "/Data/Skill/Ston1.OZJ", "start": 146843352, "end": 146855896}, {"filename": "/Data/Skill/Stone01.bmd", "start": 146855896, "end": 146857078}, {"filename": "/Data/Skill/Stone02.bmd", "start": 146857078, "end": 146860732}, {"filename": "/Data/Skill/Storm01.bmd", "start": 146860732, "end": 146899392}, {"filename": "/Data/Skill/Tail.bmd", "start": 146899392, "end": 146899782}, {"filename": "/Data/Skill/Tama01.bmd", "start": 146899782, "end": 146933946}, {"filename": "/Data/Skill/Test2.OZJ", "start": 146933946, "end": 146942133}, {"filename": "/Data/Skill/Test2.OZT", "start": 146942133, "end": 146958565}, {"filename": "/Data/Skill/Test_2.OZJ", "start": 146958565, "end": 146966752}, {"filename": "/Data/Skill/Test_2.OZT", "start": 146966752, "end": 146983184}, {"filename": "/Data/Skill/Toothed_whee.OZJ", "start": 146983184, "end": 146989065}, {"filename": "/Data/Skill/Typhoon.OZJ", "start": 146989065, "end": 147000167}, {"filename": "/Data/Skill/V.OZJ", "start": 147000167, "end": 147004840}, {"filename": "/Data/Skill/Wall01.OZJ", "start": 147004840, "end": 147017176}, {"filename": "/Data/Skill/Wall02.OZJ", "start": 147017176, "end": 147024444}, {"filename": "/Data/Skill/Waveforce.bmd", "start": 147024444, "end": 147026069}, {"filename": "/Data/Skill/tama00.OZJ", "start": 147026069, "end": 147049115}, {"filename": "/Data/Skill/tama01.OZT", "start": 147049115, "end": 147057355}, {"filename": "/Data/Sound/Berserker.wav", "start": 147057355, "end": 147241967, "audio": 1}, {"filename": "/Data/Sound/aBat.wav", "start": 147241967, "end": 147351097, "audio": 1}, {"filename": "/Data/Sound/aBird1.WAV", "start": 147351097, "end": 147416195}, {"filename": "/Data/Sound/aBird2.WAV", "start": 147416195, "end": 147436041}, {"filename": "/Data/Sound/aCastleDoor.wav", "start": 147436041, "end": 147546821, "audio": 1}, {"filename": "/Data/Sound/aDoor.wav", "start": 147546821, "end": 147663031, "audio": 1}, {"filename": "/Data/Sound/aDungeon.wav", "start": 147663031, "end": 148396709, "audio": 1}, {"filename": "/Data/Sound/aForest.wav", "start": 148396709, "end": 149332481, "audio": 1}, {"filename": "/Data/Sound/aGrate.wav", "start": 149332481, "end": 149385735, "audio": 1}, {"filename": "/Data/Sound/aHeaven.wav", "start": 149385735, "end": 150574043, "audio": 1}, {"filename": "/Data/Sound/aMouse.WAV", "start": 150574043, "end": 150689761}, {"filename": "/Data/Sound/aRain.wav", "start": 150689761, "end": 152428019, "audio": 1}, {"filename": "/Data/Sound/aTamajjang1.wav", "start": 152428019, "end": 152432453, "audio": 1}, {"filename": "/Data/Sound/aTamajjang2.wav", "start": 152432453, "end": 152436931, "audio": 1}, {"filename": "/Data/Sound/aThunder01.wav", "start": 152436931, "end": 152501761, "audio": 1}, {"filename": "/Data/Sound/aThunder02.wav", "start": 152501761, "end": 152566591, "audio": 1}, {"filename": "/Data/Sound/aThunder03.wav", "start": 152566591, "end": 152631421, "audio": 1}, {"filename": "/Data/Sound/aTower.wav", "start": 152631421, "end": 153468759, "audio": 1}, {"filename": "/Data/Sound/aWater.wav", "start": 153468759, "end": 154637789, "audio": 1}, {"filename": "/Data/Sound/aWind.wav", "start": 154637789, "end": 155755177, "audio": 1}, {"filename": "/Data/Sound/beep.wav", "start": 155755177, "end": 155759145, "audio": 1}, {"filename": "/Data/Sound/blood1.wav", "start": 155759145, "end": 156007359, "audio": 1}, {"filename": "/Data/Sound/blood_attack1.wav", "start": 156007359, "end": 156115157, "audio": 1}, {"filename": "/Data/Sound/blood_attack2.wav", "start": 156115157, "end": 156249347, "audio": 1}, {"filename": "/Data/Sound/blood_die.wav", "start": 156249347, "end": 156541149, "audio": 1}, {"filename": "/Data/Sound/death1.wav", "start": 156541149, "end": 156800371, "audio": 1}, {"filename": "/Data/Sound/death_attack1.wav", "start": 156800371, "end": 157055393, "audio": 1}, {"filename": "/Data/Sound/death_die.wav", "start": 157055393, "end": 157617075, "audio": 1}, {"filename": "/Data/Sound/desert.wav", "start": 157617075, "end": 159050745, "audio": 1}, {"filename": "/Data/Sound/eBloodAttack.wav", "start": 159050745, "end": 159068627, "audio": 1}, {"filename": "/Data/Sound/eBlow.wav", "start": 159068627, "end": 159095319, "audio": 1}, {"filename": "/Data/Sound/eBlow1.wav", "start": 159095319, "end": 159109961, "audio": 1}, {"filename": "/Data/Sound/eBlow2.wav", "start": 159109961, "end": 159132183, "audio": 1}, {"filename": "/Data/Sound/eBlow3.wav", "start": 159132183, "end": 159149923, "audio": 1}, {"filename": "/Data/Sound/eBlow4.wav", "start": 159149923, "end": 159171295, "audio": 1}, {"filename": "/Data/Sound/eBow.wav", "start": 159171295, "end": 159213097, "audio": 1}, {"filename": "/Data/Sound/eBreak.wav", "start": 159213097, "end": 159239387, "audio": 1}, {"filename": "/Data/Sound/eCrossbow.wav", "start": 159239387, "end": 159268941, "audio": 1}, {"filename": "/Data/Sound/eCrow.wav", "start": 159268941, "end": 159276799, "audio": 1}, {"filename": "/Data/Sound/eDownGate.wav", "start": 159276799, "end": 159443907, "audio": 1}, {"filename": "/Data/Sound/eExplosion.wav", "start": 159443907, "end": 159489567, "audio": 1}, {"filename": "/Data/Sound/eFirecracker1.wav", "start": 159489567, "end": 159618725, "audio": 1}, {"filename": "/Data/Sound/eFirecracker2.wav", "start": 159618725, "end": 159751127, "audio": 1}, {"filename": "/Data/Sound/eGem.wav", "start": 159751127, "end": 159779909, "audio": 1}, {"filename": "/Data/Sound/eHitCristal.wav", "start": 159779909, "end": 159797733, "audio": 1}, {"filename": "/Data/Sound/eHitGate.wav", "start": 159797733, "end": 159832825, "audio": 1}, {"filename": "/Data/Sound/eHitGate2.wav", "start": 159832825, "end": 159883169, "audio": 1}, {"filename": "/Data/Sound/eIceArrow.wav", "start": 159883169, "end": 160028915, "audio": 1}, {"filename": "/Data/Sound/eMedal.wav", "start": 160028915, "end": 160049801, "audio": 1}, {"filename": "/Data/Sound/eMeteorite.wav", "start": 160049801, "end": 160120549, "audio": 1}, {"filename": "/Data/Sound/eMix.wav", "start": 160120549, "end": 160675947, "audio": 1}, {"filename": "/Data/Sound/ePhoenixExp.wav", "start": 160675947, "end": 160702217, "audio": 1}, {"filename": "/Data/Sound/ePiercing.wav", "start": 160702217, "end": 160742997, "audio": 1}, {"filename": "/Data/Sound/eRaidShoot.wav", "start": 160742997, "end": 160862475, "audio": 1}, {"filename": "/Data/Sound/eRidingSpear.wav", "start": 160862475, "end": 160927499, "audio": 1}, {"filename": "/Data/Sound/eShortBlow1.wav", "start": 160927499, "end": 160949917, "audio": 1}, {"filename": "/Data/Sound/eShortBlow2.wav", "start": 160949917, "end": 160958739, "audio": 1}, {"filename": "/Data/Sound/eShortBlow3.wav", "start": 160958739, "end": 160972269, "audio": 1}, {"filename": "/Data/Sound/eSoulBarrier.wav", "start": 160972269, "end": 161043443, "audio": 1}, {"filename": "/Data/Sound/eSwellLife.wav", "start": 161043443, "end": 161257597, "audio": 1}, {"filename": "/Data/Sound/eSwingLightSword.wav", "start": 161257597, "end": 161310593, "audio": 1}, {"filename": "/Data/Sound/eSwingWeapon1.wav", "start": 161310593, "end": 161332269, "audio": 1}, {"filename": "/Data/Sound/eSwingWeapon2.wav", "start": 161332269, "end": 161352571, "audio": 1}, {"filename": "/Data/Sound/eTelekinesis.wav", "start": 161352571, "end": 161490617, "audio": 1}, {"filename": "/Data/Sound/eThunder.wav", "start": 161490617, "end": 161555469, "audio": 1}, {"filename": "/Data/Sound/iAlert.wav", "start": 161555469, "end": 161685327, "audio": 1}, {"filename": "/Data/Sound/iBloodCastle.wav", "start": 161685327, "end": 166409941, "audio": 1}, {"filename": "/Data/Sound/iButtonClick.wav", "start": 166409941, "end": 166426001, "audio": 1}, {"filename": "/Data/Sound/iButtonError.wav", "start": 166426001, "end": 166443345, "audio": 1}, {"filename": "/Data/Sound/iButtonMove.wav", "start": 166443345, "end": 166490221, "audio": 1}, {"filename": "/Data/Sound/iCreateWindow.wav", "start": 166490221, "end": 166579007, "audio": 1}, {"filename": "/Data/Sound/iRepair.wav", "start": 166579007, "end": 166586789, "audio": 1}, {"filename": "/Data/Sound/iTitle.wav", "start": 166586789, "end": 166946915, "audio": 1}, {"filename": "/Data/Sound/iWhisper.wav", "start": 166946915, "end": 166973127, "audio": 1}, {"filename": "/Data/Sound/iron1.wav", "start": 166973127, "end": 167153193, "audio": 1}, {"filename": "/Data/Sound/iron_attack1.wav", "start": 167153193, "end": 167323875, "audio": 1}, {"filename": "/Data/Sound/jaikan1.wav", "start": 167323875, "end": 167652533, "audio": 1}, {"filename": "/Data/Sound/jaikan2.wav", "start": 167652533, "end": 167762971, "audio": 1}, {"filename": "/Data/Sound/jaikan_attack1.wav", "start": 167762971, "end": 167995673, "audio": 1}, {"filename": "/Data/Sound/jaikan_attack2.wav", "start": 167995673, "end": 168084771, "audio": 1}, {"filename": "/Data/Sound/jaikan_die.wav", "start": 168084771, "end": 168412649, "audio": 1}, {"filename": "/Data/Sound/mAlquamos1.wav", "start": 168412649, "end": 168613985, "audio": 1}, {"filename": "/Data/Sound/mAlquamosAttack1.wav", "start": 168613985, "end": 168762065, "audio": 1}, {"filename": "/Data/Sound/mAlquamosDie.wav", "start": 168762065, "end": 168899681, "audio": 1}, {"filename": "/Data/Sound/mArgon1.wav", "start": 168899681, "end": 169012135, "audio": 1}, {"filename": "/Data/Sound/mArgon2.wav", "start": 169012135, "end": 169110997, "audio": 1}, {"filename": "/Data/Sound/mArgonAttack1.wav", "start": 169110997, "end": 169216207, "audio": 1}, {"filename": "/Data/Sound/mArgonAttack2.wav", "start": 169216207, "end": 169369073, "audio": 1}, {"filename": "/Data/Sound/mArgonDie.wav", "start": 169369073, "end": 169489079, "audio": 1}, {"filename": "/Data/Sound/mAssassin1.wav", "start": 169489079, "end": 169609261, "audio": 1}, {"filename": "/Data/Sound/mAssassinAttack1.wav", "start": 169609261, "end": 169658229, "audio": 1}, {"filename": "/Data/Sound/mAssassinAttack2.wav", "start": 169658229, "end": 169706187, "audio": 1}, {"filename": "/Data/Sound/mAssassinDie.wav", "start": 169706187, "end": 169774419, "audio": 1}, {"filename": "/Data/Sound/mBahamut1.wav", "start": 169774419, "end": 170200997, "audio": 1}, {"filename": "/Data/Sound/mBali1.wav", "start": 170200997, "end": 170498427, "audio": 1}, {"filename": "/Data/Sound/mBali2.wav", "start": 170498427, "end": 170841173, "audio": 1}, {"filename": "/Data/Sound/mBaliAttack1.wav", "start": 170841173, "end": 170900507, "audio": 1}, {"filename": "/Data/Sound/mBaliAttack2.wav", "start": 170900507, "end": 170959685, "audio": 1}, {"filename": "/Data/Sound/mBalrog1.wav", "start": 170959685, "end": 171167027, "audio": 1}, {"filename": "/Data/Sound/mBalrog2.wav", "start": 171167027, "end": 171400499, "audio": 1}, {"filename": "/Data/Sound/mBalrogDie.wav", "start": 171400499, "end": 171544855, "audio": 1}, {"filename": "/Data/Sound/mBeetle1.wav", "start": 171544855, "end": 171591905, "audio": 1}, {"filename": "/Data/Sound/mBeetleAttack1.wav", "start": 171591905, "end": 171692607, "audio": 1}, {"filename": "/Data/Sound/mBeetleDie.wav", "start": 171692607, "end": 171801229, "audio": 1}, {"filename": "/Data/Sound/mBepar1.wav", "start": 171801229, "end": 171962911, "audio": 1}, {"filename": "/Data/Sound/mBepar2.wav", "start": 171962911, "end": 172074861, "audio": 1}, {"filename": "/Data/Sound/mBlackSkullAttack.wav", "start": 172074861, "end": 172133219, "audio": 1}, {"filename": "/Data/Sound/mBlackSkullDie.wav", "start": 172133219, "end": 172790857, "audio": 1}, {"filename": "/Data/Sound/mBone1.WAV", "start": 172790857, "end": 172804802}, {"filename": "/Data/Sound/mBone2.wav", "start": 172804802, "end": 172957040, "audio": 1}, {"filename": "/Data/Sound/mBudge1.wav", "start": 172957040, "end": 172994020, "audio": 1}, {"filename": "/Data/Sound/mBudgeAttack1.wav", "start": 172994020, "end": 172999774, "audio": 1}, {"filename": "/Data/Sound/mBudgeDie.wav", "start": 172999774, "end": 173034970, "audio": 1}, {"filename": "/Data/Sound/mBull1.wav", "start": 173034970, "end": 173071442, "audio": 1}, {"filename": "/Data/Sound/mBull2.wav", "start": 173071442, "end": 173113726, "audio": 1}, {"filename": "/Data/Sound/mBullAttack1.wav", "start": 173113726, "end": 173183026, "audio": 1}, {"filename": "/Data/Sound/mBullAttack2.wav", "start": 173183026, "end": 173196158, "audio": 1}, {"filename": "/Data/Sound/mBullDie.wav", "start": 173196158, "end": 173249416, "audio": 1}, {"filename": "/Data/Sound/mChangeup.wav", "start": 173249416, "end": 173414922, "audio": 1}, {"filename": "/Data/Sound/mCursedKing1.wav", "start": 173414922, "end": 174134010, "audio": 1}, {"filename": "/Data/Sound/mCursedKing2.wav", "start": 174134010, "end": 174742914, "audio": 1}, {"filename": "/Data/Sound/mCursedKingDie1.wav", "start": 174742914, "end": 174990172, "audio": 1}, {"filename": "/Data/Sound/mDarkKnight1.wav", "start": 174990172, "end": 175113068, "audio": 1}, {"filename": "/Data/Sound/mDarkKnight2.wav", "start": 175113068, "end": 175299856, "audio": 1}, {"filename": "/Data/Sound/mDarkKnightAttack1.wav", "start": 175299856, "end": 175377232, "audio": 1}, {"filename": "/Data/Sound/mDarkKnightAttack2.wav", "start": 175377232, "end": 175448180, "audio": 1}, {"filename": "/Data/Sound/mDarkKnightDie.wav", "start": 175448180, "end": 175498686, "audio": 1}, {"filename": "/Data/Sound/mDrakan1.wav", "start": 175498686, "end": 175561114, "audio": 1}, {"filename": "/Data/Sound/mDrakanAttack1.wav", "start": 175561114, "end": 175575206, "audio": 1}, {"filename": "/Data/Sound/mDrakanDie.wav", "start": 175575206, "end": 175804188, "audio": 1}, {"filename": "/Data/Sound/mGhaintOrgerDie.wav", "start": 175804188, "end": 175912302, "audio": 1}, {"filename": "/Data/Sound/mGhost1.wav", "start": 175912302, "end": 176083988, "audio": 1}, {"filename": "/Data/Sound/mGhost2.wav", "start": 176083988, "end": 176295974, "audio": 1}, {"filename": "/Data/Sound/mGhostAttack1.wav", "start": 176295974, "end": 176341196, "audio": 1}, {"filename": "/Data/Sound/mGhostAttack2.wav", "start": 176341196, "end": 176381112, "audio": 1}, {"filename": "/Data/Sound/mGhostDie.wav", "start": 176381112, "end": 176540128, "audio": 1}, {"filename": "/Data/Sound/mGiant1.wav", "start": 176540128, "end": 176649098, "audio": 1}, {"filename": "/Data/Sound/mGiant2.wav", "start": 176649098, "end": 176766360, "audio": 1}, {"filename": "/Data/Sound/mGiantAttack1.wav", "start": 176766360, "end": 176770370, "audio": 1}, {"filename": "/Data/Sound/mGiantAttack2.wav", "start": 176770370, "end": 176826610, "audio": 1}, {"filename": "/Data/Sound/mGiantDie.wav", "start": 176826610, "end": 176903612, "audio": 1}, {"filename": "/Data/Sound/mGiantWalk.wav", "start": 176903612, "end": 176915032, "audio": 1}, {"filename": "/Data/Sound/mGoblin1.wav", "start": 176915032, "end": 177028850, "audio": 1}, {"filename": "/Data/Sound/mGoblin2.wav", "start": 177028850, "end": 177203508, "audio": 1}, {"filename": "/Data/Sound/mGoblinAttack1.wav", "start": 177203508, "end": 177339838, "audio": 1}, {"filename": "/Data/Sound/mGoblinAttack2.wav", "start": 177339838, "end": 177457788, "audio": 1}, {"filename": "/Data/Sound/mGoblinDie.wav", "start": 177457788, "end": 177643526, "audio": 1}, {"filename": "/Data/Sound/mGolem1.wav", "start": 177643526, "end": 177840576, "audio": 1}, {"filename": "/Data/Sound/mGolem2.wav", "start": 177840576, "end": 178032870, "audio": 1}, {"filename": "/Data/Sound/mGolemAttack1.wav", "start": 178032870, "end": 178187412, "audio": 1}, {"filename": "/Data/Sound/mGolemAttack2.wav", "start": 178187412, "end": 178383674, "audio": 1}, {"filename": "/Data/Sound/mGolemDie.wav", "start": 178383674, "end": 178584140, "audio": 1}, {"filename": "/Data/Sound/mGorgon1.wav", "start": 178584140, "end": 179082790, "audio": 1}, {"filename": "/Data/Sound/mGorgon2.wav", "start": 179082790, "end": 179249564, "audio": 1}, {"filename": "/Data/Sound/mGorgonAttack1.wav", "start": 179249564, "end": 179353442, "audio": 1}, {"filename": "/Data/Sound/mGorgonAttack2.wav", "start": 179353442, "end": 179409140, "audio": 1}, {"filename": "/Data/Sound/mGorgonDie.wav", "start": 179409140, "end": 179498306, "audio": 1}, {"filename": "/Data/Sound/mHellSpider1.wav", "start": 179498306, "end": 179542648, "audio": 1}, {"filename": "/Data/Sound/mHellSpiderAttack1.wav", "start": 179542648, "end": 179580812, "audio": 1}, {"filename": "/Data/Sound/mHellSpiderDie.wav", "start": 179580812, "end": 179670340, "audio": 1}, {"filename": "/Data/Sound/mHomord1.wav", "start": 179670340, "end": 179854222, "audio": 1}, {"filename": "/Data/Sound/mHomord2.wav", "start": 179854222, "end": 180209620, "audio": 1}, {"filename": "/Data/Sound/mHomordAttack1.wav", "start": 180209620, "end": 180254018, "audio": 1}, {"filename": "/Data/Sound/mHomordDie.wav", "start": 180254018, "end": 180289718, "audio": 1}, {"filename": "/Data/Sound/mHound1.wav", "start": 180289718, "end": 180349500, "audio": 1}, {"filename": "/Data/Sound/mHound2.wav", "start": 180349500, "end": 180458382, "audio": 1}, {"filename": "/Data/Sound/mHoundAttack1.wav", "start": 180458382, "end": 180507534, "audio": 1}, {"filename": "/Data/Sound/mHoundAttack2.wav", "start": 180507534, "end": 180537486, "audio": 1}, {"filename": "/Data/Sound/mHoundDie.wav", "start": 180537486, "end": 180594058, "audio": 1}, {"filename": "/Data/Sound/mHunter1.wav", "start": 180594058, "end": 180771540, "audio": 1}, {"filename": "/Data/Sound/mHunter2.wav", "start": 180771540, "end": 180946082, "audio": 1}, {"filename": "/Data/Sound/mHunterAttack1.wav", "start": 180946082, "end": 181102048, "audio": 1}, {"filename": "/Data/Sound/mHunterAttack2.wav", "start": 181102048, "end": 181259418, "audio": 1}, {"filename": "/Data/Sound/mHunterDie.wav", "start": 181259418, "end": 181333020, "audio": 1}, {"filename": "/Data/Sound/mHydra1.wav", "start": 181333020, "end": 181691554, "audio": 1}, {"filename": "/Data/Sound/mHydraAttack1.wav", "start": 181691554, "end": 181844320, "audio": 1}, {"filename": "/Data/Sound/mIceMonster1.wav", "start": 181844320, "end": 182009812, "audio": 1}, {"filename": "/Data/Sound/mIceMonster2.wav", "start": 182009812, "end": 182113518, "audio": 1}, {"filename": "/Data/Sound/mIceMonsterDie.wav", "start": 182113518, "end": 182233248, "audio": 1}, {"filename": "/Data/Sound/mIceQueen1.wav", "start": 182233248, "end": 182418724, "audio": 1}, {"filename": "/Data/Sound/mIceQueen2.wav", "start": 182418724, "end": 182861462, "audio": 1}, {"filename": "/Data/Sound/mIceQueenAttack1.wav", "start": 182861462, "end": 183103888, "audio": 1}, {"filename": "/Data/Sound/mIceQueenAttack2.wav", "start": 183103888, "end": 183178514, "audio": 1}, {"filename": "/Data/Sound/mIceQueenDie.wav", "start": 183178514, "end": 183339412, "audio": 1}, {"filename": "/Data/Sound/mLarva1.wav", "start": 183339412, "end": 183358366, "audio": 1}, {"filename": "/Data/Sound/mLarva2.wav", "start": 183358366, "end": 183378988, "audio": 1}, {"filename": "/Data/Sound/mLizardKing1.wav", "start": 183378988, "end": 183550290, "audio": 1}, {"filename": "/Data/Sound/mLizardKing2.wav", "start": 183550290, "end": 183705068, "audio": 1}, {"filename": "/Data/Sound/mMagicSkull.wav", "start": 183705068, "end": 183886070, "audio": 1}, {"filename": "/Data/Sound/mMegaCrust1.wav", "start": 183886070, "end": 183908132, "audio": 1}, {"filename": "/Data/Sound/mMegaCrustAttack1.wav", "start": 183908132, "end": 183978120, "audio": 1}, {"filename": "/Data/Sound/mMegaCrustDie.wav", "start": 183978120, "end": 184026082, "audio": 1}, {"filename": "/Data/Sound/mMolt1.wav", "start": 184026082, "end": 184045136, "audio": 1}, {"filename": "/Data/Sound/mMoltAttack1.wav", "start": 184045136, "end": 184064190, "audio": 1}, {"filename": "/Data/Sound/mMoltDie.wav", "start": 184064190, "end": 184123236, "audio": 1}, {"filename": "/Data/Sound/mOgre1.wav", "start": 184123236, "end": 184215620, "audio": 1}, {"filename": "/Data/Sound/mOgre2.wav", "start": 184215620, "end": 184260854, "audio": 1}, {"filename": "/Data/Sound/mOgreAttack1.wav", "start": 184260854, "end": 184382644, "audio": 1}, {"filename": "/Data/Sound/mOgreAttack2.wav", "start": 184382644, "end": 184446194, "audio": 1}, {"filename": "/Data/Sound/mOgreDie.wav", "start": 184446194, "end": 184534512, "audio": 1}, {"filename": "/Data/Sound/mOrcArcherAttack1.wav", "start": 184534512, "end": 184557512, "audio": 1}, {"filename": "/Data/Sound/mOrcCapAttack1.wav", "start": 184557512, "end": 184675040, "audio": 1}, {"filename": "/Data/Sound/mPhantom1.wav", "start": 184675040, "end": 184680786, "audio": 1}, {"filename": "/Data/Sound/mPhantomAttack1.wav", "start": 184680786, "end": 184806324, "audio": 1}, {"filename": "/Data/Sound/mPhantomDie.wav", "start": 184806324, "end": 185117664, "audio": 1}, {"filename": "/Data/Sound/mPhoenix1.wav", "start": 185117664, "end": 185332978, "audio": 1}, {"filename": "/Data/Sound/mPhoenix2.wav", "start": 185332978, "end": 185429718, "audio": 1}, {"filename": "/Data/Sound/mPhoenixAttack1.wav", "start": 185429718, "end": 185561952, "audio": 1}, {"filename": "/Data/Sound/mQuest.wav", "start": 185561952, "end": 185739142, "audio": 1}, {"filename": "/Data/Sound/mRainner1.wav", "start": 185739142, "end": 186074978, "audio": 1}, {"filename": "/Data/Sound/mRainnerAttack1.wav", "start": 186074978, "end": 186095160, "audio": 1}, {"filename": "/Data/Sound/mRainnerDie.wav", "start": 186095160, "end": 186158230, "audio": 1}, {"filename": "/Data/Sound/mRedSkull.wav", "start": 186158230, "end": 186229178, "audio": 1}, {"filename": "/Data/Sound/mRedSkullAttack.wav", "start": 186229178, "end": 186335284, "audio": 1}, {"filename": "/Data/Sound/mRedSkullDie.wav", "start": 186335284, "end": 186443558, "audio": 1}, {"filename": "/Data/Sound/mSatanAttack1.wav", "start": 186443558, "end": 186504792, "audio": 1}, {"filename": "/Data/Sound/mScorpion1.wav", "start": 186504792, "end": 186577838, "audio": 1}, {"filename": "/Data/Sound/mScorpion2.wav", "start": 186577838, "end": 186698760, "audio": 1}, {"filename": "/Data/Sound/mScorpionAttack1.wav", "start": 186698760, "end": 186852326, "audio": 1}, {"filename": "/Data/Sound/mScorpionAttack2.wav", "start": 186852326, "end": 186970880, "audio": 1}, {"filename": "/Data/Sound/mScorpionDie.wav", "start": 186970880, "end": 187124214, "audio": 1}, {"filename": "/Data/Sound/mShadow1.wav", "start": 187124214, "end": 187243322, "audio": 1}, {"filename": "/Data/Sound/mShadow2.wav", "start": 187243322, "end": 187326194, "audio": 1}, {"filename": "/Data/Sound/mShadowAttack1.wav", "start": 187326194, "end": 187388734, "audio": 1}, {"filename": "/Data/Sound/mShadowAttack2.wav", "start": 187388734, "end": 187445318, "audio": 1}, {"filename": "/Data/Sound/mShadowDie.wav", "start": 187445318, "end": 187486624, "audio": 1}, {"filename": "/Data/Sound/mSpider1.wav", "start": 187486624, "end": 187491656, "audio": 1}, {"filename": "/Data/Sound/mValkyrie1.wav", "start": 187491656, "end": 187822782, "audio": 1}, {"filename": "/Data/Sound/mValkyrieDie.wav", "start": 187822782, "end": 188016992, "audio": 1}, {"filename": "/Data/Sound/mWizard1.wav", "start": 188016992, "end": 188165522, "audio": 1}, {"filename": "/Data/Sound/mWizard2.wav", "start": 188165522, "end": 188482868, "audio": 1}, {"filename": "/Data/Sound/mWizardAttack1.wav", "start": 188482868, "end": 188535736, "audio": 1}, {"filename": "/Data/Sound/mWizardAttack2.wav", "start": 188535736, "end": 188636286, "audio": 1}, {"filename": "/Data/Sound/mWizardDie.wav", "start": 188636286, "end": 188673682, "audio": 1}, {"filename": "/Data/Sound/mWoodMon1.wav", "start": 188673682, "end": 188778760, "audio": 1}, {"filename": "/Data/Sound/mWoodMon2.wav", "start": 188778760, "end": 188941774, "audio": 1}, {"filename": "/Data/Sound/mWoodMonAttack1.wav", "start": 188941774, "end": 189092840, "audio": 1}, {"filename": "/Data/Sound/mWoodMonAttack2.wav", "start": 189092840, "end": 189184818, "audio": 1}, {"filename": "/Data/Sound/mWoodMonDie.wav", "start": 189184818, "end": 189322220, "audio": 1}, {"filename": "/Data/Sound/mWorm1.wav", "start": 189322220, "end": 189443358, "audio": 1}, {"filename": "/Data/Sound/mWorm2.wav", "start": 189443358, "end": 189576084, "audio": 1}, {"filename": "/Data/Sound/mWormDie.wav", "start": 189576084, "end": 189633144, "audio": 1}, {"filename": "/Data/Sound/mYeti1.wav", "start": 189633144, "end": 189954318, "audio": 1}, {"filename": "/Data/Sound/mYeti2.wav", "start": 189954318, "end": 190292456, "audio": 1}, {"filename": "/Data/Sound/mYetiAttack1.wav", "start": 190292456, "end": 190429368, "audio": 1}, {"filename": "/Data/Sound/mYetiDie.wav", "start": 190429368, "end": 190520978, "audio": 1}, {"filename": "/Data/Sound/mutant1.wav", "start": 190520978, "end": 190840984, "audio": 1}, {"filename": "/Data/Sound/mutant2.wav", "start": 190840984, "end": 191186474, "audio": 1}, {"filename": "/Data/Sound/mutant_attack1.wav", "start": 191186474, "end": 191323672, "audio": 1}, {"filename": "/Data/Sound/nBlackSmith.wav", "start": 191323672, "end": 191353908, "audio": 1}, {"filename": "/Data/Sound/nHarp.wav", "start": 191353908, "end": 192163442, "audio": 1}, {"filename": "/Data/Sound/nMix.wav", "start": 192163442, "end": 192914884, "audio": 1}, {"filename": "/Data/Sound/pDrink.wav", "start": 192914884, "end": 192995522, "audio": 1}, {"filename": "/Data/Sound/pDropItem.wav", "start": 192995522, "end": 193018180, "audio": 1}, {"filename": "/Data/Sound/pDropMoney.wav", "start": 193018180, "end": 193187882, "audio": 1}, {"filename": "/Data/Sound/pEatApple.wav", "start": 193187882, "end": 193254816, "audio": 1}, {"filename": "/Data/Sound/pEnergy.wav", "start": 193254816, "end": 193315452, "audio": 1}, {"filename": "/Data/Sound/pFemaleScream1.wav", "start": 193315452, "end": 193404918, "audio": 1}, {"filename": "/Data/Sound/pFemaleScream2.wav", "start": 193404918, "end": 193515124, "audio": 1}, {"filename": "/Data/Sound/pGetItem.wav", "start": 193515124, "end": 193528092, "audio": 1}, {"filename": "/Data/Sound/pHeartBeat.wav", "start": 193528092, "end": 193858942, "audio": 1}, {"filename": "/Data/Sound/pLevelUp.wav", "start": 193858942, "end": 194121690, "audio": 1}, {"filename": "/Data/Sound/pMaleDie.wav", "start": 194121690, "end": 194199820, "audio": 1}, {"filename": "/Data/Sound/pMaleScream1.wav", "start": 194199820, "end": 194243462, "audio": 1}, {"filename": "/Data/Sound/pMaleScream2.wav", "start": 194243462, "end": 194296440, "audio": 1}, {"filename": "/Data/Sound/pMaleScream3.wav", "start": 194296440, "end": 194366538, "audio": 1}, {"filename": "/Data/Sound/pSwim.wav", "start": 194366538, "end": 194511264, "audio": 1}, {"filename": "/Data/Sound/pWalk(Grass).wav", "start": 194511264, "end": 194537264, "audio": 1}, {"filename": "/Data/Sound/pWalk(Snow).wav", "start": 194537264, "end": 194552924, "audio": 1}, {"filename": "/Data/Sound/pWalk(Soil).wav", "start": 194552924, "end": 194565798, "audio": 1}, {"filename": "/Data/Sound/sAquaFlash.wav", "start": 194565798, "end": 194739292, "audio": 1}, {"filename": "/Data/Sound/sEvil.wav", "start": 194739292, "end": 195033950, "audio": 1}, {"filename": "/Data/Sound/sFlame.wav", "start": 195033950, "end": 195156980, "audio": 1}, {"filename": "/Data/Sound/sHellFire.wav", "start": 195156980, "end": 195363262, "audio": 1}, {"filename": "/Data/Sound/sIce.wav", "start": 195363262, "end": 195492884, "audio": 1}, {"filename": "/Data/Sound/sKnightDefense.wav", "start": 195492884, "end": 195685670, "audio": 1}, {"filename": "/Data/Sound/sKnightSkill1.wav", "start": 195685670, "end": 195781238, "audio": 1}, {"filename": "/Data/Sound/sKnightSkill2.wav", "start": 195781238, "end": 195817682, "audio": 1}, {"filename": "/Data/Sound/sKnightSkill3.wav", "start": 195817682, "end": 195855406, "audio": 1}, {"filename": "/Data/Sound/sKnightSkill4.wav", "start": 195855406, "end": 195906346, "audio": 1}, {"filename": "/Data/Sound/sMagic.wav", "start": 195906346, "end": 195980532, "audio": 1}, {"filename": "/Data/Sound/sTornado.wav", "start": 195980532, "end": 196376250, "audio": 1}, {"filename": "/Data/World1/EncTerrain1.att", "start": 196376250, "end": 196507326}, {"filename": "/Data/World1/EncTerrain1.map", "start": 196507326, "end": 196703936}, {"filename": "/Data/World1/EncTerrain1.obj", "start": 196703936, "end": 196790040}, {"filename": "/Data/World1/Sky.bmp", "start": 196790040, "end": 197053264}, {"filename": "/Data/World1/Terrain1.att", "start": 197053264, "end": 197118803}, {"filename": "/Data/World1/TerrainHeight.OZB", "start": 197118803, "end": 197185423}, {"filename": "/Data/World1/TerrainLight.OZJ", "start": 197185423, "end": 197256266}, {"filename": "/Data/World1/TileGrass01.OZJ", "start": 197256266, "end": 197326698}, {"filename": "/Data/World1/TileGrass01.OZT", "start": 197326698, "end": 197392282}, {"filename": "/Data/World1/TileGrass02.OZJ", "start": 197392282, "end": 197423517}, {"filename": "/Data/World1/TileGround01.OZJ", "start": 197423517, "end": 197519799}, {"filename": "/Data/World1/TileGround02.OZJ", "start": 197519799, "end": 197543853}, {"filename": "/Data/World1/TileGround03.OZJ", "start": 197543853, "end": 197578415}, {"filename": "/Data/World1/TileRock01.OZJ", "start": 197578415, "end": 197678859}, {"filename": "/Data/World1/TileRock02.OZJ", "start": 197678859, "end": 197710432}, {"filename": "/Data/World1/TileWater01.OZJ", "start": 197710432, "end": 197773432}, {"filename": "/Data/World1/TileWood01.OZJ", "start": 197773432, "end": 197807825}, {"filename": "/Data/World1/leaf01.OZT", "start": 197807825, "end": 197808897}, {"filename": "/Data/World1/rain01.OZT", "start": 197808897, "end": 197809457}, {"filename": "/Data/World1/rain02.OZT", "start": 197809457, "end": 197811553}, {"filename": "/Data/World10/EncTerrain10.att", "start": 197811553, "end": 197877093}, {"filename": "/Data/World10/EncTerrain10.map", "start": 197877093, "end": 198073703}, {"filename": "/Data/World10/EncTerrain10.obj", "start": 198073703, "end": 198090627}, {"filename": "/Data/World10/Terrain10.att", "start": 198090627, "end": 198156166}, {"filename": "/Data/World10/TerrainHeight.OZB", "start": 198156166, "end": 198222786}, {"filename": "/Data/World10/TerrainLight.OZJ", "start": 198222786, "end": 198226939}, {"filename": "/Data/World10/TileGrass01.OZJ", "start": 198226939, "end": 198285598}, {"filename": "/Data/World10/TileGrass02.OZJ", "start": 198285598, "end": 198382074}, {"filename": "/Data/World10/TileGround01.OZJ", "start": 198382074, "end": 198417241}, {"filename": "/Data/World10/TileGround03.OZJ", "start": 198417241, "end": 198438061}, {"filename": "/Data/World10/TileRock01.OZJ", "start": 198438061, "end": 198462381}, {"filename": "/Data/World10/TileRock02.OZJ", "start": 198462381, "end": 198520555}, {"filename": "/Data/World10/TileRock03.OZJ", "start": 198520555, "end": 198589708}, {"filename": "/Data/World10/TileRock04.OZJ", "start": 198589708, "end": 198677723}, {"filename": "/Data/World10/TileWood01.OZJ", "start": 198677723, "end": 198718466}, {"filename": "/Data/World10/leaf02.OZJ", "start": 198718466, "end": 198722967}, {"filename": "/Data/World10/rain03.OZT", "start": 198722967, "end": 198727111}, {"filename": "/Data/World11/EncTerrain11.att", "start": 198727111, "end": 198792651}, {"filename": "/Data/World11/EncTerrain11.map", "start": 198792651, "end": 198989261}, {"filename": "/Data/World11/EncTerrain11.obj", "start": 198989261, "end": 199009365}, {"filename": "/Data/World11/Terrain11.att", "start": 199009365, "end": 199074904}, {"filename": "/Data/World11/TerrainHeight.OZB", "start": 199074904, "end": 199141524}, {"filename": "/Data/World11/TerrainLight.OZJ", "start": 199141524, "end": 199164223}, {"filename": "/Data/World11/TileGrass01.OZJ", "start": 199164223, "end": 199275621}, {"filename": "/Data/World11/leaf01.OZT", "start": 199275621, "end": 199276693}, {"filename": "/Data/World11/leaf02.OZJ", "start": 199276693, "end": 199281138}, {"filename": "/Data/World11/rain01.OZT", "start": 199281138, "end": 199281698}, {"filename": "/Data/World12/EncTerrain12.att", "start": 199281698, "end": 199347238}, {"filename": "/Data/World12/EncTerrain12.map", "start": 199347238, "end": 199543848}, {"filename": "/Data/World12/EncTerrain12.obj", "start": 199543848, "end": 199550152}, {"filename": "/Data/World12/Terrain12.att", "start": 199550152, "end": 199615691}, {"filename": "/Data/World12/TerrainHeight.OZB", "start": 199615691, "end": 199682311}, {"filename": "/Data/World12/TerrainLight.OZJ", "start": 199682311, "end": 199688299}, {"filename": "/Data/World12/TileGrass01.OZJ", "start": 199688299, "end": 199767925}, {"filename": "/Data/World12/TileGrass01.OZT", "start": 199767925, "end": 199833509}, {"filename": "/Data/World12/TileGrass02.OZJ", "start": 199833509, "end": 199914014}, {"filename": "/Data/World12/TileGrass03.OZT", "start": 199914014, "end": 200045134}, {"filename": "/Data/World12/TileGround02.OZJ", "start": 200045134, "end": 200114869}, {"filename": "/Data/World12/TileGround03.OZJ", "start": 200114869, "end": 200187814}, {"filename": "/Data/World12/TileRock01.OZJ", "start": 200187814, "end": 200300013}, {"filename": "/Data/World12/TileRock02.OZJ", "start": 200300013, "end": 200349822}, {"filename": "/Data/World12/TileRock03.OZJ", "start": 200349822, "end": 200383098}, {"filename": "/Data/World12/TileRock04.OZJ", "start": 200383098, "end": 200499630}, {"filename": "/Data/World12/TileWater01.OZJ", "start": 200499630, "end": 200559909}, {"filename": "/Data/World12/TileWood01.OZJ", "start": 200559909, "end": 200596797}, {"filename": "/Data/World12/leaf01.OZT", "start": 200596797, "end": 200597869}, {"filename": "/Data/World12/leaf02.OZJ", "start": 200597869, "end": 200602314}, {"filename": "/Data/World12/rain01.OZT", "start": 200602314, "end": 200602874}, {"filename": "/Data/World2/EncTerrain2.att", "start": 200602874, "end": 200668414}, {"filename": "/Data/World2/EncTerrain2.map", "start": 200668414, "end": 200865024}, {"filename": "/Data/World2/EncTerrain2.obj", "start": 200865024, "end": 200999668}, {"filename": "/Data/World2/Sky.bmp", "start": 200999668, "end": 202048300}, {"filename": "/Data/World2/Terrain2.att", "start": 202048300, "end": 202113839}, {"filename": "/Data/World2/TerrainHeight.OZB", "start": 202113839, "end": 202180459}, {"filename": "/Data/World2/TerrainLight.OZJ", "start": 202180459, "end": 202243885}, {"filename": "/Data/World2/TileGrass01.OZJ", "start": 202243885, "end": 202278282}, {"filename": "/Data/World2/TileGrass02.OZJ", "start": 202278282, "end": 202309517}, {"filename": "/Data/World2/TileGround01.OZJ", "start": 202309517, "end": 202419426}, {"filename": "/Data/World2/TileGround02.OZJ", "start": 202419426, "end": 202441855}, {"filename": "/Data/World2/TileGround03.OZJ", "start": 202441855, "end": 202478168}, {"filename": "/Data/World2/TileRock01.OZJ", "start": 202478168, "end": 202550123}, {"filename": "/Data/World2/TileRock02.OZJ", "start": 202550123, "end": 202582855}, {"filename": "/Data/World2/TileWater01.OZJ", "start": 202582855, "end": 202657740}, {"filename": "/Data/World2/TileWood01.OZJ", "start": 202657740, "end": 202690966}, {"filename": "/Data/World3/EncTerrain3.att", "start": 202690966, "end": 202756506}, {"filename": "/Data/World3/EncTerrain3.map", "start": 202756506, "end": 202953116}, {"filename": "/Data/World3/EncTerrain3.obj", "start": 202953116, "end": 203017440}, {"filename": "/Data/World3/Sky.bmp", "start": 203017440, "end": 204066072}, {"filename": "/Data/World3/Terrain3.att", "start": 204066072, "end": 204131611}, {"filename": "/Data/World3/TerrainHeight.OZB", "start": 204131611, "end": 204198231}, {"filename": "/Data/World3/TerrainLight.OZJ", "start": 204198231, "end": 204262413}, {"filename": "/Data/World3/TileGrass01.OZJ", "start": 204262413, "end": 204325362}, {"filename": "/Data/World3/TileGrass02.OZJ", "start": 204325362, "end": 204345073}, {"filename": "/Data/World3/TileGrass02.OZT", "start": 204345073, "end": 204410657}, {"filename": "/Data/World3/TileGround01.OZJ", "start": 204410657, "end": 204496051}, {"filename": "/Data/World3/TileGround02.OZJ", "start": 204496051, "end": 204519099}, {"filename": "/Data/World3/TileGround03.OZJ", "start": 204519099, "end": 204550198}, {"filename": "/Data/World3/TileRock01.OZJ", "start": 204550198, "end": 204607415}, {"filename": "/Data/World3/TileRock02.OZJ", "start": 204607415, "end": 204628151}, {"filename": "/Data/World3/TileRock03.OZJ", "start": 204628151, "end": 204650470}, {"filename": "/Data/World3/TileRock04.OZJ", "start": 204650470, "end": 204671718}, {"filename": "/Data/World3/TileRock05.OZJ", "start": 204671718, "end": 204760923}, {"filename": "/Data/World3/TileRock06.OZJ", "start": 204760923, "end": 204773270}, {"filename": "/Data/World3/TileRock07.OZJ", "start": 204773270, "end": 204865882}, {"filename": "/Data/World3/TileWater01.OZJ", "start": 204865882, "end": 204934329}, {"filename": "/Data/World3/TileWood01.OZJ", "start": 204934329, "end": 204963959}, {"filename": "/Data/World3/leaf01.OZJ", "start": 204963959, "end": 204966130}, {"filename": "/Data/World3/leaf01.OZT", "start": 204966130, "end": 204970274}, {"filename": "/Data/World3/leaf02.OZJ", "start": 204970274, "end": 204972514}, {"filename": "/Data/World4/EncTerrain4.att", "start": 204972514, "end": 205038054}, {"filename": "/Data/World4/EncTerrain4.map", "start": 205038054, "end": 205234664}, {"filename": "/Data/World4/EncTerrain4.obj", "start": 205234664, "end": 205516638}, {"filename": "/Data/World4/Sky.bmp", "start": 205516638, "end": 206565268}, {"filename": "/Data/World4/Terrain4.att", "start": 206565268, "end": 206630807}, {"filename": "/Data/World4/TerrainHeight.OZB", "start": 206630807, "end": 206697427}, {"filename": "/Data/World4/TerrainLight.OZJ", "start": 206697427, "end": 206734328}, {"filename": "/Data/World4/TileGrass01.OZJ", "start": 206734328, "end": 206841372}, {"filename": "/Data/World4/TileGrass01.OZT", "start": 206841372, "end": 206906956}, {"filename": "/Data/World4/TileGrass03.OZT", "start": 206906956, "end": 207038076}, {"filename": "/Data/World4/TileGround01.OZJ", "start": 207038076, "end": 207069375}, {"filename": "/Data/World4/TileGround03.OZJ", "start": 207069375, "end": 207100941}, {"filename": "/Data/World4/TileRock01.OZJ", "start": 207100941, "end": 207135438}, {"filename": "/Data/World4/TileRock02.OZJ", "start": 207135438, "end": 207204242}, {"filename": "/Data/World4/TileRock03.OZJ", "start": 207204242, "end": 207302384}, {"filename": "/Data/World4/TileRock04.OZJ", "start": 207302384, "end": 207393168}, {"filename": "/Data/World4/TileWater01.OZJ", "start": 207393168, "end": 207495693}, {"filename": "/Data/World4/TileWood01.OZJ", "start": 207495693, "end": 207528919}, {"filename": "/Data/World4/leaf01.OZT", "start": 207528919, "end": 207529991}, {"filename": "/Data/World5/EncTerrain5.att", "start": 207529991, "end": 207595531}, {"filename": "/Data/World5/EncTerrain5.map", "start": 207595531, "end": 207792141}, {"filename": "/Data/World5/EncTerrain5.obj", "start": 207792141, "end": 207953545}, {"filename": "/Data/World5/Sky.bmp", "start": 207953545, "end": 209002177}, {"filename": "/Data/World5/Terrain5.att", "start": 209002177, "end": 209067716}, {"filename": "/Data/World5/TerrainHeight.OZB", "start": 209067716, "end": 209134336}, {"filename": "/Data/World5/TerrainLight.OZJ", "start": 209134336, "end": 209201554}, {"filename": "/Data/World5/TileGrass01.OZJ", "start": 209201554, "end": 209275041}, {"filename": "/Data/World5/TileGrass02.OZJ", "start": 209275041, "end": 209345735}, {"filename": "/Data/World5/TileGround01.OZJ", "start": 209345735, "end": 209362919}, {"filename": "/Data/World5/TileGround02.OZJ", "start": 209362919, "end": 209483732}, {"filename": "/Data/World5/TileGround03.OZJ", "start": 209483732, "end": 209511115}, {"filename": "/Data/World5/TileRock01.OZJ", "start": 209511115, "end": 209539315}, {"filename": "/Data/World5/TileRock02.OZJ", "start": 209539315, "end": 209610140}, {"filename": "/Data/World5/TileRock03.OZJ", "start": 209610140, "end": 209675876}, {"filename": "/Data/World5/TileRock04.OZJ", "start": 209675876, "end": 209759270}, {"filename": "/Data/World5/TileWater01.OZJ", "start": 209759270, "end": 209878326}, {"filename": "/Data/World5/TileWood01.OZJ", "start": 209878326, "end": 209912959}, {"filename": "/Data/World5/leaf02.OZJ", "start": 209912959, "end": 209917404}, {"filename": "/Data/World6/EncTerrain6.att", "start": 209917404, "end": 209982944}, {"filename": "/Data/World6/EncTerrain6.map", "start": 209982944, "end": 210179554}, {"filename": "/Data/World6/EncTerrain6.obj", "start": 210179554, "end": 210179558}, {"filename": "/Data/World6/Terrain6.att", "start": 210179558, "end": 210245097}, {"filename": "/Data/World6/TerrainHeight.OZB", "start": 210245097, "end": 210311715}, {"filename": "/Data/World6/TerrainHeight0.OZB", "start": 210311715, "end": 210378335}, {"filename": "/Data/World6/TerrainLight.OZJ", "start": 210378335, "end": 210442517}, {"filename": "/Data/World6/TerrainLight0.OZJ", "start": 210442517, "end": 210479418}, {"filename": "/Data/World6/Terrainmap.OZB", "start": 210479418, "end": 210546038}, {"filename": "/Data/World6/TileGrass01.OZJ", "start": 210546038, "end": 210645908}, {"filename": "/Data/World6/TileGrass01.OZT", "start": 210645908, "end": 210711492}, {"filename": "/Data/World6/TileGrass012.OZJ", "start": 210711492, "end": 210819969}, {"filename": "/Data/World6/TileGrass013.OZJ", "start": 210819969, "end": 210922494}, {"filename": "/Data/World6/TileGrass02.OZJ", "start": 210922494, "end": 210967536}, {"filename": "/Data/World6/TileGrass021.OZJ", "start": 210967536, "end": 211054909}, {"filename": "/Data/World6/TileGrass023.OZJ", "start": 211054909, "end": 211177596}, {"filename": "/Data/World6/TileGround01.OZJ", "start": 211177596, "end": 211252733}, {"filename": "/Data/World6/TileGround011.OZJ", "start": 211252733, "end": 211288165}, {"filename": "/Data/World6/TileGround012.OZJ", "start": 211288165, "end": 211395531}, {"filename": "/Data/World6/TileGround02.OZJ", "start": 211395531, "end": 211516344}, {"filename": "/Data/World6/TileGround03.OZJ", "start": 211516344, "end": 211648592}, {"filename": "/Data/World6/TileRock01.OZJ", "start": 211648592, "end": 211749545}, {"filename": "/Data/World6/TileRock012.OZJ", "start": 211749545, "end": 211784042}, {"filename": "/Data/World6/TileRock02.OZJ", "start": 211784042, "end": 211894409}, {"filename": "/Data/World6/TileRock021.OZJ", "start": 211894409, "end": 211981782}, {"filename": "/Data/World6/TileRock022.OZJ", "start": 211981782, "end": 212089148}, {"filename": "/Data/World6/TileRock03.OZJ", "start": 212089148, "end": 212159884}, {"filename": "/Data/World6/TileRock04.OZJ", "start": 212159884, "end": 212235191}, {"filename": "/Data/World6/TileWater01.OZJ", "start": 212235191, "end": 212331364}, {"filename": "/Data/World6/TileWood01.OZJ", "start": 212331364, "end": 212439523}, {"filename": "/Data/World6/leaf01.OZT", "start": 212439523, "end": 212440595}, {"filename": "/Data/World6/leaf02.OZJ", "start": 212440595, "end": 212445040}, {"filename": "/Data/World7/EncTerrain7.att", "start": 212445040, "end": 212510580}, {"filename": "/Data/World7/EncTerrain7.map", "start": 212510580, "end": 212707190}, {"filename": "/Data/World7/EncTerrain7.obj", "start": 212707190, "end": 212765454}, {"filename": "/Data/World7/Sky.bmp", "start": 212765454, "end": 213814086}, {"filename": "/Data/World7/Terrain7.att", "start": 213814086, "end": 213879625}, {"filename": "/Data/World7/TerrainHeight.OZB", "start": 213879625, "end": 213946245}, {"filename": "/Data/World7/TerrainLight.OZJ", "start": 213946245, "end": 213968960}, {"filename": "/Data/World7/TileGrass01.OZJ", "start": 213968960, "end": 214079588}, {"filename": "/Data/World7/TileGrass01.OZT", "start": 214079588, "end": 214145172}, {"filename": "/Data/World7/TileGrass02.OZJ", "start": 214145172, "end": 214263194}, {"filename": "/Data/World7/TileGround02.OZJ", "start": 214263194, "end": 214384007}, {"filename": "/Data/World7/TileGround03.OZJ", "start": 214384007, "end": 214420989}, {"filename": "/Data/World7/TileRock01.OZJ", "start": 214420989, "end": 214453209}, {"filename": "/Data/World7/TileRock02.OZJ", "start": 214453209, "end": 214540448}, {"filename": "/Data/World7/TileRock03.OZJ", "start": 214540448, "end": 214622434}, {"filename": "/Data/World7/TileRock04.OZJ", "start": 214622434, "end": 214719148}, {"filename": "/Data/World7/TileWater01.OZJ", "start": 214719148, "end": 214806521}, {"filename": "/Data/World7/TileWood01.OZJ", "start": 214806521, "end": 214847264}, {"filename": "/Data/World7/leaf01.OZT", "start": 214847264, "end": 214848336}, {"filename": "/Data/World7/leaf02.OZJ", "start": 214848336, "end": 214852781}, {"filename": "/Data/World8/EncTerrain8.att", "start": 214852781, "end": 214918321}, {"filename": "/Data/World8/EncTerrain8.map", "start": 214918321, "end": 215114931}, {"filename": "/Data/World8/EncTerrain8.obj", "start": 215114931, "end": 215271085}, {"filename": "/Data/World8/Sky.bmp", "start": 215271085, "end": 216319717}, {"filename": "/Data/World8/Terrain8.att", "start": 216319717, "end": 216385256}, {"filename": "/Data/World8/TerrainHeight.OZB", "start": 216385256, "end": 216451876}, {"filename": "/Data/World8/TerrainLight.OZJ", "start": 216451876, "end": 216517347}, {"filename": "/Data/World8/TileGrass01.OZJ", "start": 216517347, "end": 216625824}, {"filename": "/Data/World8/TileGrass02.OZJ", "start": 216625824, "end": 216748511}, {"filename": "/Data/World8/TileGround01.OZJ", "start": 216748511, "end": 216783678}, {"filename": "/Data/World8/TileGround03.OZJ", "start": 216783678, "end": 216819110}, {"filename": "/Data/World8/TileRock01.OZJ", "start": 216819110, "end": 216849353}, {"filename": "/Data/World8/TileRock02.OZJ", "start": 216849353, "end": 216956719}, {"filename": "/Data/World8/TileRock03.OZJ", "start": 216956719, "end": 217025872}, {"filename": "/Data/World8/TileRock04.OZJ", "start": 217025872, "end": 217118756}, {"filename": "/Data/World8/TileWood01.OZJ", "start": 217118756, "end": 217159499}, {"filename": "/Data/World8/leaf01.OZJ", "start": 217159499, "end": 217164000}, {"filename": "/Data/World8/leaf02.OZJ", "start": 217164000, "end": 217168501}, {"filename": "/Data/World9/EncTerrain9.att", "start": 217168501, "end": 217234041}, {"filename": "/Data/World9/EncTerrain9.map", "start": 217234041, "end": 217430651}, {"filename": "/Data/World9/EncTerrain9.obj", "start": 217430651, "end": 217530465}, {"filename": "/Data/World9/Sky.bmp", "start": 217530465, "end": 218579097}, {"filename": "/Data/World9/Terrain9.att", "start": 218579097, "end": 218644636}, {"filename": "/Data/World9/TerrainHeight.OZB", "start": 218644636, "end": 218711256}, {"filename": "/Data/World9/TerrainLight.OZJ", "start": 218711256, "end": 218790275}, {"filename": "/Data/World9/TileGrass01.OZJ", "start": 218790275, "end": 218901673}, {"filename": "/Data/World9/TileGrass01.OZT", "start": 218901673, "end": 218967257}, {"filename": "/Data/World9/TileGrass02.OZJ", "start": 218967257, "end": 219085279}, {"filename": "/Data/World9/TileGrass03.OZT", "start": 219085279, "end": 219216399}, {"filename": "/Data/World9/TileGround01.OZJ", "start": 219216399, "end": 219251566}, {"filename": "/Data/World9/TileGround02.OZJ", "start": 219251566, "end": 219321691}, {"filename": "/Data/World9/TileGround03.OZJ", "start": 219321691, "end": 219354057}, {"filename": "/Data/World9/TileRock01.OZJ", "start": 219354057, "end": 219465958}, {"filename": "/Data/World9/TileRock02.OZJ", "start": 219465958, "end": 219549707}, {"filename": "/Data/World9/TileRock03.OZJ", "start": 219549707, "end": 219582983}, {"filename": "/Data/World9/TileRock04.OZJ", "start": 219582983, "end": 219699260}, {"filename": "/Data/World9/TileWater01.OZJ", "start": 219699260, "end": 219759539}, {"filename": "/Data/World9/TileWood01.OZJ", "start": 219759539, "end": 219796427}, {"filename": "/config.ini", "start": 219796427, "end": 219797302}], "remote_package_size": 219797302});
 
   })();
 
@@ -272,7 +262,7 @@ Module['FS_createPath']("/Data", "World9", true, true);
     });
 
 
-var programArgs = [];
+var arguments_ = [];
 var thisProgram = './this.program';
 var quit_ = (status, toThrow) => {
   throw toThrow;
@@ -280,7 +270,7 @@ var quit_ = (status, toThrow) => {
 
 // In MODULARIZE mode _scriptName needs to be captured already at the very top of the page immediately when the page is parsed, so it is generated there
 // before the page load. In non-MODULARIZE modes generate it here.
-var _scriptName = globalThis.document?.currentScript?.src;
+var _scriptName = typeof document != 'undefined' ? document.currentScript?.src : undefined;
 
 if (typeof __filename != 'undefined') { // Node
   _scriptName = __filename;
@@ -302,12 +292,19 @@ function locateFile(path) {
 var readAsync, readBinary;
 
 if (ENVIRONMENT_IS_NODE) {
-  const isNode = globalThis.process?.versions?.node && globalThis.process?.type != 'renderer';
+  const isNode = typeof process == 'object' && process.versions?.node && process.type != 'renderer';
   if (!isNode) throw new Error('not compiled for this environment (did you build to HTML and try to run it not on the web, or set ENVIRONMENT to something - like node - and run it someplace else - like on the web?)');
+
+  var nodeVersion = process.versions.node;
+  var numericVersion = nodeVersion.split('.').slice(0, 3);
+  numericVersion = (numericVersion[0] * 10000) + (numericVersion[1] * 100) + (numericVersion[2].split('-')[0] * 1);
+  if (numericVersion < 160000) {
+    throw new Error('This emscripten-generated code requires node v16.0.0 (detected v' + nodeVersion + ')');
+  }
 
   // These modules will usually be used on Node.js. Load them eagerly to avoid
   // the complexity of lazy-loading.
-  var fs = require('node:fs');
+  var fs = require('fs');
 
   scriptDirectory = __dirname + '/';
 
@@ -332,7 +329,7 @@ readAsync = async (filename, binary = true) => {
     thisProgram = process.argv[1].replace(/\\/g, '/');
   }
 
-  programArgs = process.argv.slice(2);
+  arguments_ = process.argv.slice(2);
 
   // MODULARIZE will export the module in the proper place outside, we don't need to export here
   if (typeof module != 'undefined') {
@@ -347,6 +344,9 @@ readAsync = async (filename, binary = true) => {
 } else
 if (ENVIRONMENT_IS_SHELL) {
 
+  const isNode = typeof process == 'object' && process.versions?.node && process.type != 'renderer';
+  if (isNode || typeof window == 'object' || typeof WorkerGlobalScope != 'undefined') throw new Error('not compiled for this environment (did you build to HTML and try to run it not on the web, or set ENVIRONMENT to something - like node - and run it someplace else - like on the web?)');
+
 } else
 
 // Note that this includes Node.js workers when relevant (pthreads is enabled).
@@ -360,7 +360,7 @@ if (ENVIRONMENT_IS_WEB || ENVIRONMENT_IS_WORKER) {
     // infer anything from them.
   }
 
-  if (!(globalThis.window || globalThis.WorkerGlobalScope)) throw new Error('not compiled for this environment (did you build to HTML and try to run it not on the web, or set ENVIRONMENT to something - like node - and run it someplace else - like on the web?)');
+  if (!(typeof window == 'object' || typeof WorkerGlobalScope != 'undefined')) throw new Error('not compiled for this environment (did you build to HTML and try to run it not on the web, or set ENVIRONMENT to something - like node - and run it someplace else - like on the web?)');
 
   {
 // include: web_or_worker_shell_read.js
@@ -424,7 +424,7 @@ var NODEFS = 'NODEFS is no longer included by default; build with -lnodefs.js';
 // perform assertions in shell.js after we set up out() and err(), as otherwise
 // if an assertion fails it cannot print the message
 
-assert(!ENVIRONMENT_IS_SHELL, 'shell environment detected but not enabled at build time (add `shell` to `-sENVIRONMENT` to enable)');
+assert(!ENVIRONMENT_IS_SHELL, 'shell environment detected but not enabled at build time.  Add `shell` to `-sENVIRONMENT` to enable.');
 
 // end include: shell.js
 
@@ -441,7 +441,7 @@ assert(!ENVIRONMENT_IS_SHELL, 'shell environment detected but not enabled at bui
 
 var wasmBinary;
 
-if (!globalThis.WebAssembly) {
+if (typeof WebAssembly != 'object') {
   err('no native wasm support detected');
 }
 
@@ -456,7 +456,7 @@ if (!globalThis.WebAssembly) {
 var ABORT = false;
 
 // set by exit() and abort().  Passed to 'onExit' handler.
-// NOTE: This is also used as the process return code in shell environments
+// NOTE: This is also used as the process return code code in shell environments
 // but only when noExitRuntime is false.
 var EXITSTATUS;
 
@@ -485,12 +485,45 @@ function _free() {
 var isFileURI = (filename) => filename.startsWith('file://');
 
 // include: runtime_common.js
+// include: runtime_stack_check.js
+// Initializes the stack cookie. Called at the startup of main and at the startup of each thread in pthreads mode.
+function writeStackCookie() {
+  var max = _emscripten_stack_get_end();
+  assert((max & 3) == 0);
+  // If the stack ends at address zero we write our cookies 4 bytes into the
+  // stack.  This prevents interference with SAFE_HEAP and ASAN which also
+  // monitor writes to address zero.
+  if (max == 0) {
+    max += 4;
+  }
+  // The stack grow downwards towards _emscripten_stack_get_end.
+  // We write cookies to the final two words in the stack and detect if they are
+  // ever overwritten.
+  HEAPU32[((max)>>2)] = 0x02135467;
+  HEAPU32[(((max)+(4))>>2)] = 0x89BACDFE;
+  // Also test the global address 0 for integrity.
+  HEAPU32[((0)>>2)] = 1668509029;
+}
+
+function checkStackCookie() {
+  if (ABORT) return;
+  var max = _emscripten_stack_get_end();
+  // See writeStackCookie().
+  if (max == 0) {
+    max += 4;
+  }
+  var cookie1 = HEAPU32[((max)>>2)];
+  var cookie2 = HEAPU32[(((max)+(4))>>2)];
+  if (cookie1 != 0x02135467 || cookie2 != 0x89BACDFE) {
+    abort(`Stack overflow! Stack cookie has been overwritten at ${ptrToString(max)}, expected hex dwords 0x89BACDFE and 0x2135467, but received ${ptrToString(cookie2)} ${ptrToString(cookie1)}`);
+  }
+  // Also test the global address 0 for integrity.
+  if (HEAPU32[((0)>>2)] != 0x63736d65 /* 'emsc' */) {
+    abort('Runtime error: The application has corrupted its heap memory area (address zero)!');
+  }
+}
+// end include: runtime_stack_check.js
 // include: runtime_exceptions.js
-// Base Emscripten EH error class
-class EmscriptenEH {}
-
-class EmscriptenSjLj extends EmscriptenEH {}
-
 // end include: runtime_exceptions.js
 // include: runtime_debug.js
 var runtimeDebug = true; // Switch to false at runtime to disable logging at the right times
@@ -508,35 +541,19 @@ function dbg(...args) {
   var h16 = new Int16Array(1);
   var h8 = new Int8Array(h16.buffer);
   h16[0] = 0x6373;
-  if (h8[0] !== 0x73 || h8[1] !== 0x63) abort('Runtime error: expected the system to be little-endian! (Run with -sSUPPORT_BIG_ENDIAN to bypass)');
+  if (h8[0] !== 0x73 || h8[1] !== 0x63) throw 'Runtime error: expected the system to be little-endian! (Run with -sSUPPORT_BIG_ENDIAN to bypass)';
 })();
 
 function consumedModuleProp(prop) {
-  var value = Module[prop];
-  var msg = `Attempt to modify \`Module.${prop}\` after it has already been processed.  This can happen, for example, when code is injected via '--post-js' rather than '--pre-js'`;
-  if (Array.isArray(value)) {
-    value = new Proxy(value, {
-      set(target, key, val) {
-        abort(msg);
-        return false;
-      },
-      defineProperty(target, key, descriptor) {
-        abort(msg);
-        return false;
-      },
-      deleteProperty(target, key) {
-        abort(msg);
-        return false;
+  if (!Object.getOwnPropertyDescriptor(Module, prop)) {
+    Object.defineProperty(Module, prop, {
+      configurable: true,
+      set() {
+        abort(`Attempt to set \`Module.${prop}\` after it has already been processed.  This can happen, for example, when code is injected via '--post-js' rather than '--pre-js'`);
+
       }
     });
   }
-  Object.defineProperty(Module, prop, {
-    configurable: true,
-    get() { return value; },
-    set() {
-      abort(msg);
-    }
-  });
 }
 
 function makeInvalidEarlyAccess(name) {
@@ -555,7 +572,6 @@ function isExportedByForceFilesystem(name) {
   return name === 'FS_createPath' ||
          name === 'FS_createDataFile' ||
          name === 'FS_createPreloadedFile' ||
-         name === 'FS_preloadFile' ||
          name === 'FS_unlink' ||
          name === 'addRunDependency' ||
          // The old FS has some functionality that WasmFS lacks.
@@ -565,15 +581,12 @@ function isExportedByForceFilesystem(name) {
 }
 
 /**
- * Intercept access to a symbols in the global symbol.  This enables us to give
- * informative warnings/errors when folks attempt to use symbols they did not
- * include in their build, or no symbols that no longer exist.
- *
- * We don't define this in MODULARIZE mode since in that mode emscripten symbols
- * are never placed in the global scope.
+ * Intercept access to a global symbol.  This enables us to give informative
+ * warnings/errors when folks attempt to use symbols they did not include in
+ * their build, or no symbols that no longer exist.
  */
 function hookGlobalSymbolAccess(sym, func) {
-  if (!Object.getOwnPropertyDescriptor(globalThis, sym)) {
+  if (typeof globalThis != 'undefined' && !Object.getOwnPropertyDescriptor(globalThis, sym)) {
     Object.defineProperty(globalThis, sym, {
       configurable: true,
       get() {
@@ -586,7 +599,7 @@ function hookGlobalSymbolAccess(sym, func) {
 
 function missingGlobal(sym, msg) {
   hookGlobalSymbolAccess(sym, () => {
-    warnOnce(`\`${sym}\` is no longer defined by emscripten. ${msg}`);
+    warnOnce(`\`${sym}\` is not longer defined by emscripten. ${msg}`);
   });
 }
 
@@ -627,66 +640,47 @@ function unexportedRuntimeSymbol(sym) {
           msg += '. Alternatively, forcing filesystem support (-sFORCE_FILESYSTEM) can export this for you';
         }
         abort(msg);
-      },
+      }
     });
   }
 }
 
 // end include: runtime_debug.js
-// include: runtime_stack_check.js
-const stackCookie1 = 0x02135467;
-const stackCookie2 = 0x89BACDFE;
-
-// Initializes the stack cookie. Called at the startup of main and at the startup of each thread in pthreads mode.
-function writeStackCookie() {
-  var max = _emscripten_stack_get_end();
-  assert((max & 3) == 0);
-  // If the stack ends at address zero we write our cookies 4 bytes into the
-  // stack.  This prevents interference with SAFE_HEAP and ASAN which also
-  // monitor writes to address zero.
-  if (max == 0) {
-    max += 4;
-  }
-  // The stack grow downwards towards _emscripten_stack_get_end.
-  // We write cookies to the final two words in the stack and detect if they are
-  // ever overwritten.
-  HEAPU32[((max)>>2)] = stackCookie1;
-  HEAPU32[(((max)+(4))>>2)] = stackCookie2;
-  // Also test the global address 0 for integrity.
-  HEAPU32[((0)>>2)] = 1668509029;
-}
-
-function u32ToHexString(num) {
-  return '0x' + (num >>> 0).toString(16).padStart(8, '0');
-}
-
-function checkStackCookie() {
-  if (ABORT) return;
-  var max = _emscripten_stack_get_end();
-  // See writeStackCookie().
-  if (max == 0) {
-    max += 4;
-  }
-  var val1 = HEAPU32[((max)>>2)];
-  var val2 = HEAPU32[(((max)+(4))>>2)];
-  if (val1 != stackCookie1 || val2 != stackCookie2) {
-    abort(`Stack overflow! Stack cookie has been overwritten at ${ptrToString(max)}, expected hex dwords ${u32ToHexString(stackCookie2)} and ${u32ToHexString(stackCookie1)}, but received ${u32ToHexString(val2)} ${u32ToHexString(val1)}`);
-  }
-  // Also test the global address 0 for integrity.
-  if (HEAPU32[((0)>>2)] != 0x63736d65 /* 'emsc' */) {
-    abort('Runtime error: The application has corrupted its heap memory area (address zero)!');
-  }
-}
-// end include: runtime_stack_check.js
 // Memory management
+
+var wasmMemory;
+
+var
+/** @type {!Int8Array} */
+  HEAP8,
+/** @type {!Uint8Array} */
+  HEAPU8,
+/** @type {!Int16Array} */
+  HEAP16,
+/** @type {!Uint16Array} */
+  HEAPU16,
+/** @type {!Int32Array} */
+  HEAP32,
+/** @type {!Uint32Array} */
+  HEAPU32,
+/** @type {!Float32Array} */
+  HEAPF32,
+/** @type {!Float64Array} */
+  HEAPF64;
+
+// BigInt64Array type is not correctly defined in closure
+var
+/** not-@type {!BigInt64Array} */
+  HEAP64,
+/* BigUint64Array type is not correctly defined in closure
+/** not-@type {!BigUint64Array} */
+  HEAPU64;
 
 var runtimeInitialized = false;
 
 
 
 function updateMemoryViews() {
-  // When memory growth is disabled this function should be called exactly once.
-  assert(!HEAP8, 'updateMemoryViews should only be called once when ALLOW_MEMORY_GROWTH=0');
   var b = wasmMemory.buffer;
   HEAP8 = new Int8Array(b);
   HEAP16 = new Int16Array(b);
@@ -697,20 +691,21 @@ function updateMemoryViews() {
   HEAPF32 = new Float32Array(b);
   HEAPF64 = new Float64Array(b);
   HEAP64 = new BigInt64Array(b);
-  
+  HEAPU64 = new BigUint64Array(b);
 }
 
 // include: memoryprofiler.js
 // end include: memoryprofiler.js
 // end include: runtime_common.js
-assert(globalThis.Int32Array && globalThis.Float64Array && Int32Array.prototype.subarray && Int32Array.prototype.set,
+assert(typeof Int32Array != 'undefined' && typeof Float64Array !== 'undefined' && Int32Array.prototype.subarray != undefined && Int32Array.prototype.set != undefined,
        'JS engine does not provide full typed array support');
 
 function preRun() {
-  var preRun = Module['preRun'];
-  if (preRun) {
-    if (typeof preRun == 'function') preRun = [preRun];
-    onPreRuns.push(...preRun);
+  if (Module['preRun']) {
+    if (typeof Module['preRun'] == 'function') Module['preRun'] = [Module['preRun']];
+    while (Module['preRun'].length) {
+      addOnPreRun(Module['preRun'].shift());
+    }
   }
   consumedModuleProp('preRun');
   // Begin ATPRERUNS hooks
@@ -734,17 +729,22 @@ TTY.init();
   // Begin ATPOSTCTORS hooks
   FS.ignorePermissions = false;
   // End ATPOSTCTORS hooks
+}
 
+function preMain() {
   checkStackCookie();
+  // No ATMAINS hooks
 }
 
 function postRun() {
   checkStackCookie();
+   // PThreads reuse the runtime from the main thread.
 
-  var postRun = Module['postRun'];
-  if (postRun) {
-    if (typeof postRun == 'function') postRun = [postRun];
-    onPostRuns.push(...postRun);
+  if (Module['postRun']) {
+    if (typeof Module['postRun'] == 'function') Module['postRun'] = [Module['postRun']];
+    while (Module['postRun'].length) {
+      addOnPostRun(Module['postRun'].shift());
+    }
   }
   consumedModuleProp('postRun');
 
@@ -753,13 +753,81 @@ function postRun() {
   // End ATPOSTRUNS hooks
 }
 
-/**
- * @param {string|number=} what
- */
+// A counter of dependencies for calling run(). If we need to
+// do asynchronous work before running, increment this and
+// decrement it. Incrementing must happen in a place like
+// Module.preRun (used by emcc to add file preloading).
+// Note that you can add dependencies in preRun, even though
+// it happens right before run - run will be postponed until
+// the dependencies are met.
+var runDependencies = 0;
+var dependenciesFulfilled = null; // overridden to take different actions when all run dependencies are fulfilled
+var runDependencyTracking = {};
+var runDependencyWatcher = null;
+
+function addRunDependency(id) {
+  runDependencies++;
+
+  Module['monitorRunDependencies']?.(runDependencies);
+
+  if (id) {
+    assert(!runDependencyTracking[id]);
+    runDependencyTracking[id] = 1;
+    if (runDependencyWatcher === null && typeof setInterval != 'undefined') {
+      // Check for missing dependencies every few seconds
+      runDependencyWatcher = setInterval(() => {
+        if (ABORT) {
+          clearInterval(runDependencyWatcher);
+          runDependencyWatcher = null;
+          return;
+        }
+        var shown = false;
+        for (var dep in runDependencyTracking) {
+          if (!shown) {
+            shown = true;
+            err('still waiting on run dependencies:');
+          }
+          err(`dependency: ${dep}`);
+        }
+        if (shown) {
+          err('(end of list)');
+        }
+      }, 10000);
+    }
+  } else {
+    err('warning: run dependency added without ID');
+  }
+}
+
+function removeRunDependency(id) {
+  runDependencies--;
+
+  Module['monitorRunDependencies']?.(runDependencies);
+
+  if (id) {
+    assert(runDependencyTracking[id]);
+    delete runDependencyTracking[id];
+  } else {
+    err('warning: run dependency removed without ID');
+  }
+  if (runDependencies == 0) {
+    if (runDependencyWatcher !== null) {
+      clearInterval(runDependencyWatcher);
+      runDependencyWatcher = null;
+    }
+    if (dependenciesFulfilled) {
+      var callback = dependenciesFulfilled;
+      dependenciesFulfilled = null;
+      callback(); // can add another dependenciesFulfilled
+    }
+  }
+}
+
+/** @param {string|number=} what */
 function abort(what) {
   Module['onAbort']?.(what);
 
-  what = `Aborted(${what})`;
+  what = 'Aborted(' + what + ')';
   // TODO(sbc): Should we remove printing and leave it up to whoever
   // catches the exception?
   err(what);
@@ -788,28 +856,30 @@ function abort(what) {
   throw e;
 }
 
-function createExportWrapper(name, func, nargs) {
-  assert(func);
+function createExportWrapper(name, nargs) {
   return (...args) => {
     assert(runtimeInitialized, `native function \`${name}\` called before runtime initialization`);
+    var f = wasmExports[name];
+    assert(f, `exported native function \`${name}\` not found`);
     // Only assert for too many arguments. Too few can be valid since the missing arguments will be zero filled.
     assert(args.length <= nargs, `native function \`${name}\` called with ${args.length} args but expects ${nargs}`);
-    return func(...args);
+    return f(...args);
   };
 }
 
 var wasmBinaryFile;
 
 function findWasmBinary() {
-  return locateFile('shell_login.wasm');
+    return locateFile('shell_login.wasm');
 }
 
 function getBinarySync(file) {
+  if (file == wasmBinaryFile && wasmBinary) {
+    return new Uint8Array(wasmBinary);
+  }
   if (readBinary) {
     return readBinary(file);
   }
-  // Throwing a plain string here, even though it not normally advisable since
-  // this gets turning into an `abort` in instantiateArrayBuffer.
   throw 'both async and sync fetching of the wasm failed';
 }
 
@@ -838,20 +908,23 @@ async function instantiateArrayBuffer(binaryFile, imports) {
     err(`failed to asynchronously prepare wasm: ${reason}`);
 
     // Warn on some common problems.
-    if (isFileURI(binaryFile)) {
-      err(`warning: Loading from a file URI (${binaryFile}) is not supported in most browsers. See https://emscripten.org/docs/getting_started/FAQ.html#how-do-i-run-a-local-webserver-for-testing-why-does-my-program-stall-in-downloading-or-preparing`);
+    if (isFileURI(wasmBinaryFile)) {
+      err(`warning: Loading from a file URI (${wasmBinaryFile}) is not supported in most browsers. See https://emscripten.org/docs/getting_started/FAQ.html#how-do-i-run-a-local-webserver-for-testing-why-does-my-program-stall-in-downloading-or-preparing`);
     }
     abort(reason);
   }
 }
 
 async function instantiateAsync(binary, binaryFile, imports) {
-  if (!binary
+  if (!binary && typeof WebAssembly.instantiateStreaming == 'function'
       // Don't use streaming for file:// delivered objects in a webview, fetch them synchronously.
       && !isFileURI(binaryFile)
-      // Avoid using instantiateStreaming() on Node.js since the `fetch()` API
-      // does not support `file://` URLs.
-      // See: https://github.com/emscripten-core/emscripten/pull/16917
+      // Avoid instantiateStreaming() on Node.js environment for now, as while
+      // Node.js v18.1.0 implements it, it does not have a full fetch()
+      // implementation yet.
+      //
+      // Reference:
+      //   https://github.com/emscripten-core/emscripten/pull/16917
       && !ENVIRONMENT_IS_NODE
      ) {
     try {
@@ -871,11 +944,10 @@ async function instantiateAsync(binary, binaryFile, imports) {
 
 function getWasmImports() {
   // prepare imports
-  var imports = {
+  return {
     'env': wasmImports,
     'wasi_snapshot_preview1': wasmImports,
-  };
-  return imports;
+  }
 }
 
 // Create the wasm instance.
@@ -884,15 +956,27 @@ async function createWasm() {
   // Load the wasm module and create an instance of using native support in the JS engine.
   // handle a generated wasm instance, receiving its exports and
   // performing other necessary setup
-  function receiveInstance(instance) {
+  /** @param {WebAssembly.Module=} module*/
+  function receiveInstance(instance, module) {
     wasmExports = instance.exports;
 
-    assignWasmExports(wasmExports);
+    
 
+    wasmMemory = wasmExports['memory'];
+    
+    assert(wasmMemory, 'memory not found in wasm exports');
     updateMemoryViews();
 
+    wasmTable = wasmExports['__indirect_function_table'];
+    
+    assert(wasmTable, 'table not found in wasm exports');
+
+    assignWasmExports(wasmExports);
+    removeRunDependency('wasm-instantiate');
     return wasmExports;
   }
+  // wait for the pthread pool (if any)
+  addRunDependency('wasm-instantiate');
 
   // Prefer streaming instantiation if available.
   // Async compilation can be confusing when an error on the page overwrites Module
@@ -917,14 +1001,15 @@ async function createWasm() {
   // performing.
   // Also pthreads and wasm workers initialize the wasm instance through this
   // path.
-  var instantiateWasm = Module['instantiateWasm'];
-  if (instantiateWasm) {
-    return new Promise((resolve) => {
+  if (Module['instantiateWasm']) {
+    return new Promise((resolve, reject) => {
       try {
-        instantiateWasm(info, (inst) => resolve(receiveInstance(inst)));
+        Module['instantiateWasm'](info, (mod, inst) => {
+          resolve(receiveInstance(mod, inst));
+        });
       } catch(e) {
         err(`Module.instantiateWasm callback failed with error: ${e}`);
-        throw e;
+        reject(e);
       }
     });
   }
@@ -948,15 +1033,6 @@ async function createWasm() {
       }
     }
 
-  /** @type {!Int32Array} */
-  var HEAP32;
-
-  /** @type {!Int8Array} */
-  var HEAP8;
-
-  /** @type {!Uint32Array} */
-  var HEAPU32;
-
   var callRuntimeCallbacks = (callbacks) => {
       while (callbacks.length > 0) {
         // Pass the module as the first argument.
@@ -970,14 +1046,55 @@ async function createWasm() {
   var addOnPreRun = (cb) => onPreRuns.push(cb);
 
 
+  
+    /**
+     * @param {number} ptr
+     * @param {string} type
+     */
+  function getValue(ptr, type = 'i8') {
+    if (type.endsWith('*')) type = '*';
+    switch (type) {
+      case 'i1': return HEAP8[ptr];
+      case 'i8': return HEAP8[ptr];
+      case 'i16': return HEAP16[((ptr)>>1)];
+      case 'i32': return HEAP32[((ptr)>>2)];
+      case 'i64': return HEAP64[((ptr)>>3)];
+      case 'float': return HEAPF32[((ptr)>>2)];
+      case 'double': return HEAPF64[((ptr)>>3)];
+      case '*': return HEAPU32[((ptr)>>2)];
+      default: abort(`invalid type for getValue: ${type}`);
+    }
+  }
+
   var noExitRuntime = true;
 
-  function ptrToString(ptr) {
-      assert(typeof ptr === 'number', `ptrToString expects a number, got ${typeof ptr}`);
-      // Convert to 32-bit unsigned value
+  var ptrToString = (ptr) => {
+      assert(typeof ptr === 'number');
+      // With CAN_ADDRESS_2GB or MEMORY64, pointers are already unsigned.
       ptr >>>= 0;
       return '0x' + ptr.toString(16).padStart(8, '0');
+    };
+
+  
+    /**
+     * @param {number} ptr
+     * @param {number} value
+     * @param {string} type
+     */
+  function setValue(ptr, value, type = 'i8') {
+    if (type.endsWith('*')) type = '*';
+    switch (type) {
+      case 'i1': HEAP8[ptr] = value; break;
+      case 'i8': HEAP8[ptr] = value; break;
+      case 'i16': HEAP16[((ptr)>>1)] = value; break;
+      case 'i32': HEAP32[((ptr)>>2)] = value; break;
+      case 'i64': HEAP64[((ptr)>>3)] = BigInt(value); break;
+      case 'float': HEAPF32[((ptr)>>2)] = value; break;
+      case 'double': HEAPF64[((ptr)>>3)] = value; break;
+      case '*': HEAPU32[((ptr)>>2)] = value; break;
+      default: abort(`invalid type for setValue: ${type}`);
     }
+  }
 
   var stackRestore = (val) => __emscripten_stack_restore(val);
 
@@ -992,49 +1109,34 @@ async function createWasm() {
       }
     };
 
-  
-
-  var UTF8Decoder = globalThis.TextDecoder && new TextDecoder();
-  
+  var UTF8Decoder = typeof TextDecoder != 'undefined' ? new TextDecoder() : undefined;
   
     /**
-   * heapOrArray is either a regular array, or a JavaScript typed array view.
-   * @param {number} idx
-   * @param {number=} maxBytesToRead
-   * @param {boolean=} ignoreNul
-   * @return {number}
-   */
-  var findStringEnd = (heapOrArray, idx, maxBytesToRead, ignoreNul) => {
-      var maxIdx = idx + maxBytesToRead;
-      if (ignoreNul) return maxIdx;
+     * Given a pointer 'idx' to a null-terminated UTF8-encoded string in the given
+     * array that contains uint8 values, returns a copy of that string as a
+     * Javascript String object.
+     * heapOrArray is either a regular array, or a JavaScript typed array view.
+     * @param {number=} idx
+     * @param {number=} maxBytesToRead
+     * @return {string}
+     */
+  var UTF8ArrayToString = (heapOrArray, idx = 0, maxBytesToRead = NaN) => {
+      var endIdx = idx + maxBytesToRead;
+      var endPtr = idx;
       // TextDecoder needs to know the byte length in advance, it doesn't stop on
-      // null terminator by itself.
-      // As a tiny code save trick, compare idx against maxIdx using a negation,
-      // so that maxBytesToRead=undefined/NaN means Infinity.
-      while (heapOrArray[idx] && !(idx >= maxIdx)) ++idx;
-      return idx;
-    };
-  
-  
-    /**
-   * Given a pointer 'idx' to a null-terminated UTF8-encoded string in the given
-   * array that contains uint8 values, returns a copy of that string as a
-   * Javascript String object.
-   * heapOrArray is either a regular array, or a JavaScript typed array view.
-   * @param {number=} idx
-   * @param {number=} maxBytesToRead
-   * @param {boolean=} ignoreNul - If true, the function will not stop on a NUL character.
-   * @return {string}
-   */
-  var UTF8ArrayToString = (heapOrArray, idx = 0, maxBytesToRead, ignoreNul) => {
-  
-      var endPtr = findStringEnd(heapOrArray, idx, maxBytesToRead, ignoreNul);
+      // null terminator by itself.  Also, use the length info to avoid running tiny
+      // strings through TextDecoder, since .subarray() allocates garbage.
+      // (As a tiny code save trick, compare endPtr against endIdx using a negation,
+      // so that undefined/NaN means Infinity)
+      while (heapOrArray[endPtr] && !(endPtr >= endIdx)) ++endPtr;
   
       // When using conditional TextDecoder, skip it for short strings as the overhead of the native call is not worth it.
       if (endPtr - idx > 16 && heapOrArray.buffer && UTF8Decoder) {
         return UTF8Decoder.decode(heapOrArray.subarray(idx, endPtr));
       }
       var str = '';
+      // If building with TextDecoder, we have already computed the string length
+      // above, so test loop end condition against that
       while (idx < endPtr) {
         // For UTF8 byte structure, see:
         // http://en.wikipedia.org/wiki/UTF-8#Description
@@ -1048,7 +1150,7 @@ async function createWasm() {
         if ((u0 & 0xF0) == 0xE0) {
           u0 = ((u0 & 15) << 12) | (u1 << 6) | u2;
         } else {
-          if ((u0 & 0xF8) != 0xF0) warnOnce(`Invalid UTF-8 leading byte ${ptrToString(u0)} encountered when deserializing a UTF-8 string in wasm memory to a JS string!`);
+          if ((u0 & 0xF8) != 0xF0) warnOnce('Invalid UTF-8 leading byte ' + ptrToString(u0) + ' encountered when deserializing a UTF-8 string in wasm memory to a JS string!');
           u0 = ((u0 & 7) << 18) | (u1 << 12) | (u2 << 6) | (heapOrArray[idx++] & 63);
         }
   
@@ -1062,30 +1164,28 @@ async function createWasm() {
       return str;
     };
   
-  /** @type {!Uint8Array} */
-  var HEAPU8;
-  
     /**
-   * Given a pointer 'ptr' to a null-terminated UTF8-encoded string in the
-   * emscripten HEAP, returns a copy of that string as a Javascript String object.
-   *
-   * @param {number} ptr
-   * @param {number=} maxBytesToRead - An optional length that specifies the
-   *   maximum number of bytes to read. You can omit this parameter to scan the
-   *   string until the first 0 byte. If maxBytesToRead is passed, and the string
-   *   at [ptr, ptr+maxBytesToReadr[ contains a null byte in the middle, then the
-   *   string will cut short at that byte index.
-   * @param {boolean=} ignoreNul - If true, the function will not stop on a NUL character.
-   * @return {string}
-   */
-  var UTF8ToString = (ptr, maxBytesToRead, ignoreNul) => {
+     * Given a pointer 'ptr' to a null-terminated UTF8-encoded string in the
+     * emscripten HEAP, returns a copy of that string as a Javascript String object.
+     *
+     * @param {number} ptr
+     * @param {number=} maxBytesToRead - An optional length that specifies the
+     *   maximum number of bytes to read. You can omit this parameter to scan the
+     *   string until the first 0 byte. If maxBytesToRead is passed, and the string
+     *   at [ptr, ptr+maxBytesToReadr[ contains a null byte in the middle, then the
+     *   string will cut short at that byte index (i.e. maxBytesToRead will not
+     *   produce a string of exact length [ptr, ptr+maxBytesToRead[) N.B. mixing
+     *   frequent uses of UTF8ToString() with and without maxBytesToRead may throw
+     *   JS JIT optimizations off, so it is worth to consider consistently using one
+     * @return {string}
+     */
+  var UTF8ToString = (ptr, maxBytesToRead) => {
       assert(typeof ptr == 'number', `UTF8ToString expects a number (got ${typeof ptr})`);
-      return ptr ? UTF8ArrayToString(HEAPU8, ptr, maxBytesToRead, ignoreNul) : '';
+      return ptr ? UTF8ArrayToString(HEAPU8, ptr, maxBytesToRead) : '';
     };
   var ___assert_fail = (condition, filename, line, func) =>
       abort(`Assertion failed: ${UTF8ToString(condition)}, at: ` + [filename ? UTF8ToString(filename) : 'unknown filename', line, func ? UTF8ToString(func) : 'unknown function']);
 
-  
   class ExceptionInfo {
       // excPtr - Thrown object pointer to wrap. Metadata pointer is calculated from it.
       constructor(excPtr) {
@@ -1143,19 +1243,19 @@ async function createWasm() {
       }
     }
   
-  var uncaughtExceptionCount = 0;
+  var exceptionLast = 0;
   
-  var __Unwind_RaiseException = (ex) => {
-      assert(false, 'Exception thrown, but exception catching is not enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or -sEXCEPTION_CATCHING_ALLOWED=[..] to catch.');
-    };
+  var uncaughtExceptionCount = 0;
   var ___cxa_throw = (ptr, type, destructor) => {
       var info = new ExceptionInfo(ptr);
       // Initialize ExceptionInfo content after it was allocated in __cxa_allocate_exception.
       info.init(type, destructor);
+      exceptionLast = ptr;
       uncaughtExceptionCount++;
-      __Unwind_RaiseException(ptr);
+      assert(false, 'Exception thrown, but exception catching is not enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or -sEXCEPTION_CATCHING_ALLOWED=[..] to catch.');
     };
 
+  /** @suppress {duplicate } */
   var syscallGetVarargI = () => {
       assert(SYSCALLS.varargs != undefined);
       // the `+` prepended here is necessary to convince the JSCompiler that varargs is indeed a number.
@@ -1223,145 +1323,148 @@ async function createWasm() {
         return root + dir;
       },
   basename:(path) => path && path.match(/([^\/]+|\/)\/*$/)[1],
-join:(...paths) => PATH.normalize(paths.join('/')),
-join2:(l, r) => PATH.normalize(l + '/' + r),
-};
-
-var initRandomFill = () => {
-    // This block is not needed on v19+ since crypto.getRandomValues is builtin
-    if (ENVIRONMENT_IS_NODE) {
-      var nodeCrypto = require('node:crypto');
-      return (view) => (nodeCrypto.randomFillSync(view), 0);
-    }
-
-    return (view) => (crypto.getRandomValues(view), 0);
+  join:(...paths) => PATH.normalize(paths.join('/')),
+  join2:(l, r) => PATH.normalize(l + '/' + r),
   };
-var randomFill = (view) => (randomFill = initRandomFill())(view);
-
-
-
-var PATH_FS = {
-resolve:(...args) => {
-      var resolvedPath = '',
-        resolvedAbsolute = false;
-      for (var i = args.length - 1; i >= -1 && !resolvedAbsolute; i--) {
-        var path = (i >= 0) ? args[i] : FS.cwd();
-        // Skip empty and invalid entries
-        if (typeof path != 'string') {
-          throw new TypeError('Arguments to path.resolve must be strings');
-        } else if (!path) {
-          return ''; // an invalid portion invalidates the whole thing
+  
+  var initRandomFill = () => {
+      // This block is not needed on v19+ since crypto.getRandomValues is builtin
+      if (ENVIRONMENT_IS_NODE) {
+        var nodeCrypto = require('crypto');
+        return (view) => nodeCrypto.randomFillSync(view);
+      }
+  
+      return (view) => crypto.getRandomValues(view);
+    };
+  var randomFill = (view) => {
+      // Lazily init on the first invocation.
+      (randomFill = initRandomFill())(view);
+    };
+  
+  
+  
+  var PATH_FS = {
+  resolve:(...args) => {
+        var resolvedPath = '',
+          resolvedAbsolute = false;
+        for (var i = args.length - 1; i >= -1 && !resolvedAbsolute; i--) {
+          var path = (i >= 0) ? args[i] : FS.cwd();
+          // Skip empty and invalid entries
+          if (typeof path != 'string') {
+            throw new TypeError('Arguments to path.resolve must be strings');
+          } else if (!path) {
+            return ''; // an invalid portion invalidates the whole thing
+          }
+          resolvedPath = path + '/' + resolvedPath;
+          resolvedAbsolute = PATH.isAbs(path);
         }
-        resolvedPath = path + '/' + resolvedPath;
-        resolvedAbsolute = PATH.isAbs(path);
-      }
-      // At this point the path should be resolved to a full absolute path, but
-      // handle relative paths to be safe (might happen when process.cwd() fails)
-      resolvedPath = PATH.normalizeArray(resolvedPath.split('/').filter((p) => !!p), !resolvedAbsolute).join('/');
-      return ((resolvedAbsolute ? '/' : '') + resolvedPath) || '.';
-    },
-relative:(from, to) => {
-      from = PATH_FS.resolve(from).slice(1);
-      to = PATH_FS.resolve(to).slice(1);
-      function trim(arr) {
-        var start = 0;
-        for (; start < arr.length; start++) {
-          if (arr[start] !== '') break;
+        // At this point the path should be resolved to a full absolute path, but
+        // handle relative paths to be safe (might happen when process.cwd() fails)
+        resolvedPath = PATH.normalizeArray(resolvedPath.split('/').filter((p) => !!p), !resolvedAbsolute).join('/');
+        return ((resolvedAbsolute ? '/' : '') + resolvedPath) || '.';
+      },
+  relative:(from, to) => {
+        from = PATH_FS.resolve(from).slice(1);
+        to = PATH_FS.resolve(to).slice(1);
+        function trim(arr) {
+          var start = 0;
+          for (; start < arr.length; start++) {
+            if (arr[start] !== '') break;
+          }
+          var end = arr.length - 1;
+          for (; end >= 0; end--) {
+            if (arr[end] !== '') break;
+          }
+          if (start > end) return [];
+          return arr.slice(start, end - start + 1);
         }
-        var end = arr.length - 1;
-        for (; end >= 0; end--) {
-          if (arr[end] !== '') break;
+        var fromParts = trim(from.split('/'));
+        var toParts = trim(to.split('/'));
+        var length = Math.min(fromParts.length, toParts.length);
+        var samePartsLength = length;
+        for (var i = 0; i < length; i++) {
+          if (fromParts[i] !== toParts[i]) {
+            samePartsLength = i;
+            break;
+          }
         }
-        if (start > end) return [];
-        return arr.slice(start, end - start + 1);
-      }
-      var fromParts = trim(from.split('/'));
-      var toParts = trim(to.split('/'));
-      var length = Math.min(fromParts.length, toParts.length);
-      var samePartsLength = length;
-      for (var i = 0; i < length; i++) {
-        if (fromParts[i] !== toParts[i]) {
-          samePartsLength = i;
-          break;
+        var outputParts = [];
+        for (var i = samePartsLength; i < fromParts.length; i++) {
+          outputParts.push('..');
         }
-      }
-      var outputParts = [];
-      for (var i = samePartsLength; i < fromParts.length; i++) {
-        outputParts.push('..');
-      }
-      outputParts = outputParts.concat(toParts.slice(samePartsLength));
-      return outputParts.join('/');
-    },
-};
-
-
-
-var FS_stdin_getChar_buffer = [];
-
-var lengthBytesUTF8 = (str) => {
-    var len = 0;
-    for (var i = 0; i < str.length; ++i) {
-      // Gotcha: charCodeAt returns a 16-bit word that is a UTF-16 encoded code
-      // unit, not a Unicode code point of the character! So decode
-      // UTF16->UTF32->UTF8.
-      // See http://unicode.org/faq/utf_bom.html#utf16-3
-      var c = str.charCodeAt(i); // possibly a lead surrogate
-      if (c <= 0x7F) {
-        len++;
-      } else if (c <= 0x7FF) {
-        len += 2;
-      } else if (c >= 0xD800 && c <= 0xDFFF) {
-        len += 4; ++i;
-      } else {
-        len += 3;
-      }
-    }
-    return len;
+        outputParts = outputParts.concat(toParts.slice(samePartsLength));
+        return outputParts.join('/');
+      },
   };
-
-var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
-    assert(typeof str === 'string', `stringToUTF8Array expects a string (got ${typeof str})`);
-    // Parameter maxBytesToWrite is not optional. Negative values, 0, null,
-    // undefined and false each don't write out any bytes.
-    if (!(maxBytesToWrite > 0))
-      return 0;
-
-    var startIdx = outIdx;
-    var endIdx = outIdx + maxBytesToWrite - 1; // -1 for string null terminator.
-    for (var i = 0; i < str.length; ++i) {
-      // For UTF8 byte structure, see http://en.wikipedia.org/wiki/UTF-8#Description
-      // and https://www.ietf.org/rfc/rfc2279.txt
-      // and https://tools.ietf.org/html/rfc3629
-      var u = str.codePointAt(i);
-      if (u <= 0x7F) {
-        if (outIdx >= endIdx) break;
-        heap[outIdx++] = u;
-      } else if (u <= 0x7FF) {
-        if (outIdx + 1 >= endIdx) break;
-        heap[outIdx++] = 0xC0 | (u >> 6);
-        heap[outIdx++] = 0x80 | (u & 63);
-      } else if (u <= 0xFFFF) {
-        if (outIdx + 2 >= endIdx) break;
-        heap[outIdx++] = 0xE0 | (u >> 12);
-        heap[outIdx++] = 0x80 | ((u >> 6) & 63);
-        heap[outIdx++] = 0x80 | (u & 63);
-      } else {
-        if (outIdx + 3 >= endIdx) break;
-        if (u > 0x10FFFF) warnOnce(`Invalid Unicode code point ${ptrToString(u)} encountered when serializing a JS string to a UTF-8 string in wasm memory! (Valid unicode code points should be in range 0-0x10FFFF).`);
-        heap[outIdx++] = 0xF0 | (u >> 18);
-        heap[outIdx++] = 0x80 | ((u >> 12) & 63);
-        heap[outIdx++] = 0x80 | ((u >> 6) & 63);
-        heap[outIdx++] = 0x80 | (u & 63);
-        // Gotcha: if codePoint is over 0xFFFF, it is represented as a surrogate pair in UTF-16.
-        // We need to manually skip over the second code unit for correct iteration.
-        i++;
+  
+  
+  
+  var FS_stdin_getChar_buffer = [];
+  
+  var lengthBytesUTF8 = (str) => {
+      var len = 0;
+      for (var i = 0; i < str.length; ++i) {
+        // Gotcha: charCodeAt returns a 16-bit word that is a UTF-16 encoded code
+        // unit, not a Unicode code point of the character! So decode
+        // UTF16->UTF32->UTF8.
+        // See http://unicode.org/faq/utf_bom.html#utf16-3
+        var c = str.charCodeAt(i); // possibly a lead surrogate
+        if (c <= 0x7F) {
+          len++;
+        } else if (c <= 0x7FF) {
+          len += 2;
+        } else if (c >= 0xD800 && c <= 0xDFFF) {
+          len += 4; ++i;
+        } else {
+          len += 3;
+        }
       }
-    }
-    // Null-terminate the pointer to the buffer.
-    heap[outIdx] = 0;
-    return outIdx - startIdx;
-  };
-/** @type {function(string, boolean=, number=)} */
+      return len;
+    };
+  
+  var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
+      assert(typeof str === 'string', `stringToUTF8Array expects a string (got ${typeof str})`);
+      // Parameter maxBytesToWrite is not optional. Negative values, 0, null,
+      // undefined and false each don't write out any bytes.
+      if (!(maxBytesToWrite > 0))
+        return 0;
+  
+      var startIdx = outIdx;
+      var endIdx = outIdx + maxBytesToWrite - 1; // -1 for string null terminator.
+      for (var i = 0; i < str.length; ++i) {
+        // For UTF8 byte structure, see http://en.wikipedia.org/wiki/UTF-8#Description
+        // and https://www.ietf.org/rfc/rfc2279.txt
+        // and https://tools.ietf.org/html/rfc3629
+        var u = str.codePointAt(i);
+        if (u <= 0x7F) {
+          if (outIdx >= endIdx) break;
+          heap[outIdx++] = u;
+        } else if (u <= 0x7FF) {
+          if (outIdx + 1 >= endIdx) break;
+          heap[outIdx++] = 0xC0 | (u >> 6);
+          heap[outIdx++] = 0x80 | (u & 63);
+        } else if (u <= 0xFFFF) {
+          if (outIdx + 2 >= endIdx) break;
+          heap[outIdx++] = 0xE0 | (u >> 12);
+          heap[outIdx++] = 0x80 | ((u >> 6) & 63);
+          heap[outIdx++] = 0x80 | (u & 63);
+        } else {
+          if (outIdx + 3 >= endIdx) break;
+          if (u > 0x10FFFF) warnOnce('Invalid Unicode code point ' + ptrToString(u) + ' encountered when serializing a JS string to a UTF-8 string in wasm memory! (Valid unicode code points should be in range 0-0x10FFFF).');
+          heap[outIdx++] = 0xF0 | (u >> 18);
+          heap[outIdx++] = 0x80 | ((u >> 12) & 63);
+          heap[outIdx++] = 0x80 | ((u >> 6) & 63);
+          heap[outIdx++] = 0x80 | (u & 63);
+          // Gotcha: if codePoint is over 0xFFFF, it is represented as a surrogate pair in UTF-16.
+          // We need to manually skip over the second code unit for correct iteration.
+          i++;
+        }
+      }
+      // Null-terminate the pointer to the buffer.
+      heap[outIdx] = 0;
+      return outIdx - startIdx;
+    };
+  /** @type {function(string, boolean=, number=)} */
   var intArrayFromString = (stringy, dontAddNull, length) => {
       var len = length > 0 ? length : lengthBytesUTF8(stringy)+1;
       var u8array = new Array(len);
@@ -1378,8 +1481,17 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           var buf = Buffer.alloc(BUFSIZE);
           var bytesRead = 0;
   
+          // For some reason we must suppress a closure warning here, even though
+          // fd definitely exists on process.stdin, and is even the proper way to
+          // get the fd of stdin,
+          // https://github.com/nodejs/help/issues/2136#issuecomment-523649904
+          // This started to happen after moving this logic out of library_tty.js,
+          // so it is related to the surrounding code in some unclear manner.
+          /** @suppress {missingProperties} */
+          var fd = process.stdin.fd;
+  
           try {
-            bytesRead = fs.readSync(process.stdin.fd, buf, 0, BUFSIZE);
+            bytesRead = fs.readSync(fd, buf, 0, BUFSIZE);
           } catch(e) {
             // Cross-platform differences: on Windows, reading EOF throws an
             // exception, but on other OSes, reading EOF returns 0. Uniformize
@@ -1389,10 +1501,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           }
   
           if (bytesRead > 0) {
-            result = buf.toString('utf-8', 0, bytesRead);
+            result = buf.slice(0, bytesRead).toString('utf-8');
           }
         } else
-        if (globalThis.window?.prompt) {
+        if (typeof window != 'undefined' &&
+          typeof window.prompt == 'function') {
           // Browser.
           result = window.prompt('Input: ');  // returns null on cancel
           if (result !== null) {
@@ -1462,15 +1575,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
             } catch (e) {
               throw new FS.ErrnoError(29);
             }
-            if (result === undefined && !bytesRead) {
+            if (result === undefined && bytesRead === 0) {
               throw new FS.ErrnoError(6);
             }
             if (result === null || result === undefined) break;
             bytesRead++;
             buffer[offset+i] = result;
-            // We currently only support canonical mode (ICANON), where
-            // read(2) returns as soon as a line delimiter is read.
-            if (result === 10) break;
           }
           if (bytesRead) {
             stream.node.atime = Date.now();
@@ -1556,15 +1666,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   var mmapAlloc = (size) => {
       abort('internal error: mmapAlloc called but `emscripten_builtin_memalign` native symbol not exported');
     };
-  
   var MEMFS = {
   ops_table:null,
   mount(mount) {
         return MEMFS.createNode(null, '/', 16895, 0);
       },
-  createNode(parent, name, mode, dev = undefined) {
+  createNode(parent, name, mode, dev) {
         if (FS.isBlkdev(mode) || FS.isFIFO(mode)) {
-          // not supported
+          // no supported
           throw new FS.ErrnoError(63);
         }
         MEMFS.ops_table ||= {
@@ -1621,14 +1730,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         } else if (FS.isFile(node.mode)) {
           node.node_ops = MEMFS.ops_table.file.node;
           node.stream_ops = MEMFS.ops_table.file.stream;
-          // The actual number of bytes used in the typed array, as opposed to
-          // contents.length which gives the whole capacity.
-          node.usedBytes = 0;
-          // The byte data of the file is stored in a typed array.
-          // Note: typed arrays are not resizable like normal JS arrays are, so
-          // there is a small penalty involved for appending file writes that
-          // continuously grow a file similar to std::vector capacity vs used.
-          node.contents = MEMFS.emptyFileContents ??= new Uint8Array(0);
+          node.usedBytes = 0; // The actual number of bytes used in the typed array, as opposed to contents.length which gives the whole capacity.
+          // When the byte data of the file is populated, this will point to either a typed array, or a normal JS array. Typed arrays are preferred
+          // for performance, and used by default. However, typed arrays are not resizable like normal JS arrays are, so there is a small disk size
+          // penalty involved for appending file writes that continuously grow a file similar to std::vector capacity vs used -scheme.
+          node.contents = null; 
         } else if (FS.isLink(node.mode)) {
           node.node_ops = MEMFS.ops_table.link.node;
           node.stream_ops = MEMFS.ops_table.link.stream;
@@ -1645,30 +1751,36 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         return node;
       },
   getFileDataAsTypedArray(node) {
-        assert(FS.isFile(node.mode), 'getFileDataAsTypedArray called on non-file');
-        return node.contents.subarray(0, node.usedBytes); // Make sure to not return excess unused bytes.
+        if (!node.contents) return new Uint8Array(0);
+        if (node.contents.subarray) return node.contents.subarray(0, node.usedBytes); // Make sure to not return excess unused bytes.
+        return new Uint8Array(node.contents);
       },
   expandFileStorage(node, newCapacity) {
-        var prevCapacity = node.contents.length;
+        var prevCapacity = node.contents ? node.contents.length : 0;
         if (prevCapacity >= newCapacity) return; // No need to expand, the storage was already large enough.
-        // Don't expand strictly to the given requested limit if it's only a very
-        // small increase, but instead geometrically grow capacity.
-        // For small filesizes (<1MB), perform size*2 geometric increase, but for
-        // large sizes, do a much more conservative size*1.125 increase to avoid
-        // overshooting the allocation cap by a very large margin.
+        // Don't expand strictly to the given requested limit if it's only a very small increase, but instead geometrically grow capacity.
+        // For small filesizes (<1MB), perform size*2 geometric increase, but for large sizes, do a much more conservative size*1.125 increase to
+        // avoid overshooting the allocation cap by a very large margin.
         var CAPACITY_DOUBLING_MAX = 1024 * 1024;
         newCapacity = Math.max(newCapacity, (prevCapacity * (prevCapacity < CAPACITY_DOUBLING_MAX ? 2.0 : 1.125)) >>> 0);
-        if (prevCapacity) newCapacity = Math.max(newCapacity, 256); // At minimum allocate 256b for each file when expanding.
-        var oldContents = MEMFS.getFileDataAsTypedArray(node);
+        if (prevCapacity != 0) newCapacity = Math.max(newCapacity, 256); // At minimum allocate 256b for each file when expanding.
+        var oldContents = node.contents;
         node.contents = new Uint8Array(newCapacity); // Allocate new storage.
-        node.contents.set(oldContents);
+        if (node.usedBytes > 0) node.contents.set(oldContents.subarray(0, node.usedBytes), 0); // Copy old data over to the new storage.
       },
   resizeFileStorage(node, newSize) {
         if (node.usedBytes == newSize) return;
-        var oldContents = node.contents;
-        node.contents = new Uint8Array(newSize); // Allocate new storage.
-        node.contents.set(oldContents.subarray(0, Math.min(newSize, node.usedBytes))); // Copy old data over to the new storage.
-        node.usedBytes = newSize;
+        if (newSize == 0) {
+          node.contents = null; // Fully decommit when requesting a resize to zero.
+          node.usedBytes = 0;
+        } else {
+          var oldContents = node.contents;
+          node.contents = new Uint8Array(newSize); // Allocate new storage.
+          if (oldContents) {
+            node.contents.set(oldContents.subarray(0, Math.min(newSize, node.usedBytes))); // Copy old data over to the new storage.
+          }
+          node.usedBytes = newSize;
+        }
       },
   node_ops:{
   getattr(node) {
@@ -1693,11 +1805,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           attr.atime = new Date(node.atime);
           attr.mtime = new Date(node.mtime);
           attr.ctime = new Date(node.ctime);
-          // A Date only holds whole milliseconds: also return the exact times
-          // (e.g. as set by utimensat), which SYSCALLS.writeStat prefers.
-          attr.atimeMs = node.atime;
-          attr.mtimeMs = node.mtime;
-          attr.ctimeMs = node.ctime;
           // NOTE: In our implementation, st_blocks = Math.ceil(st_size/st_blksize),
           //       but this is not required by the standard.
           attr.blksize = 4096;
@@ -1705,7 +1812,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           return attr;
         },
   setattr(node, attr) {
-          for (const key of ['mode', 'atime', 'mtime', 'ctime']) {
+          for (const key of ["mode", "atime", "mtime", "ctime"]) {
             if (attr[key] != null) {
               node[key] = attr[key];
             }
@@ -1717,7 +1824,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   lookup(parent, name) {
           throw new FS.ErrnoError(44);
         },
-  mknod(parent, name, mode, dev = undefined) {
+  mknod(parent, name, mode, dev) {
           return MEMFS.createNode(parent, name, mode, dev);
         },
   rename(old_node, new_dir, new_name) {
@@ -1725,11 +1832,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           try {
             new_node = FS.lookupNode(new_dir, new_name);
           } catch (e) {}
-          if (new_node && FS.isDir(old_node.mode)) {
-            // if we're overwriting a directory at new_name, make sure it's empty.
-            for (var i in new_node.contents) {
-              throw new FS.ErrnoError(55);
+          if (new_node) {
+            if (FS.isDir(old_node.mode)) {
+              // if we're overwriting a directory at new_name, make sure it's empty.
+              for (var i in new_node.contents) {
+                throw new FS.ErrnoError(55);
+              }
             }
+            FS.hashRemoveNode(new_node);
           }
           // do the internal rewiring
           delete old_node.parent.contents[old_node.name];
@@ -1770,29 +1880,48 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           if (position >= stream.node.usedBytes) return 0;
           var size = Math.min(stream.node.usedBytes - position, length);
           assert(size >= 0);
-          buffer.set(contents.subarray(position, position + size), offset);
+          if (size > 8 && contents.subarray) { // non-trivial, and typed array
+            buffer.set(contents.subarray(position, position + size), offset);
+          } else {
+            for (var i = 0; i < size; i++) buffer[offset + i] = contents[position + i];
+          }
           return size;
         },
   write(stream, buffer, offset, length, position, canOwn) {
-          assert(buffer.subarray, 'FS.write expects a TypedArray');
+          // The data buffer should be a typed array view
+          assert(!(buffer instanceof ArrayBuffer));
   
           if (!length) return 0;
           var node = stream.node;
           node.mtime = node.ctime = Date.now();
   
-          if (canOwn) {
-            assert(!position, 'canOwn must imply no weird position inside the file');
-            node.contents = buffer.subarray(offset, offset + length);
-            node.usedBytes = length;
-          } else if (!node.usedBytes && !position) { // If this is a simple first write to an empty file, do a fast set since we don't need to care about old data.
-            node.contents = buffer.slice(offset, offset + length);
-            node.usedBytes = length;
-          } else {
-            MEMFS.expandFileStorage(node, position+length);
+          if (buffer.subarray && (!node.contents || node.contents.subarray)) { // This write is from a typed array to a typed array?
+            if (canOwn) {
+              assert(position === 0, 'canOwn must imply no weird position inside the file');
+              node.contents = buffer.subarray(offset, offset + length);
+              node.usedBytes = length;
+              return length;
+            } else if (node.usedBytes === 0 && position === 0) { // If this is a simple first write to an empty file, do a fast set since we don't need to care about old data.
+              node.contents = buffer.slice(offset, offset + length);
+              node.usedBytes = length;
+              return length;
+            } else if (position + length <= node.usedBytes) { // Writing to an already allocated and used subrange of the file?
+              node.contents.set(buffer.subarray(offset, offset + length), position);
+              return length;
+            }
+          }
+  
+          // Appending to an existing file and we need to reallocate, or source data did not come as a typed array.
+          MEMFS.expandFileStorage(node, position+length);
+          if (node.contents.subarray && buffer.subarray) {
             // Use typed array write which is available.
             node.contents.set(buffer.subarray(offset, offset + length), position);
-            node.usedBytes = Math.max(node.usedBytes, position + length);
+          } else {
+            for (var i = 0; i < length; i++) {
+             node.contents[position + i] = buffer[offset + i]; // Or fall back to manual write if not.
+            }
           }
+          node.usedBytes = Math.max(node.usedBytes, position + length);
           return length;
         },
   llseek(stream, offset, whence) {
@@ -1817,7 +1946,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           var allocated;
           var contents = stream.node.contents;
           // Only make a new copy when MAP_PRIVATE is specified.
-          if (!(flags & 2) && contents.buffer === HEAP8.buffer) {
+          if (!(flags & 2) && contents && contents.buffer === HEAP8.buffer) {
             // We can't emulate MAP_SHARED when the file is not backed by the
             // buffer we're mapping to (e.g. the HEAP buffer).
             allocated = false;
@@ -1850,8 +1979,69 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   },
   };
   
+  var asyncLoad = async (url) => {
+      var arrayBuffer = await readAsync(url);
+      assert(arrayBuffer, `Loading data file "${url}" failed (no arrayBuffer).`);
+      return new Uint8Array(arrayBuffer);
+    };
+  
+  
+  var FS_createDataFile = (...args) => FS.createDataFile(...args);
+  
+  var getUniqueRunDependency = (id) => {
+      var orig = id;
+      while (1) {
+        if (!runDependencyTracking[id]) return id;
+        id = orig + Math.random();
+      }
+    };
+  
+  var preloadPlugins = [];
+  var FS_handledByPreloadPlugin = (byteArray, fullname, finish, onerror) => {
+      // Ensure plugins are ready.
+      if (typeof Browser != 'undefined') Browser.init();
+  
+      var handled = false;
+      preloadPlugins.forEach((plugin) => {
+        if (handled) return;
+        if (plugin['canHandle'](fullname)) {
+          plugin['handle'](byteArray, fullname, finish, onerror);
+          handled = true;
+        }
+      });
+      return handled;
+    };
+  var FS_createPreloadedFile = (parent, name, url, canRead, canWrite, onload, onerror, dontCreateFile, canOwn, preFinish) => {
+      // TODO we should allow people to just pass in a complete filename instead
+      // of parent and name being that we just join them anyways
+      var fullname = name ? PATH_FS.resolve(PATH.join2(parent, name)) : parent;
+      var dep = getUniqueRunDependency(`cp ${fullname}`); // might have several active requests for the same fullname
+      function processData(byteArray) {
+        function finish(byteArray) {
+          preFinish?.();
+          if (!dontCreateFile) {
+            FS_createDataFile(parent, name, byteArray, canRead, canWrite, canOwn);
+          }
+          onload?.();
+          removeRunDependency(dep);
+        }
+        if (FS_handledByPreloadPlugin(byteArray, fullname, finish, () => {
+          onerror?.();
+          removeRunDependency(dep);
+        })) {
+          return;
+        }
+        finish(byteArray);
+      }
+      addRunDependency(dep);
+      if (typeof url == 'string') {
+        asyncLoad(url).then(processData, onerror);
+      } else {
+        processData(url);
+      }
+    };
+  
   var FS_modeStringToFlags = (str) => {
-      if (typeof str != 'string') return str;
       var flagModes = {
         'r': 0,
         'r+': 2,
@@ -1865,16 +2055,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         throw new Error(`Unknown file open mode: ${str}`);
       }
       return flags;
-    };
-  
-  var FS_fileDataToTypedArray = (data) => {
-      if (typeof data == 'string') {
-        data = intArrayFromString(data, true);
-      }
-      if (!data.subarray) {
-        data = new Uint8Array(data);
-      }
-      return data;
     };
   
   var FS_getMode = (canRead, canWrite) => {
@@ -2012,135 +2192,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       'EOWNERDEAD': 62,
       'ESTRPIPE': 135,
     };
-  
-  
-  var asyncLoad = async (url) => {
-      var arrayBuffer = await readAsync(url);
-      assert(arrayBuffer, `Loading data file "${url}" failed (no arrayBuffer).`);
-      return new Uint8Array(arrayBuffer);
-    };
-  
-  
-  var FS_createDataFile = (...args) => FS.createDataFile(...args);
-  
-  var getUniqueRunDependency = (id) => {
-      var orig = id;
-      while (1) {
-        if (!runDependencyTracking[id]) return id;
-        id = orig + Math.random();
-      }
-    };
-  
-  var dependenciesPromise = null;
-  var resolveRunDependencies = async () => dependenciesPromise;
-  var runDependencies = 0;
-  
-  
-  var dependenciesPromiseResolve = null;
-  
-  var runDependencyTracking = {
-  };
-  
-  var runDependencyWatcher = null;
-  var removeRunDependency = (id) => {
-      runDependencies--;
-  
-      Module['monitorRunDependencies']?.(runDependencies);
-  
-      assert(id, 'removeRunDependency requires an ID');
-      assert(runDependencyTracking[id]);
-      delete runDependencyTracking[id];
-      if (!runDependencies) {
-        if (runDependencyWatcher !== null) {
-          clearInterval(runDependencyWatcher);
-          runDependencyWatcher = null;
-        }
-        dependenciesPromiseResolve();
-      }
-    };
-  
-  
-  
-  
-  var addRunDependency = (id) => {
-      if (!runDependencies) {
-        dependenciesPromise = new Promise((resolve) => dependenciesPromiseResolve = resolve);
-      }
-      runDependencies++;
-  
-      Module['monitorRunDependencies']?.(runDependencies);
-  
-      assert(id, 'addRunDependency requires an ID')
-      assert(!runDependencyTracking[id]);
-      runDependencyTracking[id] = 1;
-      if (!runDependencyWatcher && globalThis.setInterval) {
-        // Check for missing dependencies every few seconds
-        runDependencyWatcher = setInterval(() => {
-          if (ABORT) {
-            clearInterval(runDependencyWatcher);
-            runDependencyWatcher = null;
-            return;
-          }
-          var shown = false;
-          for (var dep in runDependencyTracking) {
-            if (!shown) {
-              shown = true;
-              err('still waiting on run dependencies:');
-            }
-            err(`dependency: ${dep}`);
-          }
-          if (shown) {
-            err('(end of list)');
-          }
-        }, 10_000);
-        // Prevent this timer from keeping the runtime alive if nothing
-        // else is.
-        runDependencyWatcher.unref?.()
-      }
-    };
-  
-  
-  var preloadPlugins = [];
-  var FS_handledByPreloadPlugin = async (byteArray, fullname) => {
-      // Ensure plugins are ready.
-      if (typeof Browser != 'undefined') Browser.init();
-  
-      for (var plugin of preloadPlugins) {
-        if (plugin['canHandle'](fullname)) {
-          assert(plugin['handle'].constructor.name === 'AsyncFunction', 'Filesystem plugin handlers must be async functions (See #24914)')
-          return plugin['handle'](byteArray, fullname);
-        }
-      }
-      // If no plugin handled this file then return the original/unmodified
-      // byteArray.
-      return byteArray;
-    };
-  var FS_preloadFile = async (parent, name, url, canRead, canWrite, dontCreateFile, canOwn, preFinish) => {
-      // TODO we should allow people to just pass in a complete filename instead
-      // of parent and name being that we just join them anyways
-      var fullname = name ? PATH_FS.resolve(PATH.join2(parent, name)) : parent;
-      var dep = getUniqueRunDependency(`cp ${fullname}`); // might have several active requests for the same fullname
-      addRunDependency(dep);
-  
-      try {
-        var byteArray = url;
-        if (typeof url == 'string') {
-          byteArray = await asyncLoad(url);
-        }
-  
-        byteArray = await FS_handledByPreloadPlugin(byteArray, fullname);
-        preFinish?.();
-        if (!dontCreateFile) {
-          FS_createDataFile(parent, name, byteArray, canRead, canWrite, canOwn);
-        }
-      } finally {
-        removeRunDependency(dep);
-      }
-    };
-  var FS_createPreloadedFile = (parent, name, url, canRead, canWrite, onload, onerror, dontCreateFile, canOwn, preFinish) => {
-      FS_preloadFile(parent, name, url, canRead, canWrite, dontCreateFile, canOwn, preFinish).then(onload).catch(onerror);
-    };
-  
   var FS = {
   root:null,
   mounts:[],
@@ -2148,12 +2199,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   },
   streams:[],
   nextInode:1,
-  nameTable:[],
+  nameTable:null,
   currentPath:"/",
   initialized:false,
   ignorePermissions:true,
   filesystems:null,
   syncFSRequests:0,
+  readFiles:{
+  },
   ErrnoError:class extends Error {
         name = 'ErrnoError';
         // We set the `name` property to be able to identify `FS.ErrnoError`
@@ -2239,48 +2292,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         get isDevice() {
           return FS.isChrdev(this.mode);
         }
-        // The per-inode readiness wait-queue. The node carries a Set of listener
-        // entries {cb}; producers (SOCKFS, PIPEFS) call notifyListeners on a
-        // readiness transition, and poll()/epoll consume it. It lives on the node
-        // (not the fd) so dup'd fds share one queue. Only nodes that derive real
-        // readiness (sockets, pipes, and an epoll's own node) ever use this -
-        // always-ready types (regular files, ttys) never register or notify.
-        addListener(cb, exclusive = false) {
-          var entry = {cb, exclusive};
-          var listeners = (this.listeners ??= new Set());
-          listeners.add(entry);
-          return {listeners, entry};
-        }
-        notifyListeners(flags) {
-          // Iterates the set without copying, which is safe ONLY under a
-          // load-bearing contract that every internal listener must honour:
-          //   1. A listener must not run user code synchronously (a poll waiter only
-          //      resolves a Promise; an epoll registration only re-lists +
-          //      re-notifies; the epoll callback only schedules a tick). User code
-          //      runs on a later tick, never inside this loop.
-          //   2. A listener may delete entries only from ITS OWN waiter, never from
-          //      a sibling node's set that may be mid-iteration. (Deleting an entry
-          //      of the set being iterated here is fine - a Set tolerates removal of
-          //      a not-yet-visited entry mid-iteration; mutating a *different* node's
-          //      set is fine because that set is not being iterated.)
-          // Violating either gives silently skipped wakeups that are near-impossible
-          // to reproduce. Any new producer/listener must preserve it.
-          if (!this.listeners) return;
-          // Fire every non-exclusive listener. Among EPOLLEXCLUSIVE registrations
-          // (one fd watched by several epolls) wake only one, rotating round-robin
-          // per node, to avoid a thundering herd. (Only epoll registrations are ever
-          // exclusive; poll waiters and a node's own consumers are not.)
-          var excl;
-          for (var entry of this.listeners) {
-            if (entry.exclusive) (excl ||= []).push(entry);
-            else entry.cb(flags);
-          }
-          if (excl) {
-            var i = (this.exclTurn || 0) % excl.length;
-            this.exclTurn = i + 1;
-            excl[i].cb(flags);
-          }
-        }
       },
   lookupPath(path, opts = {}) {
         if (!path) {
@@ -2292,7 +2303,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           path = FS.cwd() + '/' + path;
         }
   
-        // limit max consecutive symlinks to SYMLOOP_MAX.
+        // limit max consecutive symlinks to 40 (SYMLOOP_MAX).
         linkloop: for (var nlinks = 0; nlinks < 40; nlinks++) {
           // split the absolute path
           var parts = path.split('/').filter((p) => !!p);
@@ -2316,9 +2327,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
               current_path = PATH.dirname(current_path);
               if (FS.isRoot(current)) {
                 path = current_path + '/' + parts.slice(i + 1).join('/');
-                // We're making progress here, don't let many consecutive ..'s
-                // lead to ELOOP
-                nlinks--;
                 continue linkloop;
               } else {
                 current = current.parent;
@@ -2417,7 +2425,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // if we failed to find it in the cache, call into the VFS
         return FS.lookup(parent, name);
       },
-  createNode(parent, name, mode, rdev = undefined) {
+  createNode(parent, name, mode, rdev) {
         assert(typeof parent == 'object')
         var node = new FS.FSNode(parent, name, mode, rdev);
   
@@ -2469,11 +2477,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // return 0 if any user, group or owner bits are set.
         if (perms.includes('r') && !(node.mode & 292)) {
           return 2;
-        }
-        if (perms.includes('w') && !(node.mode & 146)) {
+        } else if (perms.includes('w') && !(node.mode & 146)) {
           return 2;
-        }
-        if (perms.includes('x') && !(node.mode & 73)) {
+        } else if (perms.includes('x') && !(node.mode & 73)) {
           return 2;
         }
         return 0;
@@ -2514,8 +2520,10 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           if (FS.isRoot(node) || FS.getPath(node) === FS.cwd()) {
             return 10;
           }
-        } else if (FS.isDir(node.mode)) {
-          return 31;
+        } else {
+          if (FS.isDir(node.mode)) {
+            return 31;
+          }
         }
         return 0;
       },
@@ -2525,16 +2533,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
         if (FS.isLink(node.mode)) {
           return 32;
-        }
-        var mode = FS.flagsToPermissionString(flags);
-        if (FS.isDir(node.mode)) {
-          // opening for write
-          // TODO: check for O_SEARCH? (== search for dir only)
-          if (mode !== 'r' || (flags & (512 | 64))) {
+        } else if (FS.isDir(node.mode)) {
+          if (FS.flagsToPermissionString(flags) !== 'r' // opening for write
+              || (flags & (512 | 64))) { // TODO: check for O_SEARCH? (== search for dir only)
             return 31;
           }
         }
-        return FS.nodePermissions(node, mode);
+        return FS.nodePermissions(node, FS.flagsToPermissionString(flags));
       },
   checkOpExists(op, err) {
         if (!op) {
@@ -2584,14 +2589,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         var arg = setattr ? stream : node;
         setattr ??= node.node_ops.setattr;
         FS.checkOpExists(setattr, 63)
-        try {
-          setattr(arg, attr);
-        } catch (e) {
-          if (e instanceof RangeError) {
-            throw new FS.ErrnoError(22);
-          }
-          throw e;
-        }
+        setattr(arg, attr);
       },
   chrdev_stream_ops:{
   open(stream) {
@@ -2661,13 +2659,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         };
   
         // sync all mounts
-        for (var mount of mounts) {
-          if (mount.type.syncfs) {
-            mount.type.syncfs(mount, populate, done);
-          } else {
-            done(null);
+        mounts.forEach((mount) => {
+          if (!mount.type.syncfs) {
+            return done(null);
           }
-        }
+          mount.type.syncfs(mount, populate, done);
+        });
       },
   mount(type, opts, mountpoint) {
         if (typeof type == 'string') {
@@ -2734,7 +2731,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         var mount = node.mounted;
         var mounts = FS.getMounts(mount);
   
-        for (var [hash, current] of Object.entries(FS.nameTable)) {
+        Object.keys(FS.nameTable).forEach((hash) => {
+          var current = FS.nameTable[hash];
+  
           while (current) {
             var next = current.name_next;
   
@@ -2744,7 +2743,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
             current = next;
           }
-        }
+        });
   
         // no longer a mountpoint
         node.mounted = null;
@@ -2792,9 +2791,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         var rtn = {
           bsize: 4096,
           frsize: 4096,
-          blocks: 1_000_000,
-          bfree: 500_000,
-          bavail: 500_000,
+          blocks: 1e6,
+          bfree: 5e5,
+          bavail: 5e5,
           files: FS.nextInode,
           ffree: FS.nextInode - 1,
           fsid: 42,
@@ -2817,7 +2816,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         mode |= 16384;
         return FS.mknod(path, mode, 0);
       },
-  mkdirTree(path, mode = 0o777) {
+  mkdirTree(path, mode) {
         var dirs = path.split('/');
         var d = '';
         for (var dir of dirs) {
@@ -2831,7 +2830,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           }
         }
       },
-  mkdev(path, mode, dev = undefined) {
+  mkdev(path, mode, dev) {
         if (typeof dev == 'undefined') {
           dev = mode;
           mode = 0o666;
@@ -2857,25 +2856,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           throw new FS.ErrnoError(63);
         }
         return parent.node_ops.symlink(parent, newname, oldpath);
-      },
-  link(oldpath, newpath, flags) {
-        var lookup = FS.lookupPath(newpath, { parent: true });
-        var parent = lookup.node;
-        if (!parent) {
-          throw new FS.ErrnoError(44);
-        }
-        var newname = PATH.basename(newpath);
-        var errCode = FS.mayCreate(parent, newname);
-        if (errCode) {
-          throw new FS.ErrnoError(errCode);
-        }
-        // Hardlinks are only supported by filesystem backends that provide a
-        // `link` node op (e.g. NODERAWFS backed by the host). NODEFS omits it:
-        // a host hardlink cannot be confined to the mount root.
-        if (!parent.node_ops.link) {
-          throw new FS.ErrnoError(34);
-        }
-        return parent.node_ops.link(parent, newname, oldpath, flags);
       },
   rename(old_path, new_path) {
         var old_dirname = PATH.dirname(old_path);
@@ -2951,11 +2931,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // do the underlying fs rename
         try {
           old_dir.node_ops.rename(old_node, new_dir, new_name);
-          // The replaced node is stale now. Evict it only after the rename
-          // succeeded: backends like NODEFS report node.id as st_ino.
-          if (new_node) {
-            FS.hashRemoveNode(new_node);
-          }
           // update old node (we do this here to avoid each backend
           // needing to)
           old_node.parent = new_dir;
@@ -3026,7 +3001,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
         return link.node_ops.readlink(link);
       },
-  stat(path, dontFollow = false) {
+  stat(path, dontFollow) {
         var lookup = FS.lookupPath(path, { follow: !dontFollow });
         var node = lookup.node;
         var getattr = FS.checkOpExists(node.node_ops.getattr, 63);
@@ -3044,14 +3019,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   lstat(path) {
         return FS.stat(path, true);
       },
-  doChmod(stream, node, mode, dontFollow = false) {
+  doChmod(stream, node, mode, dontFollow) {
         FS.doSetAttr(stream, node, {
           mode: (mode & 4095) | (node.mode & ~4095),
           ctime: Date.now(),
           dontFollow
         });
       },
-  chmod(path, mode, dontFollow = false) {
+  chmod(path, mode, dontFollow) {
         var node;
         if (typeof path == 'string') {
           var lookup = FS.lookupPath(path, { follow: !dontFollow });
@@ -3068,14 +3043,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         var stream = FS.getStreamChecked(fd);
         FS.doChmod(stream, stream.node, mode, false);
       },
-  doChown(stream, node, dontFollow = false) {
+  doChown(stream, node, dontFollow) {
         FS.doSetAttr(stream, node, {
           timestamp: Date.now(),
           dontFollow
           // we ignore the uid / gid for now
         });
       },
-  chown(path, uid, gid, dontFollow = false) {
+  chown(path, uid, gid, dontFollow) {
         var node;
         if (typeof path == 'string') {
           var lookup = FS.lookupPath(path, { follow: !dontFollow });
@@ -3128,19 +3103,20 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
         FS.doTruncate(stream, stream.node, len);
       },
-  utime(path, atime, mtime, dontFollow = false) {
-        var lookup = FS.lookupPath(path, { follow: !dontFollow });
-        FS.doSetAttr(null, lookup.node, {
+  utime(path, atime, mtime) {
+        var lookup = FS.lookupPath(path, { follow: true });
+        var node = lookup.node;
+        var setattr = FS.checkOpExists(node.node_ops.setattr, 63);
+        setattr(node, {
           atime: atime,
-          mtime: mtime,
-          dontFollow
+          mtime: mtime
         });
       },
   open(path, flags, mode = 0o666) {
-        if (path === '') {
+        if (path === "") {
           throw new FS.ErrnoError(44);
         }
-        flags = FS_modeStringToFlags(flags);
+        flags = typeof flags == 'string' ? FS_modeStringToFlags(flags) : flags;
         if ((flags & 64)) {
           mode = (mode & 4095) | 32768;
         } else {
@@ -3151,7 +3127,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         if (typeof path == 'object') {
           node = path;
         } else {
-          isDirPath = path.endsWith('/');
+          isDirPath = path.endsWith("/");
           // noent_okay makes it so that if the final component of the path
           // doesn't exist, lookupPath returns `node: undefined`. `path` will be
           // updated to point to the target of all symlinks.
@@ -3175,7 +3151,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           } else {
             // node doesn't exist, try to create it
             // Ignore the permission bits here to ensure we can `open` this new
-            // file below. We use chmod below to apply the permissions once the
+            // file below. We use chmod below the apply the permissions once the
             // file is open.
             node = FS.mknod(path, mode | 0o777, 0);
             created = true;
@@ -3227,6 +3203,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         if (created) {
           FS.chmod(node, mode & 0o777);
         }
+        if (Module['logReadFiles'] && !(flags & 1)) {
+          if (!(path in FS.readFiles)) {
+            FS.readFiles[path] = 1;
+          }
+        }
         return stream;
       },
   close(stream) {
@@ -3234,11 +3215,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           throw new FS.ErrnoError(8);
         }
         if (stream.getdents) stream.getdents = null; // free readdir state
-        // The fd is going away: wake anything waiting on it (poll/epoll) with
-        // POLLNVAL so a blocking wait unblocks and an epoll registration is evicted
-        // on its next derive. Only sockets/pipes/epoll ever carry a wait-queue, so
-        // for every other stream (incl. nodeless noderawfs stdio) this is a no-op.
-        stream.node?.notifyListeners(32);
         try {
           if (stream.stream_ops.close) {
             stream.stream_ops.close(stream);
@@ -3267,7 +3243,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         stream.ungotten = [];
         return stream.position;
       },
-  read(stream, buffer, offset, length, position = undefined) {
+  read(stream, buffer, offset, length, position) {
         assert(offset >= 0);
         if (length < 0 || position < 0) {
           throw new FS.ErrnoError(28);
@@ -3294,9 +3270,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         if (!seeking) stream.position += bytesRead;
         return bytesRead;
       },
-  write(stream, buffer, offset, length, position = undefined, canOwn = undefined) {
+  write(stream, buffer, offset, length, position, canOwn) {
         assert(offset >= 0);
-        assert(buffer.subarray, 'FS.write expects a TypedArray');
         if (length < 0 || position < 0) {
           throw new FS.ErrnoError(28);
         }
@@ -3333,8 +3308,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // to write to file opened in read-only mode with MAP_PRIVATE flag,
         // as all modifications will be visible only in the memory of
         // the current process.
-        if ((prot & 2)
-            && !(flags & 2)
+        if ((prot & 2) !== 0
+            && (flags & 2) === 0
             && (stream.flags & 2097155) !== 2) {
           throw new FS.ErrnoError(2);
         }
@@ -3363,10 +3338,10 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         return stream.stream_ops.ioctl(stream, cmd, arg);
       },
   readFile(path, opts = {}) {
-        opts.flags ??= 0;
-        opts.encoding ??= 'binary';
+        opts.flags = opts.flags || 0;
+        opts.encoding = opts.encoding || 'binary';
         if (opts.encoding !== 'utf8' && opts.encoding !== 'binary') {
-          abort(`Invalid encoding type "${opts.encoding}"`);
+          throw new Error(`Invalid encoding type "${opts.encoding}"`);
         }
         var stream = FS.open(path, opts.flags);
         var stat = FS.stat(path);
@@ -3380,10 +3355,16 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         return buf;
       },
   writeFile(path, data, opts = {}) {
-        opts.flags ??= 577;
+        opts.flags = opts.flags || 577;
         var stream = FS.open(path, opts.flags, opts.mode);
-        data = FS_fileDataToTypedArray(data);
-        FS.write(stream, data, 0, data.byteLength, undefined, opts.canOwn);
+        if (typeof data == 'string') {
+          data = new Uint8Array(intArrayFromString(data, true));
+        }
+        if (ArrayBuffer.isView(data)) {
+          FS.write(stream, data, 0, data.byteLength, undefined, opts.canOwn);
+        } else {
+          throw new Error('Unsupported data type');
+        }
         FS.close(stream);
       },
   cwd:() => FS.currentPath,
@@ -3427,7 +3408,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // use a buffer to avoid overhead of individual crypto calls per byte
         var randomBuffer = new Uint8Array(1024), randomLeft = 0;
         var randomByte = () => {
-          if (!randomLeft) {
+          if (randomLeft === 0) {
             randomFill(randomBuffer);
             randomLeft = randomBuffer.byteLength;
           }
@@ -3509,7 +3490,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         assert(stderr.fd === 2, `invalid handle for stderr (${stderr.fd})`);
       },
   staticInit() {
-        FS.nameTable.length = 4096;
+        FS.nameTable = new Array(4096);
   
         FS.mount(MEMFS, {}, '/');
   
@@ -3521,7 +3502,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           'MEMFS': MEMFS,
         };
       },
-  init(input = undefined, output = undefined, error = undefined) {
+  init(input, output, error) {
         assert(!FS.initialized, 'FS.init was previously called. If you want to initialize later with custom parameters, remove any earlier calls (note that one is automatically added to the generated code)');
         FS.initialized = true;
   
@@ -3543,8 +3524,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           }
         }
       },
-  analyzePath(path, dontResolveLastLink = false) {
-        warnOnce('FS.analyzePath is deprecated; use FS.lookupPath or FS.stat instead');
+  findObject(path, dontResolveLastLink) {
+        var ret = FS.analyzePath(path, dontResolveLastLink);
+        if (!ret.exists) {
+          return null;
+        }
+        return ret.object;
+      },
+  analyzePath(path, dontResolveLastLink) {
         // operate from within the context of the symlink's target
         try {
           var lookup = FS.lookupPath(path, { follow: !dontResolveLastLink });
@@ -3572,7 +3559,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         };
         return ret;
       },
-  createPath(parent, path, canRead = undefined, canWrite = undefined) {
+  createPath(parent, path, canRead, canWrite) {
         parent = typeof parent == 'string' ? parent : FS.getPath(parent);
         var parts = path.split('/').reverse();
         while (parts.length) {
@@ -3588,12 +3575,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
         return current;
       },
-  createFile(parent, name, properties, canRead = undefined, canWrite = undefined) {
+  createFile(parent, name, properties, canRead, canWrite) {
         var path = PATH.join2(typeof parent == 'string' ? parent : FS.getPath(parent), name);
         var mode = FS_getMode(canRead, canWrite);
         return FS.create(path, mode);
       },
-  createDataFile(parent, name, data = undefined, canRead = undefined, canWrite = undefined, canOwn = undefined) {
+  createDataFile(parent, name, data, canRead, canWrite, canOwn) {
         var path = name;
         if (parent) {
           parent = typeof parent == 'string' ? parent : FS.getPath(parent);
@@ -3602,7 +3589,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         var mode = FS_getMode(canRead, canWrite);
         var node = FS.create(path, mode);
         if (data) {
-          data = FS_fileDataToTypedArray(data);
+          if (typeof data == 'string') {
+            var arr = new Array(data.length);
+            for (var i = 0, len = data.length; i < len; ++i) arr[i] = data.charCodeAt(i);
+            data = arr;
+          }
           // make sure we can write to the file
           FS.chmod(node, mode | 146);
           var stream = FS.open(node, 577);
@@ -3611,7 +3602,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           FS.chmod(node, mode);
         }
       },
-  createDevice(parent, name, input = undefined, output = undefined) {
+  createDevice(parent, name, input, output) {
         var path = PATH.join2(typeof parent == 'string' ? parent : FS.getPath(parent), name);
         var mode = FS_getMode(!!input, !!output);
         FS.createDevice.major ??= 64;
@@ -3637,7 +3628,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
               } catch (e) {
                 throw new FS.ErrnoError(29);
               }
-              if (result === undefined && !bytesRead) {
+              if (result === undefined && bytesRead === 0) {
                 throw new FS.ErrnoError(6);
               }
               if (result === null || result === undefined) break;
@@ -3667,17 +3658,18 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       },
   forceLoadFile(obj) {
         if (obj.isDevice || obj.isFolder || obj.link || obj.contents) return true;
-        if (globalThis.XMLHttpRequest) {
-          abort('Lazy loading should have been performed (contents set) in createLazyFile, but it was not. Lazy loading only works in web workers. Use --embed-file or --preload-file in emcc on the main thread.');
+        if (typeof XMLHttpRequest != 'undefined') {
+          throw new Error("Lazy loading should have been performed (contents set) in createLazyFile, but it was not. Lazy loading only works in web workers. Use --embed-file or --preload-file in emcc on the main thread.");
         } else { // Command-line.
           try {
             obj.contents = readBinary(obj.url);
+            obj.usedBytes = obj.contents.length;
           } catch (e) {
             throw new FS.ErrnoError(29);
           }
         }
       },
-  createLazyFile(parent, name, url, canRead = undefined, canWrite = undefined) {
+  createLazyFile(parent, name, url, canRead, canWrite) {
         // Lazy chunked Uint8Array (implements get and length from Uint8Array).
         // Actual getting is abstracted away for eventual reuse.
         class LazyUint8Array {
@@ -3699,11 +3691,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
             var xhr = new XMLHttpRequest();
             xhr.open('HEAD', url, false);
             xhr.send(null);
-            if (!(xhr.status >= 200 && xhr.status < 300 || xhr.status === 304)) abort(`Couldn't load ${url}. Status: ${xhr.status}`);
-            var datalength = Number(xhr.getResponseHeader('Content-length'));
+            if (!(xhr.status >= 200 && xhr.status < 300 || xhr.status === 304)) throw new Error("Couldn't load " + url + ". Status: " + xhr.status);
+            var datalength = Number(xhr.getResponseHeader("Content-length"));
             var header;
-            var hasByteServing = (header = xhr.getResponseHeader('Accept-Ranges')) && header === 'bytes';
-            var usesGzip = (header = xhr.getResponseHeader('Content-Encoding')) && header === 'gzip';
+            var hasByteServing = (header = xhr.getResponseHeader("Accept-Ranges")) && header === "bytes";
+            var usesGzip = (header = xhr.getResponseHeader("Content-Encoding")) && header === "gzip";
   
             var chunkSize = 1024*1024; // Chunk size in bytes
   
@@ -3711,13 +3703,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
             // Function to get a range from the remote URL.
             var doXHR = (from, to) => {
-              if (from > to) abort(`invalid range (${from}, ${to}) or no bytes requested!`);
-              if (to > datalength-1) abort(`only ${datalength} bytes available! programmer error!`);
+              if (from > to) throw new Error("invalid range (" + from + ", " + to + ") or no bytes requested!");
+              if (to > datalength-1) throw new Error("only " + datalength + " bytes available! programmer error!");
   
               // TODO: Use mozResponseArrayBuffer, responseStream, etc. if available.
               var xhr = new XMLHttpRequest();
               xhr.open('GET', url, false);
-              if (datalength !== chunkSize) xhr.setRequestHeader('Range', `bytes=${from}-${to}`);
+              if (datalength !== chunkSize) xhr.setRequestHeader("Range", "bytes=" + from + "-" + to);
   
               // Some hints to the browser that we want binary data.
               xhr.responseType = 'arraybuffer';
@@ -3726,11 +3718,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
               }
   
               xhr.send(null);
-              if (!(xhr.status >= 200 && xhr.status < 300 || xhr.status === 304)) abort(`Couldn't load ${url}. Status: ${xhr.status}`);
+              if (!(xhr.status >= 200 && xhr.status < 300 || xhr.status === 304)) throw new Error("Couldn't load " + url + ". Status: " + xhr.status);
               if (xhr.response !== undefined) {
                 return new Uint8Array(/** @type{Array<number>} */(xhr.response || []));
               }
-              return intArrayFromString(xhr.responseText ?? '', true);
+              return intArrayFromString(xhr.responseText || '', true);
             };
             var lazyArray = this;
             lazyArray.setDataGetter((chunkNum) => {
@@ -3740,7 +3732,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
               if (typeof lazyArray.chunks[chunkNum] == 'undefined') {
                 lazyArray.chunks[chunkNum] = doXHR(start, end);
               }
-              if (typeof lazyArray.chunks[chunkNum] == 'undefined') abort('doXHR failed!');
+              if (typeof lazyArray.chunks[chunkNum] == 'undefined') throw new Error('doXHR failed!');
               return lazyArray.chunks[chunkNum];
             });
   
@@ -3749,7 +3741,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
               chunkSize = datalength = 1; // this will force getter(0)/doXHR do download the whole file
               datalength = this.getter(0).length;
               chunkSize = datalength;
-              out('LazyFiles on gzip forces download of the whole file when length is accessed');
+              out("LazyFiles on gzip forces download of the whole file when length is accessed");
             }
   
             this._length = datalength;
@@ -3770,8 +3762,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           }
         }
   
-        if (globalThis.XMLHttpRequest) {
-          if (!ENVIRONMENT_IS_WORKER) abort('Cannot do synchronous binary XHRs outside webworkers in modern browsers. Use --embed-file or --preload-file in emcc');
+        if (typeof XMLHttpRequest != 'undefined') {
+          if (!ENVIRONMENT_IS_WORKER) throw 'Cannot do synchronous binary XHRs outside webworkers in modern browsers. Use --embed-file or --preload-file in emcc';
           var lazyArray = new LazyUint8Array();
           var properties = { isDevice: false, contents: lazyArray };
         } else {
@@ -3796,12 +3788,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         });
         // override each stream op with one that tries to force load the lazy file first
         var stream_ops = {};
-        for (const [key, fn] of Object.entries(node.stream_ops)) {
+        var keys = Object.keys(node.stream_ops);
+        keys.forEach((key) => {
+          var fn = node.stream_ops[key];
           stream_ops[key] = (...args) => {
             FS.forceLoadFile(node);
             return fn(...args);
           };
-        }
+        });
         function writeChunks(stream, buffer, offset, length, position) {
           var contents = stream.node.contents;
           if (position >= contents.length)
@@ -3837,17 +3831,29 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         node.stream_ops = stream_ops;
         return node;
       },
+  absolutePath() {
+        abort('FS.absolutePath has been removed; use PATH_FS.resolve instead');
+      },
+  createFolder() {
+        abort('FS.createFolder has been removed; use FS.mkdir instead');
+      },
+  createLink() {
+        abort('FS.createLink has been removed; use FS.symlink instead');
+      },
+  joinPath() {
+        abort('FS.joinPath has been removed; use PATH.join instead');
+      },
+  mmapAlloc() {
+        abort('FS.mmapAlloc has been replaced by the top level function mmapAlloc');
+      },
+  standardizePath() {
+        abort('FS.standardizePath has been removed; use PATH.normalize instead');
+      },
   };
   
-  
-  
-  
-  
-  /** not-@type {!BigInt64Array} */
-  var HEAP64;
   var SYSCALLS = {
-  currentUmask:18,
-  calculateAt(dirfd, path, allowEmpty = false) {
+  DEFAULT_POLLMASK:5,
+  calculateAt(dirfd, path, allowEmpty) {
         if (PATH.isAbs(path)) {
           return path;
         }
@@ -3868,41 +3874,38 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         return dir + '/' + path;
       },
   writeStat(buf, stat) {
-        HEAPU32[((buf)>>2)] = stat.dev;
-        HEAPU32[(((buf)+(4))>>2)] = stat.mode;
+        HEAP32[((buf)>>2)] = stat.dev;
+        HEAP32[(((buf)+(4))>>2)] = stat.mode;
         HEAPU32[(((buf)+(8))>>2)] = stat.nlink;
-        HEAPU32[(((buf)+(12))>>2)] = stat.uid;
-        HEAPU32[(((buf)+(16))>>2)] = stat.gid;
-        HEAPU32[(((buf)+(20))>>2)] = stat.rdev;
+        HEAP32[(((buf)+(12))>>2)] = stat.uid;
+        HEAP32[(((buf)+(16))>>2)] = stat.gid;
+        HEAP32[(((buf)+(20))>>2)] = stat.rdev;
         HEAP64[(((buf)+(24))>>3)] = BigInt(stat.size);
         HEAP32[(((buf)+(32))>>2)] = 4096;
         HEAP32[(((buf)+(36))>>2)] = stat.blocks;
-        // Prefer `*Ms` properties if available (e.g. from MEMFS, or NODEFS / host
-        // `fs.Stats`) for sub-millisecond precision; fall back to Date#getTime for
-        // other filesystems.
-        var atime = stat.atimeMs ?? stat.atime.getTime();
-        var mtime = stat.mtimeMs ?? stat.mtime.getTime();
-        var ctime = stat.ctimeMs ?? stat.ctime.getTime();
+        var atime = stat.atime.getTime();
+        var mtime = stat.mtime.getTime();
+        var ctime = stat.ctime.getTime();
         HEAP64[(((buf)+(40))>>3)] = BigInt(Math.floor(atime / 1000));
-        HEAPU32[(((buf)+(48))>>2)] = Math.floor((atime % 1000) * 1_000_000);
+        HEAPU32[(((buf)+(48))>>2)] = (atime % 1000) * 1000 * 1000;
         HEAP64[(((buf)+(56))>>3)] = BigInt(Math.floor(mtime / 1000));
-        HEAPU32[(((buf)+(64))>>2)] = Math.floor((mtime % 1000) * 1_000_000);
+        HEAPU32[(((buf)+(64))>>2)] = (mtime % 1000) * 1000 * 1000;
         HEAP64[(((buf)+(72))>>3)] = BigInt(Math.floor(ctime / 1000));
-        HEAPU32[(((buf)+(80))>>2)] = Math.floor((ctime % 1000) * 1_000_000);
+        HEAPU32[(((buf)+(80))>>2)] = (ctime % 1000) * 1000 * 1000;
         HEAP64[(((buf)+(88))>>3)] = BigInt(stat.ino);
         return 0;
       },
   writeStatFs(buf, stats) {
-        HEAPU32[(((buf)+(4))>>2)] = stats.bsize;
-        HEAPU32[(((buf)+(60))>>2)] = stats.bsize;
-        HEAP64[(((buf)+(8))>>3)] = BigInt(stats.blocks);
-        HEAP64[(((buf)+(16))>>3)] = BigInt(stats.bfree);
-        HEAP64[(((buf)+(24))>>3)] = BigInt(stats.bavail);
-        HEAP64[(((buf)+(32))>>3)] = BigInt(stats.files);
-        HEAP64[(((buf)+(40))>>3)] = BigInt(stats.ffree);
-        HEAPU32[(((buf)+(48))>>2)] = stats.fsid;
-        HEAPU32[(((buf)+(64))>>2)] = stats.flags;  // ST_NOSUID
-        HEAPU32[(((buf)+(56))>>2)] = stats.namelen;
+        HEAP32[(((buf)+(4))>>2)] = stats.bsize;
+        HEAP32[(((buf)+(40))>>2)] = stats.bsize;
+        HEAP32[(((buf)+(8))>>2)] = stats.blocks;
+        HEAP32[(((buf)+(12))>>2)] = stats.bfree;
+        HEAP32[(((buf)+(16))>>2)] = stats.bavail;
+        HEAP32[(((buf)+(20))>>2)] = stats.files;
+        HEAP32[(((buf)+(24))>>2)] = stats.ffree;
+        HEAP32[(((buf)+(28))>>2)] = stats.fsid;
+        HEAP32[(((buf)+(44))>>2)] = stats.flags;  // ST_NOSUID
+        HEAP32[(((buf)+(36))>>2)] = stats.namelen;
       },
   doMsync(addr, stream, len, flags, offset) {
         if (!FS.isFile(stream.node.mode)) {
@@ -3912,7 +3915,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           // MAP_PRIVATE calls need not to be synced back to underlying fs
           return 0;
         }
-        var buffer = HEAPU8.subarray(addr, addr + len);
+        var buffer = HEAPU8.slice(addr, addr + len);
         FS.msync(stream, buffer, offset, len, flags);
       },
   getStreamFromFD(fd) {
@@ -3925,9 +3928,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         return ret;
       },
   };
-  
-  /** @type {!Int16Array} */
-  var HEAP16;
   function ___syscall_fcntl64(fd, cmd, varargs) {
   SYSCALLS.varargs = varargs;
   try {
@@ -3953,8 +3953,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           return stream.flags;
         case 4: {
           var arg = syscallGetVarargI();
-          var mask = 289792;
-          stream.flags = (stream.flags & ~mask) | (arg & mask);
+          stream.flags |= arg;
           return 0;
         }
         case 12: {
@@ -3978,7 +3977,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     return -e.errno;
   }
   }
-  
 
   function ___syscall_fstat64(fd, buf) {
   try {
@@ -3989,11 +3987,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     return -e.errno;
   }
   }
-  
 
-  
-  
-  
   
   function ___syscall_ioctl(fd, op, varargs) {
   SYSCALLS.varargs = varargs;
@@ -4055,7 +4049,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           if (!stream.tty) return -59;
           return -28; // not supported
         }
-        case 21537:
         case 21531: {
           var argp = syscallGetVarargP();
           return FS.ioctl(stream, op, argp);
@@ -4090,7 +4083,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     return -e.errno;
   }
   }
-  
 
   function ___syscall_lstat64(path, buf) {
   try {
@@ -4102,7 +4094,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     return -e.errno;
   }
   }
-  
 
   function ___syscall_newfstatat(dirfd, path, buf, flags) {
   try {
@@ -4119,7 +4110,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     return -e.errno;
   }
   }
-  
 
   
   function ___syscall_openat(dirfd, path, flags, varargs) {
@@ -4129,16 +4119,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       path = SYSCALLS.getStr(path);
       path = SYSCALLS.calculateAt(dirfd, path);
       var mode = varargs ? syscallGetVarargI() : 0;
-      if (flags & 64) {
-        mode &= ~SYSCALLS.currentUmask;
-      }
       return FS.open(path, flags, mode).fd;
     } catch (e) {
     if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
-  
 
   function ___syscall_stat64(path, buf) {
   try {
@@ -4150,7 +4136,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     return -e.errno;
   }
   }
-  
 
   function ___syscall_unlinkat(dirfd, path, flags) {
   try {
@@ -4170,13 +4155,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     return -e.errno;
   }
   }
-  
 
   var __abort_js = () =>
       abort('native code called abort()');
 
   var __emscripten_throw_longjmp = () => {
-      throw new EmscriptenSjLj;
+      throw Infinity;
     };
 
   var _emscripten_get_now = () => performance.now();
@@ -4191,7 +4175,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
   var INT53_MIN = -9007199254740992;
   var bigintToI53Checked = (num) => (num < INT53_MIN || num > INT53_MAX) ? NaN : Number(num);
-  
   function _clock_time_get(clk_id, ignored_precision, ptime) {
     ignored_precision = bigintToI53Checked(ignored_precision);
   
@@ -4209,20 +4192,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         return 52;
       }
       // "now" is in ms, and wasi times are in ns.
-      var nsec = Math.round(now * 1_000_000);
+      var nsec = Math.round(now * 1000 * 1000);
       HEAP64[((ptime)>>3)] = BigInt(nsec);
       return 0;
     ;
   }
 
   var readEmAsmArgsArray = [];
-  
-  
-  
-  
-  /** @type {!Float64Array} */
-  var HEAPF64;
-  
   var readEmAsmArgs = (sigPtr, buf) => {
       // Nobody should have mutated _readEmAsmArgsArray underneath us to be something else than an array.
       assert(Array.isArray(readEmAsmArgsArray));
@@ -4260,6 +4236,10 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       assert(ASM_CONSTS.hasOwnProperty(code), `No EM_ASM constant found at address ${code}.  The loaded WebAssembly file is likely out of sync with the generated JavaScript.`);
       return ASM_CONSTS[code](...args);
     };
+  var _emscripten_asm_const_double = (code, sigPtr, argbuf) => {
+      return runEmAsmFunction(code, sigPtr, argbuf);
+    };
+
   var _emscripten_asm_const_int = (code, sigPtr, argbuf) => {
       return runEmAsmFunction(code, sigPtr, argbuf);
     };
@@ -4274,50 +4254,53 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         return 1; // Return non-zero on failure, can't set timing mode when there is no main loop.
       }
   
+      if (!MainLoop.running) {
+        
+        MainLoop.running = true;
+      }
       if (mode == 0) {
         MainLoop.scheduler = function MainLoop_scheduler_setTimeout() {
           var timeUntilNextTick = Math.max(0, MainLoop.tickStartTime + value - _emscripten_get_now())|0;
           setTimeout(MainLoop.runner, timeUntilNextTick); // doing this each time means that on exception, we stop
         };
+        MainLoop.method = 'timeout';
       } else if (mode == 1) {
         MainLoop.scheduler = function MainLoop_scheduler_rAF() {
           MainLoop.requestAnimationFrame(MainLoop.runner);
         };
-      } else {
-        assert(mode == 2);
-        if (!MainLoop.setImmediate) {
-          if (globalThis.scheduler) {
-            // Some modern browsers implement scheduler.postTask, but not all.
-            MainLoop.setImmediate = scheduler.postTask.bind(scheduler);
-          } else if (globalThis.setImmediate) {
-            MainLoop.setImmediate = setImmediate;
-          } else {
+        MainLoop.method = 'rAF';
+      } else if (mode == 2) {
+        if (typeof MainLoop.setImmediate == 'undefined') {
+          if (typeof setImmediate == 'undefined') {
             // Emulate setImmediate. (note: not a complete polyfill, we don't emulate clearImmediate() to keep code size to minimum, since not needed)
             var setImmediates = [];
             var emscriptenMainLoopMessageId = 'setimmediate';
             /** @param {Event} event */
             var MainLoop_setImmediate_messageHandler = (event) => {
-              if (event.data === emscriptenMainLoopMessageId) {
+              // When called in current thread or Worker, the main loop ID is structured slightly different to accommodate for --proxy-to-worker runtime listening to Worker events,
+              // so check for both cases.
+              if (event.data === emscriptenMainLoopMessageId || event.data.target === emscriptenMainLoopMessageId) {
                 event.stopPropagation();
                 setImmediates.shift()();
               }
             };
-            addEventListener('message', MainLoop_setImmediate_messageHandler, true);
+            addEventListener("message", MainLoop_setImmediate_messageHandler, true);
             MainLoop.setImmediate = /** @type{function(function(): ?, ...?): number} */((func) => {
               setImmediates.push(func);
               if (ENVIRONMENT_IS_WORKER) {
-                // The postMessge API in a Worker, sends message to the main
-                // thread and does not support the `targetOrigin` (*) argument.
-                postMessage(emscriptenMainLoopMessageId);
-              } else {
-                postMessage(emscriptenMainLoopMessageId, '*');
-              }
+                Module['setImmediates'] ??= [];
+                Module['setImmediates'].push(func);
+                postMessage({target: emscriptenMainLoopMessageId}); // In --proxy-to-worker, route the message via proxyClient.js
+              } else postMessage(emscriptenMainLoopMessageId, "*"); // On the main thread, can just send the message to itself.
             });
+          } else {
+            MainLoop.setImmediate = setImmediate;
           }
         }
         MainLoop.scheduler = function MainLoop_scheduler_setImmediate() {
           MainLoop.setImmediate(MainLoop.runner);
         };
+        MainLoop.method = 'immediate';
       }
       return 0;
     };
@@ -4336,6 +4319,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     };
   
   
+  /** @suppress {duplicate } */
   /** @param {boolean|number=} implicit */
   var exitJS = (status, implicit) => {
       EXITSTATUS = status;
@@ -4381,17 +4365,18 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     };
   
     /**
-   * @param {number=} arg
-   * @param {boolean=} noSetTiming
-   */
+     * @param {number=} arg
+     * @param {boolean=} noSetTiming
+     */
   var setMainLoop = (iterFunc, fps, simulateInfiniteLoop, arg, noSetTiming) => {
-      assert(!MainLoop.func, 'emscripten_set_main_loop: there can only be one main loop function at once')
+      assert(!MainLoop.func, 'emscripten_set_main_loop: there can only be one main loop function at once: call emscripten_cancel_main_loop to cancel the previous one before setting a new one with different parameters.');
       MainLoop.func = iterFunc;
       MainLoop.arg = arg;
   
       var thisMainLoopId = MainLoop.currentlyRunningMainloop;
       function checkIsRunning() {
         if (thisMainLoopId < MainLoop.currentlyRunningMainloop) {
+          
           maybeExit();
           return false;
         }
@@ -4399,8 +4384,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       }
   
       // We create the loop runner here but it is not actually running until
-      // _emscripten_set_main_loop_timing is called (which might happen at a
-      // later time).
+      // _emscripten_set_main_loop_timing is called (which might happen a
+      // later time).  This member signifies that the current runner has not
+      // yet been started so that we can call runtimeKeepalivePush when it
+      // gets it timing set for the first time.
+      MainLoop.running = false;
       MainLoop.runner = function MainLoop_runner() {
         if (ABORT) return;
         if (MainLoop.queue.length > 0) {
@@ -4438,9 +4426,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           return;
         } else if (MainLoop.timingMode == 0) {
           MainLoop.tickStartTime = _emscripten_get_now();
-          if (Module['ctx']) {
-            warnOnce('Looks like you are rendering without using requestAnimationFrame for the main loop. You should use 0 for the frame rate in emscripten_set_main_loop in order to use requestAnimationFrame, as that can greatly improve your frame rates!');
-          }
+        }
+  
+        if (MainLoop.method === 'timeout' && Module['ctx']) {
+          warnOnce('Looks like you are rendering without using requestAnimationFrame for the main loop. You should use 0 for the frame rate in emscripten_set_main_loop in order to use requestAnimationFrame, as that can greatly improve your frame rates!');
+          MainLoop.method = ''; // just warn once per call to set main loop
         }
   
         MainLoop.runIter(iterFunc);
@@ -4468,24 +4458,25 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     };
   
   
-  var callUserCallback = (func, ...args) => {
+  var callUserCallback = (func) => {
       if (ABORT) {
         err('user callback triggered after runtime exited or application aborted.  Ignoring.');
         return;
       }
       try {
-        return func(...args);
+        func();
+        maybeExit();
       } catch (e) {
         handleException(e);
-      } finally {
-        maybeExit();
       }
     };
   
   var MainLoop = {
-  func:null,
+  running:false,
   scheduler:null,
+  method:"",
   currentlyRunningMainloop:0,
+  func:null,
   arg:0,
   timingMode:0,
   timingValue:0,
@@ -4494,12 +4485,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   preMainLoop:[],
   postMainLoop:[],
   pause() {
-        if (MainLoop.scheduler) {
-          MainLoop.scheduler = null;
-          // Incrementing this signals the previous main loop that it's now become old, and it must return.
-          MainLoop.currentlyRunningMainloop++;
-          
-        }
+        MainLoop.scheduler = null;
+        // Incrementing this signals the previous main loop that it's now become old, and it must return.
+        MainLoop.currentlyRunningMainloop++;
       },
   resume() {
         MainLoop.currentlyRunningMainloop++;
@@ -4529,6 +4517,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
       },
   init() {
+        Module['preMainLoop'] && MainLoop.preMainLoop.push(Module['preMainLoop']);
+        Module['postMainLoop'] && MainLoop.postMainLoop.push(Module['postMainLoop']);
       },
   runIter(func) {
         if (ABORT) return;
@@ -4547,7 +4537,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   fakeRequestAnimationFrame(func) {
         // try to keep 60fps between calls to here
         var now = Date.now();
-        if (!MainLoop.nextRAF) {
+        if (MainLoop.nextRAF === 0) {
           MainLoop.nextRAF = now + 1000/60;
         } else {
           while (now + 2 >= MainLoop.nextRAF) { // fudge a little, to avoid timer jitter causing us to do lots of delay:0
@@ -4558,11 +4548,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         setTimeout(func, delay);
       },
   requestAnimationFrame(func) {
-        if (globalThis.requestAnimationFrame) {
+        if (typeof requestAnimationFrame == 'function') {
           requestAnimationFrame(func);
-        } else {
-          MainLoop.fakeRequestAnimationFrame(func);
+          return;
         }
+        var RAF = MainLoop.fakeRequestAnimationFrame;
+        RAF(func);
       },
   };
   var _emscripten_cancel_main_loop = () => {
@@ -4575,7 +4566,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   var abortOnCannotGrowMemory = (requestedSize) => {
       abort(`Cannot enlarge memory arrays to size ${requestedSize} bytes (OOM). Either (1) compile with -sINITIAL_MEMORY=X with X higher than the current value ${HEAP8.length}, (2) compile with -sALLOW_MEMORY_GROWTH which allows increasing the size at runtime, or (3) if you want malloc to return NULL (0) instead of this abort, compile with -sABORTING_MALLOC=0`);
     };
-  
   var _emscripten_resize_heap = (requestedSize) => {
       var oldSize = HEAPU8.length;
       // With CAN_ADDRESS_2GB or MEMORY64, pointers are already unsigned.
@@ -4586,6 +4576,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   var onExits = [];
   var addOnExit = (cb) => onExits.push(cb);
   var JSEvents = {
+  memcpy(target, src, size) {
+        HEAP8.set(HEAP8.subarray(src, src + size), target);
+      },
   removeAllEventListeners() {
         while (JSEvents.eventHandlers.length) {
           JSEvents._removeHandler(JSEvents.eventHandlers.length - 1);
@@ -4598,7 +4591,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         function arraysHaveEqualContent(arrA, arrB) {
           if (arrA.length != arrB.length) return false;
   
-          for (var i = 0; i < arrA.length; i++) {
+          for (var i in arrA) {
             if (arrA[i] != arrB[i]) return false;
           }
           return true;
@@ -4615,18 +4608,18 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           argsList
         });
   
-        JSEvents.deferredCalls.sort((x,y) => x.precedence - y.precedence);
+        JSEvents.deferredCalls.sort((x,y) => x.precedence < y.precedence);
       },
   removeDeferredCalls(targetFunction) {
         JSEvents.deferredCalls = JSEvents.deferredCalls.filter((call) => call.targetFunction != targetFunction);
       },
   canPerformEventHandlerRequests() {
-        // Browsers that support navigator.userActivation.isActive: https://developer.mozilla.org/en-US/docs/Web/API/UserActivation/isActive
         if (navigator.userActivation) {
           // Verify against transient activation status from UserActivation API
           // whether it is possible to perform a request here without needing to defer. See
           // https://developer.mozilla.org/en-US/docs/Web/Security/User_activation#transient_activation
           // and https://caniuse.com/mdn-api_useractivation
+          // At the time of writing, Firefox does not support this API: https://bugzilla.mozilla.org/show_bug.cgi?id=1791079
           return navigator.userActivation.isActive;
         }
   
@@ -4691,42 +4684,24 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
         return 0;
       },
-  removeSingleHandler(eventHandler) {
-        let success = false;
-        for (let i = 0; i < JSEvents.eventHandlers.length; ++i) {
-          const handler = JSEvents.eventHandlers[i];
-          if (handler.target === eventHandler.target
-            && handler.eventTypeId === eventHandler.eventTypeId
-            && handler.callbackfunc === eventHandler.callbackfunc
-            && handler.userData === eventHandler.userData) {
-            // in some very rare cases (ex: Safari / fullscreen events), there is more than 1 handler (eventTypeString is different)
-            JSEvents._removeHandler(i--);
-            success = true;
-          }
-        }
-        return success ? 0 : -5;
-      },
   getNodeNameForTarget(target) {
+        if (!target) return '';
         if (target == window) return '#window';
         if (target == screen) return '#screen';
-        return target?.nodeName ?? '';
+        return target?.nodeName || '';
       },
   fullscreenEnabled() {
         return document.fullscreenEnabled
         // Safari 13.0.3 on macOS Catalina 10.15.1 still ships with prefixed webkitFullscreenEnabled.
         // TODO: If Safari at some point ships with unprefixed version, update the version check above.
-        ?? document.webkitFullscreenEnabled
+        || document.webkitFullscreenEnabled
          ;
       },
   };
   
   /** @type {Object} */
-  var specialHTMLTargets = [0, globalThis.document ?? 0, globalThis.window ?? 0];
+  var specialHTMLTargets = [0, typeof document != 'undefined' ? document : 0, typeof window != 'undefined' ? window : 0];
   var getBoundingClientRect = (e) => specialHTMLTargets.indexOf(e) < 0 ? e.getBoundingClientRect() : {'left':0,'top':0};
-  
-  
-  
-  
   var fillMouseEventData = (eventStruct, e, target) => {
       assert(eventStruct % 4 == 0);
       HEAPF64[((eventStruct)>>3)] = e.timeStamp;
@@ -4741,8 +4716,10 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       HEAP8[eventStruct + 27] = e.metaKey;
       HEAP16[idx*2 + 14] = e.button;
       HEAP16[idx*2 + 15] = e.buttons;
-      HEAP32[idx + 8] = e.movementX;
-      HEAP32[idx + 9] = e.movementY;
+  
+      HEAP32[idx + 8] = e["movementX"];
+  
+      HEAP32[idx + 9] = e["movementY"];
   
       // Note: rect contains doubles (truncated to placate SAFE_HEAP, which is the same behaviour when writing to HEAP32 anyway)
       var rect = getBoundingClientRect(target);
@@ -4751,7 +4728,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     };
   
   var maybeCStringToJsString = (cString) => {
-      // 'cString > 2' checks if the input is a number, and isn't of the special
+      // "cString > 2" checks if the input is a number, and isn't of the special
       // values we accept here, EMSCRIPTEN_EVENT_TARGET_* (which map to 0, 1, 2).
       // In other words, if cString > 2 then it's a pointer to a valid place in
       // memory, and points to a C string.
@@ -4760,16 +4737,15 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
   var findEventTarget = (target) => {
       target = maybeCStringToJsString(target);
-      var domElement = specialHTMLTargets[target] || globalThis.document?.querySelector(target);
+      var domElement = specialHTMLTargets[target] || (typeof document != 'undefined' ? document.querySelector(target) : null);
       return domElement;
     };
   
   var registerMouseEventCallback = (target, userData, useCapture, callbackfunc, eventTypeId, eventTypeString, targetThread) => {
-      var eventSize = 64;
-      JSEvents.mouseEvent ||= _malloc(eventSize);
+      JSEvents.mouseEvent ||= _malloc(64);
       target = findEventTarget(target);
   
-      var mouseEventHandlerFunc = (e) => {
+      var mouseEventHandlerFunc = (e = event) => {
         // TODO: Make this access thread safe, or this could update live while app is reading it.
         fillMouseEventData(JSEvents.mouseEvent, e, target);
   
@@ -4780,8 +4756,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         target,
         allowsDeferredCalls: eventTypeString != 'mousemove' && eventTypeString != 'mouseenter' && eventTypeString != 'mouseleave', // Mouse move events do not allow fullscreen/pointer lock requests to be handled in them!
         eventTypeString,
-        eventTypeId,
-        userData,
         callbackfunc,
         handlerFunc: mouseEventHandlerFunc,
         useCapture
@@ -4789,22 +4763,17 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       return JSEvents.registerOrRemoveHandler(eventHandler);
     };
   var _emscripten_set_click_callback_on_thread = (target, userData, useCapture, callbackfunc, targetThread) =>
-      registerMouseEventCallback(target, userData, useCapture, callbackfunc, 4, 'click', targetThread);
+      registerMouseEventCallback(target, userData, useCapture, callbackfunc, 4, "click", targetThread);
 
   
   
-  
   var stringToUTF8 = (str, outPtr, maxBytesToWrite) => {
-      assert(typeof maxBytesToWrite == 'number', 'stringToUTF8 requires a third parameter that specifies the length of the output buffer');
+      assert(typeof maxBytesToWrite == 'number', 'stringToUTF8(str, outPtr, maxBytesToWrite) is missing the third parameter that specifies the length of the output buffer!');
       return stringToUTF8Array(str, HEAPU8, outPtr, maxBytesToWrite);
     };
   
-  
-  
-  
   var registerKeyEventCallback = (target, userData, useCapture, callbackfunc, eventTypeId, eventTypeString, targetThread) => {
-      var eventSize = 160;
-      JSEvents.keyEvent ||= _malloc(eventSize);
+      JSEvents.keyEvent ||= _malloc(160);
   
       var keyEventHandlerFunc = (e) => {
         assert(e);
@@ -4823,10 +4792,10 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         HEAP32[idx + 5] = e.charCode;
         HEAP32[idx + 6] = e.keyCode;
         HEAP32[idx + 7] = e.which;
-        stringToUTF8(e.key ?? '', keyEventData + 32, 32);
-        stringToUTF8(e.code ?? '', keyEventData + 64, 32);
-        stringToUTF8(e.char ?? '', keyEventData + 96, 32);
-        stringToUTF8(e.locale ?? '', keyEventData + 128, 32);
+        stringToUTF8(e.key || '', keyEventData + 32, 32);
+        stringToUTF8(e.code || '', keyEventData + 64, 32);
+        stringToUTF8(e.char || '', keyEventData + 96, 32);
+        stringToUTF8(e.locale || '', keyEventData + 128, 32);
   
         if (((a1, a2, a3) => dynCall_iiii(callbackfunc, a1, a2, a3))(eventTypeId, keyEventData, userData)) e.preventDefault();
       };
@@ -4834,8 +4803,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       var eventHandler = {
         target: findEventTarget(target),
         eventTypeString,
-        eventTypeId,
-        userData,
         callbackfunc,
         handlerFunc: keyEventHandlerFunc,
         useCapture
@@ -4843,10 +4810,10 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       return JSEvents.registerOrRemoveHandler(eventHandler);
     };
   var _emscripten_set_keydown_callback_on_thread = (target, userData, useCapture, callbackfunc, targetThread) =>
-      registerKeyEventCallback(target, userData, useCapture, callbackfunc, 2, 'keydown', targetThread);
+      registerKeyEventCallback(target, userData, useCapture, callbackfunc, 2, "keydown", targetThread);
 
   var _emscripten_set_keyup_callback_on_thread = (target, userData, useCapture, callbackfunc, targetThread) =>
-      registerKeyEventCallback(target, userData, useCapture, callbackfunc, 3, 'keyup', targetThread);
+      registerKeyEventCallback(target, userData, useCapture, callbackfunc, 3, "keyup", targetThread);
 
   var _emscripten_set_main_loop = (func, fps, simulateInfiniteLoop) => {
       var iterFunc = (() => dynCall_v(func));
@@ -4854,13 +4821,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     };
 
   var _emscripten_set_mousedown_callback_on_thread = (target, userData, useCapture, callbackfunc, targetThread) =>
-      registerMouseEventCallback(target, userData, useCapture, callbackfunc, 5, 'mousedown', targetThread);
+      registerMouseEventCallback(target, userData, useCapture, callbackfunc, 5, "mousedown", targetThread);
 
   var _emscripten_set_mousemove_callback_on_thread = (target, userData, useCapture, callbackfunc, targetThread) =>
-      registerMouseEventCallback(target, userData, useCapture, callbackfunc, 8, 'mousemove', targetThread);
+      registerMouseEventCallback(target, userData, useCapture, callbackfunc, 8, "mousemove", targetThread);
 
   var _emscripten_set_mouseup_callback_on_thread = (target, userData, useCapture, callbackfunc, targetThread) =>
-      registerMouseEventCallback(target, userData, useCapture, callbackfunc, 6, 'mouseup', targetThread);
+      registerMouseEventCallback(target, userData, useCapture, callbackfunc, 6, "mouseup", targetThread);
 
   var GLctx;
   
@@ -4921,23 +4888,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         'WEBGL_polygon_mode'
       ];
       // .getSupportedExtensions() can return null if context is lost, so coerce to empty array.
-      return ctx.getSupportedExtensions()?.filter(ext => supportedExtensions.includes(ext)) ?? [];
+      return (ctx.getSupportedExtensions() || []).filter(ext => supportedExtensions.includes(ext));
     };
   
   var registerPreMainLoop = (f) => {
       // Does nothing unless $MainLoop is included/used.
       typeof MainLoop != 'undefined' && MainLoop.preMainLoop.push(f);
     };
-  
-  
-  var webglBufferSubData = (target, offset, size, data, src = HEAPU8) => {
-      if (true) {
-        size && GLctx.bufferSubData(target, offset, src, data, size);
-        return;
-      }
-    };
-  
-  
   
   
   var GL = {
@@ -4992,7 +4949,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       },
   MAX_TEMP_BUFFER_SIZE:2097152,
   numTempVertexBuffersPerSize:64,
-  log2ceilLookup:(i) => 32 - Math.clz32(i ? i - 1 : 0),
+  log2ceilLookup:(i) => 32 - Math.clz32(i === 0 ? 0 : i - 1),
   generateTempBuffers:(quads, context) => {
         var largestIndex = GL.log2ceilLookup(GL.MAX_TEMP_BUFFER_SIZE);
         context.tempVertexBufferCounters1 = [];
@@ -5096,11 +5053,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // Let's see if we need to enable the standard derivatives extension
         var type = GLctx.getShaderParameter(GL.shaders[shader], 0x8B4F /* GL_SHADER_TYPE */);
         if (type == 0x8B30 /* GL_FRAGMENT_SHADER */) {
-          if (GLEmulation.findToken(source, 'dFdx') ||
-              GLEmulation.findToken(source, 'dFdy') ||
-              GLEmulation.findToken(source, 'fwidth')) {
-            source = '#extension GL_OES_standard_derivatives : enable\n' + source;
-            var extension = GLctx.getExtension('OES_standard_derivatives');
+          if (GLEmulation.findToken(source, "dFdx") ||
+              GLEmulation.findToken(source, "dFdy") ||
+              GLEmulation.findToken(source, "fwidth")) {
+            source = "#extension GL_OES_standard_derivatives : enable\n" + source;
+            var extension = GLctx.getExtension("OES_standard_derivatives");
           }
         }
         return source;
@@ -5124,14 +5081,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // context on a canvas, calling .getContext() will always return that
         // context independent of which 'webgl' or 'webgl2'
         // context version was passed. See:
-        //   https://webkit.org/b/222758
+        //   https://bugs.webkit.org/show_bug.cgi?id=222758
         // and:
         //   https://github.com/emscripten-core/emscripten/issues/13295.
         // TODO: Once the bug is fixed and shipped in Safari, adjust the Safari
         // version field in above check.
         if (!canvas.getContextSafariWebGL2Fixed) {
           canvas.getContextSafariWebGL2Fixed = canvas.getContext;
-          /** @type {function(this:HTMLCanvasElement, string, (Object|null)=): (RenderingContext|null)} */
+          /** @type {function(this:HTMLCanvasElement, string, (Object|null)=): (Object|null)} */
           function fixedGetContext(ver, attrs) {
             var gl = canvas.getContextSafariWebGL2Fixed(ver, attrs);
             return ((ver == 'webgl') == (gl instanceof WebGLRenderingContext)) ? gl : null;
@@ -5139,7 +5096,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           canvas.getContext = fixedGetContext;
         }
   
-        var ctx = canvas.getContext('webgl2', webGLContextAttributes);
+        var ctx = canvas.getContext("webgl2", webGLContextAttributes);
   
         if (!ctx) return 0;
   
@@ -5205,7 +5162,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
         var GLctx = context.GLctx;
   
-        // Detect the presence of a few extensions manually, since the GL interop
+        // Detect the presence of a few extensions manually, ction GL interop
         // layer itself will need to know if they exist.
         context.compressionExt = GLctx.getExtension('WEBGL_compressed_texture_s3tc');
         context.anisotropicExt = GLctx.getExtension('EXT_texture_filter_anisotropic');
@@ -5223,25 +5180,25 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // that's based on core APIs, and exposes only the queryCounterEXT()
         // entrypoint.
         if (context.version >= 2) {
-          GLctx.disjointTimerQueryExt = GLctx.getExtension('EXT_disjoint_timer_query_webgl2');
+          GLctx.disjointTimerQueryExt = GLctx.getExtension("EXT_disjoint_timer_query_webgl2");
         }
   
         // However, Firefox exposes the WebGL 1 version on WebGL 2 as well and
         // thus we look for the WebGL 1 version again if the WebGL 2 version
-        // isn't present. https://bugzil.la/1328882
+        // isn't present. https://bugzilla.mozilla.org/show_bug.cgi?id=1328882
         if (context.version < 2 || !GLctx.disjointTimerQueryExt)
         {
-          GLctx.disjointTimerQueryExt = GLctx.getExtension('EXT_disjoint_timer_query');
+          GLctx.disjointTimerQueryExt = GLctx.getExtension("EXT_disjoint_timer_query");
         }
   
-        for (var ext of getEmscriptenSupportedExtensions(GLctx)) {
+        getEmscriptenSupportedExtensions(GLctx).forEach((ext) => {
           // WEBGL_lose_context, WEBGL_debug_renderer_info and WEBGL_debug_shaders
           // are not enabled by default.
           if (!ext.includes('lose_context') && !ext.includes('debug')) {
             // Call .getExtension() to enable that extension permanently.
             GLctx.getExtension(ext);
           }
-        }
+        });
       },
   };
   
@@ -5249,8 +5206,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
   var findCanvasEventTarget = findEventTarget;
   
-  
-  
+  /** @suppress {duplicate } */
   var _emscripten_webgl_do_create_context = (target, attributes) => {
       assert(attributes);
       var attr32 = ((attributes)>>2);
@@ -5264,7 +5220,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         'preserveDrawingBuffer': !!HEAP8[attributes + 5],
         'powerPreference': webglPowerPreferences[powerPreference],
         'failIfMajorPerformanceCaveat': !!HEAP8[attributes + 12],
-        'desynchronized': !!HEAP8[attributes + 33],
         // The following are not predefined WebGL context attributes in the WebGL specification, so the property names can be minified by Closure.
         majorVersion: HEAP32[attr32 + (16>>2)],
         minorVersion: HEAP32[attr32 + (20>>2)],
@@ -5310,11 +5265,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   var ENV = {
   };
   
-  var getExecutableName = () => thisProgram;
+  var getExecutableName = () => thisProgram || './this.program';
   var getEnvStrings = () => {
       if (!getEnvStrings.strings) {
         // Default values.
-        var lang = (globalThis.navigator?.language ?? 'C').replace('-', '_') + '.UTF-8';
+        // Browser language detection #8751
+        var lang = ((typeof navigator == 'object' && navigator.language) || 'C').replace('-', '_') + '.UTF-8';
         var env = {
           'USER': 'web_user',
           'LOGNAME': 'web_user',
@@ -5341,7 +5297,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       return getEnvStrings.strings;
     };
   
-  
   var _environ_get = (__environ, environ_buf) => {
       var bufSize = 0;
       var envp = 0;
@@ -5354,7 +5309,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       return 0;
     };
 
-  
   
   var _environ_sizes_get = (penviron_count, penviron_buf_size) => {
       var strings = getEnvStrings();
@@ -5379,9 +5333,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     return e.errno;
   }
   }
-  
 
-  
   /** @param {number=} offset */
   var doReadv = (stream, iov, iovcnt, offset) => {
       var ret = 0;
@@ -5389,18 +5341,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         var ptr = HEAPU32[((iov)>>2)];
         var len = HEAPU32[(((iov)+(4))>>2)];
         iov += 8;
-        try {
-          var curr = FS.read(stream, HEAP8, ptr, len, offset);
-        } catch (e) {
-          // On a non-blocking stream a subsequent read may would-block after we
-          // already gathered data. POSIX readv is a single gather-read: return
-          // what we have rather than failing the whole call.
-          if (ret > 0 && e instanceof FS.ErrnoError &&
-              (e.errno == 6 || e.errno == 6)) {
-            break;
-          }
-          throw e;
-        }
+        var curr = FS.read(stream, HEAP8, ptr, len, offset);
         if (curr < 0) return -1;
         ret += curr;
         if (curr < len) break; // nothing more to read
@@ -5410,7 +5351,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       }
       return ret;
     };
-  
   
   function _fd_read(fd, iov, iovcnt, pnum) {
   try {
@@ -5424,9 +5364,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     return e.errno;
   }
   }
-  
 
-  
   
   function _fd_seek(fd, offset, whence, newOffset) {
     offset = bigintToI53Checked(offset);
@@ -5434,11 +5372,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
   try {
   
-      if (isNaN(offset)) return 22;
+      if (isNaN(offset)) return 61;
       var stream = SYSCALLS.getStreamFromFD(fd);
       FS.llseek(stream, offset, whence);
       HEAP64[((newOffset)>>3)] = BigInt(stream.position);
-      if (stream.getdents && !offset && whence === 0) stream.getdents = null; // reset readdir state
+      if (stream.getdents && offset === 0 && whence === 0) stream.getdents = null; // reset readdir state
       return 0;
     } catch (e) {
     if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
@@ -5447,33 +5385,26 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   ;
   }
 
-  
-  
   /** @param {number=} offset */
   var doWritev = (stream, iov, iovcnt, offset) => {
-      // Gather all iovecs into one contiguous buffer and issue a single
-      // FS.write, matching POSIX writev's single gather-write semantics (as
-      // __syscall_sendmsg already does). Per-iovec writes fragment a stream
-      // socket send into multiple segments, breaking stream byte semantics.
-      if (iovcnt == 1) {
-        // Single iovec: write directly from HEAP8, no gather buffer needed.
-        return FS.write(stream, HEAP8, HEAPU32[((iov)>>2)], HEAPU32[(((iov)+(4))>>2)], offset);
-      }
-      var total = 0;
-      for (var i = 0, p = iov; i < iovcnt; i++, p += 8) {
-        total += HEAPU32[(((p)+(4))>>2)];
-      }
-      var view = new Uint8Array(total);
-      var voff = 0;
-      for (var i = 0; i < iovcnt; i++, iov += 8) {
+      var ret = 0;
+      for (var i = 0; i < iovcnt; i++) {
         var ptr = HEAPU32[((iov)>>2)];
         var len = HEAPU32[(((iov)+(4))>>2)];
-        view.set(HEAPU8.subarray(ptr, ptr + len), voff);
-        voff += len;
+        iov += 8;
+        var curr = FS.write(stream, HEAP8, ptr, len, offset);
+        if (curr < 0) return -1;
+        ret += curr;
+        if (curr < len) {
+          // No more space to write.
+          break;
+        }
+        if (typeof offset != 'undefined') {
+          offset += curr;
+        }
       }
-      return FS.write(stream, view, 0, total, offset);
+      return ret;
     };
-  
   
   function _fd_write(fd, iov, iovcnt, pnum) {
   try {
@@ -5487,9 +5418,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     return e.errno;
   }
   }
-  
 
-  var _emscripten_glAlphaFunc = (func, ref) => {
+  var _glAlphaFunc = (func, ref) => {
       switch(func) {
         case 0x200: // GL_NEVER
         case 0x201: // GL_LESS
@@ -5509,25 +5439,15 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           break;
       }
     };
-  var _glAlphaFunc = _emscripten_glAlphaFunc;
 
-  function getFullscreenElement() {
-      return document.fullscreenElement
-             ?? document.webkitFullscreenElement
-             ;
-    }
-  
   
   /** @param {number=} timeout */
   var safeSetTimeout = (func, timeout) => {
       
-      var id = safeSetTimeout.nextId++;
-      safeSetTimeout.pending.set(id, setTimeout(() => {
-        safeSetTimeout.pending.delete(id);
+      return setTimeout(() => {
         
         callUserCallback(func);
-      }, timeout));
-      return id;
+      }, timeout);
     };
   
   
@@ -5537,6 +5457,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   isFullscreen:false,
   pointerLock:false,
   moduleContextCreatedCallbacks:[],
+  workers:[],
   preloadedImages:{
   },
   preloadedAudios:{
@@ -5555,91 +5476,95 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // might create some side data structure for use later (like an Image element, etc.).
   
         var imagePlugin = {};
-        imagePlugin['canHandle'] = (name) => {
+        imagePlugin['canHandle'] = function imagePlugin_canHandle(name) {
           return !Module['noImageDecoding'] && /\.(jpg|jpeg|png|bmp|webp)$/i.test(name);
         };
-        imagePlugin['handle'] = async (byteArray, name) => {
+        imagePlugin['handle'] = function imagePlugin_handle(byteArray, name, onload, onerror) {
           var b = new Blob([byteArray], { type: Browser.getMimetype(name) });
           if (b.size !== byteArray.length) { // Safari bug #118630
             // Safari's Blob can only take an ArrayBuffer
             b = new Blob([(new Uint8Array(byteArray)).buffer], { type: Browser.getMimetype(name) });
           }
           var url = URL.createObjectURL(b);
-          return new Promise((resolve, reject) => {
-            var img = new Image();
-            img.onload = () => {
-              assert(img.complete, `Image ${name} could not be decoded`);
-              var canvas = /** @type {!HTMLCanvasElement} */ (document.createElement('canvas'));
-              canvas.width = img.width;
-              canvas.height = img.height;
-              var ctx = canvas.getContext('2d');
-              ctx.drawImage(img, 0, 0);
-              Browser.preloadedImages[name] = canvas;
-              URL.revokeObjectURL(url);
-              resolve(byteArray);
-            };
-            img.onerror = (event) => {
-              err(`Image ${url} could not be decoded`);
-              reject();
-            };
-            img.src = url;
-          });
+          assert(typeof url == 'string', 'createObjectURL must return a url as a string');
+          var img = new Image();
+          img.onload = () => {
+            assert(img.complete, `Image ${name} could not be decoded`);
+            var canvas = /** @type {!HTMLCanvasElement} */ (document.createElement('canvas'));
+            canvas.width = img.width;
+            canvas.height = img.height;
+            var ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            Browser.preloadedImages[name] = canvas;
+            URL.revokeObjectURL(url);
+            onload?.(byteArray);
+          };
+          img.onerror = (event) => {
+            err(`Image ${url} could not be decoded`);
+            onerror?.();
+          };
+          img.src = url;
         };
         preloadPlugins.push(imagePlugin);
   
         var audioPlugin = {};
-        audioPlugin['canHandle'] = (name) => {
+        audioPlugin['canHandle'] = function audioPlugin_canHandle(name) {
           return !Module['noAudioDecoding'] && name.slice(-4) in { '.ogg': 1, '.wav': 1, '.mp3': 1 };
         };
-        audioPlugin['handle'] = async (byteArray, name) => {
-          return new Promise((resolve, reject) => {
-            var done = false;
-            function finish(audio) {
-              if (done) return;
-              done = true;
-              Browser.preloadedAudios[name] = audio;
-              resolve(byteArray);
-            }
-            var b = new Blob([byteArray], { type: Browser.getMimetype(name) });
-            var url = URL.createObjectURL(b); // XXX we never revoke this!
-            var audio = new Audio();
-            audio.addEventListener('canplaythrough', () => finish(audio)); // use addEventListener due to chromium bug 124926
-            audio.onerror = (event) => {
-              if (done) return;
-              err(`warning: browser could not fully decode audio ${name}, trying slower base64 approach`);
-              function encode64(data) {
-                var BASE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-                var PAD = '=';
-                var ret = '';
-                var leftchar = 0;
-                var leftbits = 0;
-                for (var byte of data) {
-                  leftchar = (leftchar << 8) | byte;
-                  leftbits += 8;
-                  while (leftbits >= 6) {
-                    var curr = (leftchar >> (leftbits-6)) & 0x3f;
-                    leftbits -= 6;
-                    ret += BASE[curr];
-                  }
+        audioPlugin['handle'] = function audioPlugin_handle(byteArray, name, onload, onerror) {
+          var done = false;
+          function finish(audio) {
+            if (done) return;
+            done = true;
+            Browser.preloadedAudios[name] = audio;
+            onload?.(byteArray);
+          }
+          function fail() {
+            if (done) return;
+            done = true;
+            Browser.preloadedAudios[name] = new Audio(); // empty shim
+            onerror?.();
+          }
+          var b = new Blob([byteArray], { type: Browser.getMimetype(name) });
+          var url = URL.createObjectURL(b); // XXX we never revoke this!
+          assert(typeof url == 'string', 'createObjectURL must return a url as a string');
+          var audio = new Audio();
+          audio.addEventListener('canplaythrough', () => finish(audio), false); // use addEventListener due to chromium bug 124926
+          audio.onerror = function audio_onerror(event) {
+            if (done) return;
+            err(`warning: browser could not fully decode audio ${name}, trying slower base64 approach`);
+            function encode64(data) {
+              var BASE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+              var PAD = '=';
+              var ret = '';
+              var leftchar = 0;
+              var leftbits = 0;
+              for (var i = 0; i < data.length; i++) {
+                leftchar = (leftchar << 8) | data[i];
+                leftbits += 8;
+                while (leftbits >= 6) {
+                  var curr = (leftchar >> (leftbits-6)) & 0x3f;
+                  leftbits -= 6;
+                  ret += BASE[curr];
                 }
-                if (leftbits == 2) {
-                  ret += BASE[(leftchar&3) << 4];
-                  ret += PAD + PAD;
-                } else if (leftbits == 4) {
-                  ret += BASE[(leftchar&0xf) << 2];
-                  ret += PAD;
-                }
-                return ret;
               }
-              audio.src = 'data:audio/x-' + name.slice(-3) + ';base64,' + encode64(byteArray);
-              finish(audio); // we don't wait for confirmation this worked - but it's worth trying
-            };
-            audio.src = url;
-            // workaround for chrome bug 124926 - we do not always get oncanplaythrough or onerror
-            safeSetTimeout(() => {
-              finish(audio); // try to use it even though it is not necessarily ready to play
-            }, 10_000);
-          });
+              if (leftbits == 2) {
+                ret += BASE[(leftchar&3) << 4];
+                ret += PAD + PAD;
+              } else if (leftbits == 4) {
+                ret += BASE[(leftchar&0xf) << 2];
+                ret += PAD;
+              }
+              return ret;
+            }
+            audio.src = 'data:audio/x-' + name.slice(-3) + ';base64,' + encode64(byteArray);
+            finish(audio); // we don't wait for confirmation this worked - but it's worth trying
+          };
+          audio.src = url;
+          // workaround for chrome bug 124926 - we do not always get oncanplaythrough or onerror
+          safeSetTimeout(() => {
+            finish(audio); // try to use it even though it is not necessarily ready to play
+          }, 10000);
         };
         preloadPlugins.push(audioPlugin);
   
@@ -5647,22 +5572,40 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
         function pointerLockChange() {
           var canvas = Browser.getCanvas();
-          Browser.pointerLock = document.pointerLockElement === canvas;
+          Browser.pointerLock = document['pointerLockElement'] === canvas ||
+                                document['mozPointerLockElement'] === canvas ||
+                                document['webkitPointerLockElement'] === canvas ||
+                                document['msPointerLockElement'] === canvas;
         }
         var canvas = Browser.getCanvas();
         if (canvas) {
           // forced aspect ratio can be enabled by defining 'forcedAspectRatio' on Module
           // Module['forcedAspectRatio'] = 4 / 3;
   
-          document.addEventListener('pointerlockchange', pointerLockChange);
+          canvas.requestPointerLock = canvas['requestPointerLock'] ||
+                                      canvas['mozRequestPointerLock'] ||
+                                      canvas['webkitRequestPointerLock'] ||
+                                      canvas['msRequestPointerLock'] ||
+                                      (() => {});
+          canvas.exitPointerLock = document['exitPointerLock'] ||
+                                   document['mozExitPointerLock'] ||
+                                   document['webkitExitPointerLock'] ||
+                                   document['msExitPointerLock'] ||
+                                   (() => {}); // no-op if function does not exist
+          canvas.exitPointerLock = canvas.exitPointerLock.bind(document);
+  
+          document.addEventListener('pointerlockchange', pointerLockChange, false);
+          document.addEventListener('mozpointerlockchange', pointerLockChange, false);
+          document.addEventListener('webkitpointerlockchange', pointerLockChange, false);
+          document.addEventListener('mspointerlockchange', pointerLockChange, false);
   
           if (Module['elementPointerLock']) {
-            canvas.addEventListener('click', (ev) => {
+            canvas.addEventListener("click", (ev) => {
               if (!Browser.pointerLock && Browser.getCanvas().requestPointerLock) {
                 Browser.getCanvas().requestPointerLock();
                 ev.preventDefault();
               }
-            });
+            }, false);
           }
         }
       },
@@ -5723,7 +5666,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         function fullscreenChange() {
           Browser.isFullscreen = false;
           var canvasContainer = canvas.parentNode;
-          if (getFullscreenElement() === canvasContainer) {
+          if ((document['fullscreenElement'] || document['mozFullScreenElement'] ||
+               document['msFullscreenElement'] || document['webkitFullscreenElement'] ||
+               document['webkitCurrentFullScreenElement']) === canvasContainer) {
             canvas.exitFullscreen = Browser.exitFullscreen;
             if (Browser.lockPointer) canvas.requestPointerLock();
             Browser.isFullscreen = true;
@@ -5743,39 +5688,57 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
               Browser.updateCanvasDimensions(canvas);
             }
           }
+          Module['onFullScreen']?.(Browser.isFullscreen);
+          Module['onFullscreen']?.(Browser.isFullscreen);
         }
   
         if (!Browser.fullscreenHandlersInstalled) {
           Browser.fullscreenHandlersInstalled = true;
-          document.addEventListener('fullscreenchange', fullscreenChange);
-          document.addEventListener('webkitfullscreenchange', fullscreenChange);
+          document.addEventListener('fullscreenchange', fullscreenChange, false);
+          document.addEventListener('mozfullscreenchange', fullscreenChange, false);
+          document.addEventListener('webkitfullscreenchange', fullscreenChange, false);
+          document.addEventListener('MSFullscreenChange', fullscreenChange, false);
         }
   
         // create a new parent to ensure the canvas has no siblings. this allows browsers to optimize full screen performance when its parent is the full screen root
-        var canvasContainer = document.createElement('div');
+        var canvasContainer = document.createElement("div");
         canvas.parentNode.insertBefore(canvasContainer, canvas);
         canvasContainer.appendChild(canvas);
   
         // use parent of canvas as full screen root to allow aspect ratio correction (Firefox stretches the root to screen size)
-        // Safari didn't support Element.requestFullscreen until 16.4
-        // See: https://developer.mozilla.org/en-US/docs/Web/API/Element/requestFullscreen
-        /** @suppress {checkTypes} */
-        canvasContainer.requestFullscreen ??= (canvasContainer['webkitRequestFullscreen'] ? () => canvasContainer['webkitRequestFullscreen'](Element.ALLOW_KEYBOARD_INPUT) : null) ??
-                                              (canvasContainer['webkitRequestFullScreen'] ? () => canvasContainer['webkitRequestFullScreen'](Element.ALLOW_KEYBOARD_INPUT) : null);
+        canvasContainer.requestFullscreen = canvasContainer['requestFullscreen'] ||
+                                            canvasContainer['mozRequestFullScreen'] ||
+                                            canvasContainer['msRequestFullscreen'] ||
+                                           (canvasContainer['webkitRequestFullscreen'] ? () => canvasContainer['webkitRequestFullscreen'](Element['ALLOW_KEYBOARD_INPUT']) : null) ||
+                                           (canvasContainer['webkitRequestFullScreen'] ? () => canvasContainer['webkitRequestFullScreen'](Element['ALLOW_KEYBOARD_INPUT']) : null);
   
         canvasContainer.requestFullscreen();
       },
+  requestFullScreen() {
+        abort('Module.requestFullScreen has been replaced by Module.requestFullscreen (without a capital S)');
+      },
   exitFullscreen() {
         // This is workaround for chrome. Trying to exit from fullscreen
-        // not in fullscreen state will cause 'TypeError: Document not active'
+        // not in fullscreen state will cause "TypeError: Document not active"
         // in chrome. See https://github.com/emscripten-core/emscripten/pull/8236
         if (!Browser.isFullscreen) {
           return false;
         }
   
-        var CFS = document.exitFullscreen ?? document['webkitCancelFullScreen'];
+        var CFS = document['exitFullscreen'] ||
+                  document['cancelFullScreen'] ||
+                  document['mozCancelFullScreen'] ||
+                  document['msExitFullscreen'] ||
+                  document['webkitCancelFullScreen'] ||
+            (() => {});
         CFS.apply(document, []);
         return true;
+      },
+  safeSetTimeout(func, timeout) {
+        // Legacy function, this is used by the SDL2 port so we need to keep it
+        // around at least until that is updated.
+        // See https://github.com/libsdl-org/SDL/pull/6304
+        return safeSetTimeout(func, timeout);
       },
   getMimetype(name) {
         return {
@@ -5787,6 +5750,23 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           'wav': 'audio/wav',
           'mp3': 'audio/mpeg'
         }[name.slice(name.lastIndexOf('.')+1)];
+      },
+  getUserMedia(func) {
+        window.getUserMedia ||= navigator['getUserMedia'] ||
+                                navigator['mozGetUserMedia'];
+        window.getUserMedia(func);
+      },
+  getMovementX(event) {
+        return event['movementX'] ||
+               event['mozMovementX'] ||
+               event['webkitMovementX'] ||
+               0;
+      },
+  getMovementY(event) {
+        return event['movementY'] ||
+               event['mozMovementY'] ||
+               event['webkitMovementY'] ||
+               0;
       },
   getMouseWheelDelta(event) {
         var delta = 0;
@@ -5815,11 +5795,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
                 delta *= 80;
                 break;
               default:
-                abort('unrecognized mouse wheel delta mode: ' + event.deltaMode);
+                throw 'unrecognized mouse wheel delta mode: ' + event.deltaMode;
             }
             break;
           default:
-            abort('unrecognized mouse wheel event: ' + event.type);
+            throw 'unrecognized mouse wheel event: ' + event.type;
         }
         return delta;
       },
@@ -5837,8 +5817,16 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         var canvas = Browser.getCanvas();
         var rect = canvas.getBoundingClientRect();
   
-        var adjustedX = pageX - (window.scrollX + rect.left);
-        var adjustedY = pageY - (window.scrollY + rect.top);
+        // Neither .scrollX or .pageXOffset are defined in a spec, but
+        // we prefer .scrollX because it is currently in a spec draft.
+        // (see: http://www.w3.org/TR/2013/WD-cssom-view-20131217/)
+        var scrollX = ((typeof window.scrollX != 'undefined') ? window.scrollX : window.pageXOffset);
+        var scrollY = ((typeof window.scrollY != 'undefined') ? window.scrollY : window.pageYOffset);
+        // If this assert lands, it's likely because the browser doesn't support scrollX or pageXOffset
+        // and we have no viable fallback.
+        assert((typeof scrollX != 'undefined') && (typeof scrollY != 'undefined'), 'Unable to retrieve scroll position, mouse positions likely broken.');
+        var adjustedX = pageX - (scrollX + rect.left);
+        var adjustedY = pageY - (scrollY + rect.top);
   
         // the canvas might be CSS-scaled compared to its backbuffer;
         // SDL-using content will want mouse coordinates in terms
@@ -5859,8 +5847,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         if (Browser.pointerLock) {
           // When the pointer is locked, calculate the coordinates
           // based on the movement of the mouse.
-          Browser.mouseMovementX = event.movementX;
-          Browser.mouseMovementY = event.movementY;
+          // Workaround for Firefox bug 764498
+          if (event.type != 'mousemove' &&
+              ('mozMovementX' in event)) {
+            Browser.mouseMovementX = Browser.mouseMovementY = 0;
+          } else {
+            Browser.mouseMovementX = Browser.getMovementX(event);
+            Browser.mouseMovementY = Browser.getMovementY(event);
+          }
   
           // add the mouse delta to the current absolute mouse position
           Browser.mouseX += Browser.mouseMovementX;
@@ -5869,7 +5863,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           if (event.type === 'touchstart' || event.type === 'touchend' || event.type === 'touchmove') {
             var touch = event.touch;
             if (touch === undefined) {
-              return; // the 'touch' property is only defined in SDL
+              return; // the "touch" property is only defined in SDL
   
             }
             var coords = Browser.calculateMouseCoords(touch.pageX, touch.pageY);
@@ -5899,11 +5893,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         Browser.updateCanvasDimensions(canvas, width, height);
         if (!noUpdates) Browser.updateResizeListeners();
       },
+  windowedWidth:0,
+  windowedHeight:0,
   setFullscreenCanvasSize() {
         // check if SDL is available
-        if (typeof SDL != 'undefined') {
+        if (typeof SDL != "undefined") {
           var flags = HEAPU32[((SDL.screen)>>2)];
-          flags = flags | 8388608;
+          flags = flags | 0x00800000; // set SDL_FULLSCREEN flag
           HEAP32[((SDL.screen)>>2)] = flags;
         }
         Browser.updateCanvasDimensions(Browser.getCanvas());
@@ -5911,9 +5907,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       },
   setWindowedCanvasSize() {
         // check if SDL is available
-        if (typeof SDL != 'undefined') {
+        if (typeof SDL != "undefined") {
           var flags = HEAPU32[((SDL.screen)>>2)];
-          flags = flags & ~8388608;
+          flags = flags & ~0x00800000; // clear SDL_FULLSCREEN flag
           HEAP32[((SDL.screen)>>2)] = flags;
         }
         Browser.updateCanvasDimensions(Browser.getCanvas());
@@ -5929,7 +5925,16 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
         var w = wNative;
         var h = hNative;
-        if ((getFullscreenElement() === canvas.parentNode) && (typeof screen != 'undefined')) {
+        if (Module['forcedAspectRatio'] > 0) {
+          if (w/h < Module['forcedAspectRatio']) {
+            w = Math.round(h * Module['forcedAspectRatio']);
+          } else {
+            h = Math.round(w / Module['forcedAspectRatio']);
+          }
+        }
+        if (((document['fullscreenElement'] || document['mozFullScreenElement'] ||
+             document['msFullscreenElement'] || document['webkitFullscreenElement'] ||
+             document['webkitCurrentFullScreenElement']) === canvas.parentNode) && (typeof screen != 'undefined')) {
            var factor = Math.min(screen.width / w, screen.height / h);
            w = Math.round(w * factor);
            h = Math.round(h * factor);
@@ -5938,19 +5943,19 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           if (canvas.width  != w) canvas.width  = w;
           if (canvas.height != h) canvas.height = h;
           if (typeof canvas.style != 'undefined') {
-            canvas.style.removeProperty( 'width');
-            canvas.style.removeProperty('height');
+            canvas.style.removeProperty( "width");
+            canvas.style.removeProperty("height");
           }
         } else {
           if (canvas.width  != wNative) canvas.width  = wNative;
           if (canvas.height != hNative) canvas.height = hNative;
           if (typeof canvas.style != 'undefined') {
             if (w != wNative || h != hNative) {
-              canvas.style.setProperty( 'width', w + 'px', 'important');
-              canvas.style.setProperty('height', h + 'px', 'important');
+              canvas.style.setProperty( "width", w + "px", "important");
+              canvas.style.setProperty("height", h + "px", "important");
             } else {
-              canvas.style.removeProperty( 'width');
-              canvas.style.removeProperty('height');
+              canvas.style.removeProperty( "width");
+              canvas.style.removeProperty("height");
             }
           }
         }
@@ -5959,15 +5964,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
   
   
-  var _emscripten_glEnable = (x0) => GLctx.enable(x0);
-  var _glEnable = _emscripten_glEnable;
+  var _glEnable = (x0) => GLctx.enable(x0);
   
-  var _emscripten_glDisable = (x0) => GLctx.disable(x0);
-  var _glDisable = _emscripten_glDisable;
+  var _glDisable = (x0) => GLctx.disable(x0);
   
-  var _emscripten_glIsEnabled = (x0) => GLctx.isEnabled(x0);
-  var _glIsEnabled = _emscripten_glIsEnabled;
-  
+  var _glIsEnabled = (x0) => GLctx.isEnabled(x0);
   
   var readI53FromI64 = (ptr) => {
       return HEAPU32[((ptr)>>2)] + HEAP32[(((ptr)+(4))>>2)] * 4294967296;
@@ -5976,7 +5977,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   var readI53FromU64 = (ptr) => {
       return HEAPU32[((ptr)>>2)] + HEAPU32[(((ptr)+(4))>>2)] * 4294967296;
     };
-  
   var writeI53ToI64 = (ptr, num) => {
       HEAPU32[((ptr)>>2)] = num;
       var lower = HEAPU32[((ptr)>>2)];
@@ -5989,15 +5989,10 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
   var webglGetExtensions = () => {
       var exts = getEmscriptenSupportedExtensions(GLctx);
-      exts = exts.concat(exts.map((e) => 'GL_' + e));
+      exts = exts.concat(exts.map((e) => "GL_" + e));
       return exts;
     };
   
-  
-  
-  
-  /** @type {!Float32Array} */
-  var HEAPF32;
   var emscriptenWebGLGet = (name_, p, type) => {
       // Guard against user passing a null pointer.
       // Note that GLES2 spec does not say anything about how passing a null
@@ -6028,7 +6023,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           // WebGL doesn't have GL_NUM_COMPRESSED_TEXTURE_FORMATS (it's obsolete
           // since GL_COMPRESSED_TEXTURE_FORMATS returns a JS array that can be
           // queried for length), so implement it ourselves to allow C++ GLES2
-          // code to get the length.
+          // code get the length.
           var formats = GLctx.getParameter(0x86A3 /*GL_COMPRESSED_TEXTURE_FORMATS*/);
           ret = formats ? formats.length : 0;
           break;
@@ -6054,16 +6049,16 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       if (ret === undefined) {
         var result = GLctx.getParameter(name_);
         switch (typeof result) {
-          case 'number':
+          case "number":
             ret = result;
             break;
-          case 'boolean':
+          case "boolean":
             ret = result ? 1 : 0;
             break;
-          case 'string':
+          case "string":
             GL.recordError(0x500); // GL_INVALID_ENUM
             return;
-          case 'object':
+          case "object":
             if (result === null) {
               // null is a valid result for some (e.g., which buffer is bound -
               // perhaps nothing is bound), but otherwise can mean an invalid
@@ -6133,12 +6128,10 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       }
     };
   
-  var _emscripten_glGetBooleanv = (name_, p) => emscriptenWebGLGet(name_, p, 4);
-  var _glGetBooleanv = _emscripten_glGetBooleanv;
+  var _glGetBooleanv = (name_, p) => emscriptenWebGLGet(name_, p, 4);
   
   
-  var _emscripten_glGetIntegerv = (name_, p) => emscriptenWebGLGet(name_, p, 0);
-  var _glGetIntegerv = _emscripten_glGetIntegerv;
+  var _glGetIntegerv = (name_, p) => emscriptenWebGLGet(name_, p, 0);
   
   
   
@@ -6150,7 +6143,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     };
   
   
-  var _emscripten_glGetString = (name_) => {
+  var _glGetString = (name_) => {
       var ret = GL.stringCache[name_];
       if (!ret) {
         switch (name_) {
@@ -6194,48 +6187,41 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       }
       return ret;
     };
-  var _glGetString = _emscripten_glGetString;
   
-  var _emscripten_glCreateShader = (shaderType) => {
+  var _glCreateShader = (shaderType) => {
       var id = GL.getNewId(GL.shaders);
       GL.shaders[id] = GLctx.createShader(shaderType);
   
       return id;
     };
-  var _glCreateShader = _emscripten_glCreateShader;
   
-  var _emscripten_glShaderSource = (shader, count, string, length) => {
+  var _glShaderSource = (shader, count, string, length) => {
       var source = GL.getSource(shader, count, string, length);
   
       GLctx.shaderSource(GL.shaders[shader], source);
     };
-  var _glShaderSource = _emscripten_glShaderSource;
   
-  var _emscripten_glCompileShader = (shader) => {
+  var _glCompileShader = (shader) => {
       GLctx.compileShader(GL.shaders[shader]);
     };
-  var _glCompileShader = _emscripten_glCompileShader;
   
-  var _emscripten_glAttachShader = (program, shader) => {
+  var _glAttachShader = (program, shader) => {
       GLctx.attachShader(GL.programs[program], GL.shaders[shader]);
     };
-  var _glAttachShader = _emscripten_glAttachShader;
   
-  var _emscripten_glDetachShader = (program, shader) => {
+  var _glDetachShader = (program, shader) => {
       GLctx.detachShader(GL.programs[program], GL.shaders[shader]);
     };
-  var _glDetachShader = _emscripten_glDetachShader;
   
-  var _emscripten_glUseProgram = (program) => {
+  var _glUseProgram = (program) => {
       program = GL.programs[program];
       GLctx.useProgram(program);
       // Record the currently active program so that we can access the uniform
       // mapping table of that program.
       GLctx.currentProgram = program;
     };
-  var _glUseProgram = _emscripten_glUseProgram;
   
-  var _emscripten_glDeleteProgram = (id) => {
+  var _glDeleteProgram = (id) => {
       if (!id) return;
       var program = GL.programs[id];
       if (!program) {
@@ -6248,15 +6234,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       program.name = 0;
       GL.programs[id] = null;
     };
-  var _glDeleteProgram = _emscripten_glDeleteProgram;
   
   
-  var _emscripten_glBindAttribLocation = (program, index, name) => {
+  var _glBindAttribLocation = (program, index, name) => {
       GLctx.bindAttribLocation(GL.programs[program], index, UTF8ToString(name));
     };
-  var _glBindAttribLocation = _emscripten_glBindAttribLocation;
   
-  var _emscripten_glLinkProgram = (program) => {
+  var _glLinkProgram = (program) => {
       program = GL.programs[program];
       GLctx.linkProgram(program);
       // Invalidate earlier computed uniform->ID mappings, those have now become stale
@@ -6264,9 +6248,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       program.uniformSizeAndIdsByName = {};
   
     };
-  var _glLinkProgram = _emscripten_glLinkProgram;
   
-  var _emscripten_glBindBuffer = (target, buffer) => {
+  var _glBindBuffer = (target, buffer) => {
       if (target == 0x8892 /*GL_ARRAY_BUFFER*/) {
         GLctx.currentArrayBufferBinding = buffer;
         GLImmediate.lastArrayBuffer = buffer;
@@ -6291,35 +6274,25 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       }
       GLctx.bindBuffer(target, GL.buffers[buffer]);
     };
-  var _glBindBuffer = _emscripten_glBindBuffer;
   
   
-  var _emscripten_glGetFloatv = (name_, p) => emscriptenWebGLGet(name_, p, 2);
-  var _glGetFloatv = _emscripten_glGetFloatv;
+  var _glGetFloatv = (name_, p) => emscriptenWebGLGet(name_, p, 2);
   
-  var _emscripten_glHint = (x0, x1) => GLctx.hint(x0, x1);
-  var _glHint = _emscripten_glHint;
+  var _glHint = (x0, x1) => GLctx.hint(x0, x1);
   
-  var _emscripten_glEnableVertexAttribArray = (index) => {
+  var _glEnableVertexAttribArray = (index) => {
       GLctx.enableVertexAttribArray(index);
     };
-  var _glEnableVertexAttribArray = _emscripten_glEnableVertexAttribArray;
   
-  var _emscripten_glDisableVertexAttribArray = (index) => {
+  var _glDisableVertexAttribArray = (index) => {
       GLctx.disableVertexAttribArray(index);
     };
-  var _glDisableVertexAttribArray = _emscripten_glDisableVertexAttribArray;
   
-  var _emscripten_glVertexAttribPointer = (index, size, type, normalized, stride, ptr) => {
+  var _glVertexAttribPointer = (index, size, type, normalized, stride, ptr) => {
       GLctx.vertexAttribPointer(index, size, type, !!normalized, stride, ptr);
     };
-  var _glVertexAttribPointer = _emscripten_glVertexAttribPointer;
   
-  var _emscripten_glActiveTexture = (x0) => GLctx.activeTexture(x0);
-  var _glActiveTexture = _emscripten_glActiveTexture;
-  
-  
-  
+  var _glActiveTexture = (x0) => GLctx.activeTexture(x0);
   
   
   
@@ -6335,6 +6308,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   clipPlaneEquation:[],
   lightingEnabled:false,
   lightModelAmbient:null,
+  lightModelLocalViewer:false,
   lightModelTwoSide:false,
   materialAmbient:null,
   materialDiffuse:null,
@@ -6474,9 +6448,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
             // XXX not according to spec, and not in desktop GL, but works in some GLES1.x apparently, so support
             // it by forwarding to glEnableClientState
             /* Actually, let's not, for now. (This sounds exceedingly broken)
-           * This is in gl_ps_workaround2.c.
-          _glEnableClientState(cap);
-          */
+             * This is in gl_ps_workaround2.c.
+            _glEnableClientState(cap);
+            */
             return;
           } else if (!(cap in validCapabilities)) {
             return;
@@ -6524,9 +6498,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
             // XXX not according to spec, and not in desktop GL, but works in some GLES1.x apparently, so support
             // it by forwarding to glDisableClientState
             /* Actually, let's not, for now. (This sounds exceedingly broken)
-           * This is in gl_ps_workaround2.c.
-          _glDisableClientState(cap);
-          */
+             * This is in gl_ps_workaround2.c.
+            _glDisableClientState(cap);
+            */
             return;
           } else if (!(cap in validCapabilities)) {
             return;
@@ -6636,7 +6610,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
               return;
             }
             case 0x0D32: { // GL_MAX_CLIP_PLANES
-              HEAP32[((params)>>2)] = GLEmulation.MAX_CLIP_PLANES; // all implementations need to support at least 6
+              HEAP32[((params)>>2)] = GLEmulation.MAX_CLIP_PLANES; // all implementations need to support atleast 6
               return;
             }
             case 0x0BA0: { // GL_MATRIX_MODE
@@ -6955,7 +6929,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         var attrib = null;
         switch (cap) {
           case 0xDE1: // GL_TEXTURE_2D - XXX not according to spec, and not in desktop GL, but works in some GLES1.x apparently, so support it
-            abort('GL_TEXTURE_2D is not a spec-defined capability for gl{Enable,Disable}ClientState.');
+            abort("GL_TEXTURE_2D is not a spec-defined capability for gl{Enable,Disable}ClientState.");
             // Fall through:
           case 0x8078: // GL_TEXTURE_COORD_ARRAY
             attrib = GLImmediate.TEXTURE0 + GLImmediate.clientActiveTexture; break;
@@ -6969,21 +6943,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         return attrib;
       },
   };
-  
-  
-  
-  /** @type {!Uint16Array} */
-  var HEAPU16;
-  
-  
   var GLImmediate = {
   MapTreeLib:null,
   spawnMapTreeLib:() => {
         /**
-       * A naive implementation of a map backed by an array, and accessed by
-       * naive iteration along the array. (hashmap with only one bucket)
-       * @constructor
-       */
+         * A naive implementation of a map backed by an array, and accessed by
+         * naive iteration along the array. (hashmap with only one bucket)
+         * @constructor
+         */
         function CNaiveListMap() {
           var list = [];
   
@@ -7011,29 +6978,29 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         };
   
         /**
-       * A tree of map nodes.
-       * Uses `KeyView`s to allow descending the tree without garbage.
-       * Example: {
-       *   // Create our map object.
-       *   var map = new ObjTreeMap();
-       *
-       *   // Grab the static keyView for the map.
-       *   var keyView = map.GetStaticKeyView();
-       *
-       *   // Let's make a map for:
-       *   // root: <undefined>
-       *   //   1: <undefined>
-       *   //     2: <undefined>
-       *   //       5: "Three, sir!"
-       *   //       3: "Three!"
-       *
-       *   // Note how we can chain together `Reset` and `Next` to
-       *   // easily descend based on multiple key fragments.
-       *   keyView.Reset().Next(1).Next(2).Next(5).Set("Three, sir!");
-       *   keyView.Reset().Next(1).Next(2).Next(3).Set("Three!");
-       * }
-       * @constructor
-       */
+         * A tree of map nodes.
+         * Uses `KeyView`s to allow descending the tree without garbage.
+         * Example: {
+         *   // Create our map object.
+         *   var map = new ObjTreeMap();
+         *
+         *   // Grab the static keyView for the map.
+         *   var keyView = map.GetStaticKeyView();
+         *
+         *   // Let's make a map for:
+         *   // root: <undefined>
+         *   //   1: <undefined>
+         *   //     2: <undefined>
+         *   //       5: "Three, sir!"
+         *   //       3: "Three!"
+         *
+         *   // Note how we can chain together `Reset` and `Next` to
+         *   // easily descend based on multiple key fragments.
+         *   keyView.Reset().Next(1).Next(2).Next(5).Set("Three, sir!");
+         *   keyView.Reset().Next(1).Next(2).Next(3).Set("Three!");
+         * }
+         * @constructor
+         */
         function CMapTree() {
           /** @constructor */
           function CNLNode() {
@@ -7175,12 +7142,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         var GL_RGBA = 0x1908;
   
         // Our defs:
-        var TEXENVJIT_NAMESPACE_PREFIX = 'tej_';
+        var TEXENVJIT_NAMESPACE_PREFIX = "tej_";
         // Not actually constant, as they can be changed between JIT passes:
-        var TEX_UNIT_UNIFORM_PREFIX = 'uTexUnit';
-        var TEX_COORD_VARYING_PREFIX = 'vTexCoord';
-        var PRIM_COLOR_VARYING = 'vPrimColor';
-        var TEX_MATRIX_UNIFORM_PREFIX = 'uTexMatrix';
+        var TEX_UNIT_UNIFORM_PREFIX = "uTexUnit";
+        var TEX_COORD_VARYING_PREFIX = "vTexCoord";
+        var PRIM_COLOR_VARYING = "vPrimColor";
+        var TEX_MATRIX_UNIFORM_PREFIX = "uTexMatrix";
   
         // Static vars:
         var s_texUnits = null; //[];
@@ -7189,12 +7156,16 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         var s_requiredTexUnitsForPass = [];
   
         // Static funcs:
+        function abort(info) {
+          assert(false, "[TexEnvJIT] ABORT: " + info);
+        }
+  
         function abort_noSupport(info) {
-          abort('[TexEnvJIT] ABORT: No support: ' + info);
+          abort("No support: " + info);
         }
   
         function abort_sanity(info) {
-          abort('[TexEnvJIT] ABORT: Sanity failure: ' + info);
+          abort("Sanity failure: " + info);
         }
   
         function genTexUnitSampleExpr(texUnitID) {
@@ -7204,15 +7175,15 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           var func = null;
           switch (texType) {
             case GL_TEXTURE_1D:
-              func = 'texture2D';
+              func = "texture2D";
               break;
             case GL_TEXTURE_2D:
-              func = 'texture2D';
+              func = "texture2D";
               break;
             case GL_TEXTURE_3D:
-              return abort_noSupport('No support for 3D textures.');
+              return abort_noSupport("No support for 3D textures.");
             case GL_TEXTURE_CUBE_MAP:
-              func = 'textureCube';
+              func = "textureCube";
               break;
             default:
               return abort_sanity(`Unknown texType: ${ptrToString(texType)}`);
@@ -7229,13 +7200,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           switch (op) {
             case GL_SRC_COLOR:
             case GL_ONE_MINUS_SRC_COLOR:
-              return 'vec3';
+              return "vec3";
             case GL_SRC_ALPHA:
             case GL_ONE_MINUS_SRC_ALPHA:
-              return 'float';
+              return "float";
           }
   
-          return abort_noSupport('Unsupported combiner op: ' + ptrToString(op));
+          return abort_noSupport("Unsupported combiner op: " + ptrToString(op));
         }
   
         function getCurTexUnit() {
@@ -7260,25 +7231,25 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
               srcExpr = previousVar;
               break;
             default:
-                return abort_noSupport('Unsupported combiner src: ' + ptrToString(src));
+                return abort_noSupport("Unsupported combiner src: " + ptrToString(src));
           }
   
           var expr = null;
           switch (op) {
             case GL_SRC_COLOR:
-              expr = srcExpr + '.rgb';
+              expr = srcExpr + ".rgb";
               break;
             case GL_ONE_MINUS_SRC_COLOR:
-              expr = `(vec3(1.0) - ${srcExpr}.rgb)`;
+              expr = "(vec3(1.0) - " + srcExpr + ".rgb)";
               break;
             case GL_SRC_ALPHA:
-              expr = srcExpr + '.a';
+              expr = srcExpr + ".a";
               break;
             case GL_ONE_MINUS_SRC_ALPHA:
-              expr = `(1.0 - ${srcExpr}.a)`;
+              expr = "(1.0 - " + srcExpr + ".a)";
               break;
             default:
-              return abort_noSupport('Unsupported combiner op: ' + ptrToString(op));
+              return abort_noSupport("Unsupported combiner op: " + ptrToString(op));
           }
   
           return expr;
@@ -7425,7 +7396,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
         CTexUnit.prototype.genPassLines = function CTexUnit_genPassLines(passOutputVar, passInputVar, texUnitID) {
           if (!this.enabled()) {
-            return [`vec4 ${passOutputVar} = ${passInputVar};`];
+            return ["vec4 " + passOutputVar + " = " + passInputVar + ";"];
           }
           var lines = this.env.genPassLines(passOutputVar, passInputVar, texUnitID).join('\n');
   
@@ -7440,9 +7411,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
             var secondOccurrence = lines.slice(load.index+1).indexOf(texLoadExpr);
             if (secondOccurrence != -1) { // And also has a second occurrence of same load expression..
               // Create new var to store the common load.
-              var prefix = `${TEXENVJIT_NAMESPACE_PREFIX}env${texUnitID}_`;
-              var texLoadVar = `${prefix}texload${loadCounter++}`;
-              var texLoadLine = `vec4 ${texLoadVar} = ${texLoadExpr};\n`;
+              var prefix = TEXENVJIT_NAMESPACE_PREFIX + 'env' + texUnitID + "_";
+              var texLoadVar = prefix + 'texload' + loadCounter++;
+              var texLoadLine = 'vec4 ' + texLoadVar + ' = ' + texLoadExpr + ';\n';
               texLoadLines += texLoadLine + '\n'; // Store the generated texture load statements in a temp string to not confuse regex search in progress.
               lines = lines.split(texLoadExpr).join(texLoadVar);
               // Reset regex search, since we modified the string.
@@ -7469,101 +7440,101 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           switch (this.mode) {
             case GL_REPLACE: {
               /* RGB:
-             * Cv = Cs
-             * Av = Ap // Note how this is different, and that we'll
-             *            need to track the bound texture internalFormat
-             *            to get this right.
-             *
-             * RGBA:
-             * Cv = Cs
-             * Av = As
-             */
+               * Cv = Cs
+               * Av = Ap // Note how this is different, and that we'll
+               *            need to track the bound texture internalFormat
+               *            to get this right.
+               *
+               * RGBA:
+               * Cv = Cs
+               * Av = As
+               */
               return [
-                `vec4 ${passOutputVar} = ${genTexUnitSampleExpr(texUnitID)};`,
+                "vec4 " + passOutputVar + " = " + genTexUnitSampleExpr(texUnitID) + ";",
               ];
             }
             case GL_ADD: {
               /* RGBA:
-             * Cv = Cp + Cs
-             * Av = ApAs
-             */
-              var prefix = TEXENVJIT_NAMESPACE_PREFIX + 'env' + texUnitID + '_';
-              var texVar = prefix + 'tex';
-              var colorVar = prefix + 'color';
-              var alphaVar = prefix + 'alpha';
+               * Cv = Cp + Cs
+               * Av = ApAs
+               */
+              var prefix = TEXENVJIT_NAMESPACE_PREFIX + 'env' + texUnitID + "_";
+              var texVar = prefix + "tex";
+              var colorVar = prefix + "color";
+              var alphaVar = prefix + "alpha";
   
               return [
-                'vec4 ' + texVar + ' = ' + genTexUnitSampleExpr(texUnitID) + ';',
-                'vec3 ' + colorVar + ' = ' + passInputVar + '.rgb + ' + texVar + '.rgb;',
-                'float ' + alphaVar + ' = ' + passInputVar + '.a * ' + texVar + '.a;',
-                'vec4 ' + passOutputVar + ' = vec4(' + colorVar + ', ' + alphaVar + ');',
+                "vec4 " + texVar + " = " + genTexUnitSampleExpr(texUnitID) + ";",
+                "vec3 " + colorVar + " = " + passInputVar + ".rgb + " + texVar + ".rgb;",
+                "float " + alphaVar + " = " + passInputVar + ".a * " + texVar + ".a;",
+                "vec4 " + passOutputVar + " = vec4(" + colorVar + ", " + alphaVar + ");",
               ];
             }
             case GL_MODULATE: {
               /* RGBA:
-             * Cv = CpCs
-             * Av = ApAs
-             */
+               * Cv = CpCs
+               * Av = ApAs
+               */
               var line = [
-                'vec4 ' + passOutputVar,
-                ' = ',
+                "vec4 " + passOutputVar,
+                " = ",
                   passInputVar,
-                  ' * ',
+                  " * ",
                   genTexUnitSampleExpr(texUnitID),
-                ';',
+                ";",
               ];
-              return [line.join('')];
+              return [line.join("")];
             }
             case GL_DECAL: {
               /* RGBA:
-             * Cv = Cp(1 - As) + CsAs
-             * Av = Ap
-             */
-              var prefix = TEXENVJIT_NAMESPACE_PREFIX + 'env' + texUnitID + '_';
-              var texVar = prefix + 'tex';
-              var colorVar = prefix + 'color';
-              var alphaVar = prefix + 'alpha';
+               * Cv = Cp(1 - As) + CsAs
+               * Av = Ap
+               */
+              var prefix = TEXENVJIT_NAMESPACE_PREFIX + 'env' + texUnitID + "_";
+              var texVar = prefix + "tex";
+              var colorVar = prefix + "color";
+              var alphaVar = prefix + "alpha";
   
               return [
-                'vec4 ' + texVar + ' = ' + genTexUnitSampleExpr(texUnitID) + ';',
+                "vec4 " + texVar + " = " + genTexUnitSampleExpr(texUnitID) + ";",
                 [
-                  'vec3 ' + colorVar + ' = ',
-                    passInputVar + '.rgb * (1.0 - ' + texVar + '.a)',
-                      ' + ',
-                    texVar + '.rgb * ' + texVar + '.a',
-                  ';'
-                ].join(''),
-                'float ' + alphaVar + ' = ' + passInputVar + '.a;',
-                'vec4 ' + passOutputVar + ' = vec4(' + colorVar + ', ' + alphaVar + ');',
+                  "vec3 " + colorVar + " = ",
+                    passInputVar + ".rgb * (1.0 - " + texVar + ".a)",
+                      " + ",
+                    texVar + ".rgb * " + texVar + ".a",
+                  ";"
+                ].join(""),
+                "float " + alphaVar + " = " + passInputVar + ".a;",
+                "vec4 " + passOutputVar + " = vec4(" + colorVar + ", " + alphaVar + ");",
               ];
             }
             case GL_BLEND: {
               /* RGBA:
-             * Cv = Cp(1 - Cs) + CcCs
-             * Av = As
-             */
-              var prefix = TEXENVJIT_NAMESPACE_PREFIX + 'env' + texUnitID + '_';
-              var texVar = prefix + 'tex';
-              var colorVar = prefix + 'color';
-              var alphaVar = prefix + 'alpha';
+               * Cv = Cp(1 - Cs) + CcCs
+               * Av = As
+               */
+              var prefix = TEXENVJIT_NAMESPACE_PREFIX + 'env' + texUnitID + "_";
+              var texVar = prefix + "tex";
+              var colorVar = prefix + "color";
+              var alphaVar = prefix + "alpha";
   
               return [
-                'vec4 ' + texVar + ' = ' + genTexUnitSampleExpr(texUnitID) + ';',
+                "vec4 " + texVar + " = " + genTexUnitSampleExpr(texUnitID) + ";",
                 [
-                  'vec3 ' + colorVar + ' = ',
-                    passInputVar + '.rgb * (1.0 - ' + texVar + '.rgb)',
-                      ' + ',
-                    PRIM_COLOR_VARYING + '.rgb * ' + texVar + '.rgb',
-                  ';'
-                ].join(''),
-                'float ' + alphaVar + ' = ' + texVar + '.a;',
-                'vec4 ' + passOutputVar + ' = vec4(' + colorVar + ', ' + alphaVar + ');',
+                  "vec3 " + colorVar + " = ",
+                    passInputVar + ".rgb * (1.0 - " + texVar + ".rgb)",
+                      " + ",
+                    PRIM_COLOR_VARYING + ".rgb * " + texVar + ".rgb",
+                  ";"
+                ].join(""),
+                "float " + alphaVar + " = " + texVar + ".a;",
+                "vec4 " + passOutputVar + " = vec4(" + colorVar + ", " + alphaVar + ");",
               ];
             }
             case GL_COMBINE: {
-              var prefix = TEXENVJIT_NAMESPACE_PREFIX + 'env' + texUnitID + '_';
-              var colorVar = prefix + 'color';
-              var alphaVar = prefix + 'alpha';
+              var prefix = TEXENVJIT_NAMESPACE_PREFIX + 'env' + texUnitID + "_";
+              var colorVar = prefix + "color";
+              var alphaVar = prefix + "alpha";
               var colorLines = this.genCombinerLines(true, colorVar,
                                                      passInputVar, texUnitID,
                                                      this.colorCombiner, this.colorSrc, this.colorOp);
@@ -7572,24 +7543,24 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
                                                      this.alphaCombiner, this.alphaSrc, this.alphaOp);
   
               // Generate scale, but avoid generating an identity op that multiplies by one.
-              var scaledColor = (this.colorScale == 1) ? colorVar : (colorVar + ' * ' + valToFloatLiteral(this.colorScale));
-              var scaledAlpha = (this.alphaScale == 1) ? alphaVar : (alphaVar + ' * ' + valToFloatLiteral(this.alphaScale));
+              var scaledColor = (this.colorScale == 1) ? colorVar : (colorVar + " * " + valToFloatLiteral(this.colorScale));
+              var scaledAlpha = (this.alphaScale == 1) ? alphaVar : (alphaVar + " * " + valToFloatLiteral(this.alphaScale));
   
               var line = [
-                'vec4 ' + passOutputVar,
-                ' = ',
-                  'vec4(',
+                "vec4 " + passOutputVar,
+                " = ",
+                  "vec4(",
                       scaledColor,
-                      ', ',
+                      ", ",
                       scaledAlpha,
-                  ')',
-                ';',
-              ].join('');
+                  ")",
+                ";",
+              ].join("");
               return [].concat(colorLines, alphaLines, [line]);
             }
           }
   
-          return abort_noSupport('Unsupported TexEnv mode: ' + ptrToString(this.mode));
+          return abort_noSupport("Unsupported TexEnv mode: " + ptrToString(this.mode));
         }
   
         CTexEnv.prototype.genCombinerLines = function CTexEnv_getCombinerLines(isColor, outputVar,
@@ -7613,20 +7584,20 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
               break;
   
             default:
-              return abort_noSupport('Unsupported combiner: ' + ptrToString(combiner));
+              return abort_noSupport("Unsupported combiner: " + ptrToString(combiner));
           }
   
           var constantExpr = [
-            'vec4(',
+            "vec4(",
               valToFloatLiteral(this.envColor[0]),
-              ', ',
+              ", ",
               valToFloatLiteral(this.envColor[1]),
-              ', ',
+              ", ",
               valToFloatLiteral(this.envColor[2]),
-              ', ',
+              ", ",
               valToFloatLiteral(this.envColor[3]),
-            ')',
-          ].join('');
+            ")",
+          ].join("");
           var src0Expr = (argsNeeded >= 1) ? genCombinerSourceExpr(texUnitID, constantExpr, passInputVar, srcArr[0], opArr[0])
                                            : null;
           var src1Expr = (argsNeeded >= 2) ? genCombinerSourceExpr(texUnitID, constantExpr, passInputVar, srcArr[1], opArr[1])
@@ -7634,7 +7605,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           var src2Expr = (argsNeeded >= 3) ? genCombinerSourceExpr(texUnitID, constantExpr, passInputVar, srcArr[2], opArr[2])
                                            : null;
   
-          var outputType = isColor ? 'vec3' : 'float';
+          var outputType = isColor ? "vec3" : "float";
           var lines = null;
           switch (combiner) {
             case GL_REPLACE: {
@@ -7666,7 +7637,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
             }
   
             default:
-              return abort_sanity('Unmatched TexEnv.colorCombiner?');
+              return abort_sanity("Unmatched TexEnv.colorCombiner?");
           }
   
           return lines;
@@ -7704,20 +7675,20 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
               s_requiredTexUnitsForPass.push(i);
   
-              var prefix = TEXENVJIT_NAMESPACE_PREFIX + 'env' + i + '_';
-              var passOutputVar = prefix + 'result';
+              var prefix = TEXENVJIT_NAMESPACE_PREFIX + 'env' + i + "_";
+              var passOutputVar = prefix + "result";
   
               var newLines = s_texUnits[i].genPassLines(passOutputVar, lastPassVar, i);
-              lines = lines.concat(newLines, ['']);
+              lines = lines.concat(newLines, [""]);
   
               lastPassVar = passOutputVar;
             }
-            lines.push(resultDest + ' = ' + lastPassVar + ';');
+            lines.push(resultDest + " = " + lastPassVar + ";");
   
-            var indent = '';
-            for (var i = 0; i < indentSize; i++) indent += ' ';
+            var indent = "";
+            for (var i = 0; i < indentSize; i++) indent += " ";
   
-            var output = indent + lines.join('\n' + indent);
+            var output = indent + lines.join("\n" + indent);
   
             return output;
           },
@@ -8091,6 +8062,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   vertexData:null,
   vertexDataU8:null,
   tempData:null,
+  indexData:null,
   vertexCounter:0,
   mode:-1,
   rendererCache:null,
@@ -8103,6 +8075,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   matrix:[],
   matrixStack:[],
   currentMatrix:0,
+  tempMatrix:null,
   matricesModified:false,
   useTextureMatrix:false,
   VERTEX:0,
@@ -8148,7 +8121,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         if (!GLImmediate.rendererComponents[name]) {
           GLImmediate.rendererComponents[name] = 1;
           if (GLImmediate.enabledClientAttributes[name]) {
-            warnOnce('Warning: glTexCoord used after EnableClientState for TEXTURE_COORD_ARRAY for TEXTURE0. Disabling TEXTURE_COORD_ARRAY...');
+            warnOnce("Warning: glTexCoord used after EnableClientState for TEXTURE_COORD_ARRAY for TEXTURE0. Disabling TEXTURE_COORD_ARRAY...");
           }
           GLImmediate.enabledClientAttributes[name] = true;
           GLImmediate.setClientAttribute(name, size, type, 0, GLImmediate.rendererComponentPointer);
@@ -8247,7 +8220,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
           if (!useCurrProgram) {
             if (GLImmediate.TexEnvJIT.getTexUnitType(i) == 0) {
-               warnOnce('GL_TEXTURE' + i + ' coords are supplied, but that texture unit is disabled in the fixed-function pipeline.');
+               warnOnce("GL_TEXTURE" + i + " coords are supplied, but that texture unit is disabled in the fixed-function pipeline.");
             }
           }
   
@@ -8426,7 +8399,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
                   '  return fog;                 ',
                   '}',
                   '',
-                ].join('\n');
+                ].join("\n");
               }
   
               var fogPass = null;
@@ -8482,7 +8455,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
                 fsAlphaTestPass,
                 '}',
                 ''
-              ].join('\n').replace(/\n\n+/g, '\n');
+              ].join("\n").replace(/\n\n+/g, '\n');
   
               this.fragmentShader = GLctx.createShader(GLctx.FRAGMENT_SHADER);
               GLctx.shaderSource(this.fragmentShader, fsSource);
@@ -8559,7 +8532,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
             this.hasNormal = GLImmediate.enabledClientAttributes[GLImmediate.NORMAL] &&
                              GLImmediate.clientAttributes[GLImmediate.NORMAL].size > 0 &&
                              this.normalLocation >= 0;
-            this.hasColor = this.colorLocation >= 0;
+            this.hasColor = (this.colorLocation === 0) || this.colorLocation > 0;
   
             this.floatType = GLctx.FLOAT; // minor optimization
   
@@ -8633,7 +8606,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
                 GLImmediate.lastArrayBuffer = arrayBuffer;
               }
   
-              webglBufferSubData(GLctx.ARRAY_BUFFER, start, (end - start) >> 2, start >> 2, GLImmediate.vertexData);
+              GLctx.bufferSubData(GLctx.ARRAY_BUFFER, start, GLImmediate.vertexData.subarray(start >> 2, end >> 2));
             }
             if (canSkip) return;
             GLImmediate.lastRenderer = this;
@@ -8840,16 +8813,17 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           glGetIntegerv(pname, params);
         };
       },
+  initted:false,
   init() {
         err('WARNING: using emscripten GL immediate mode emulation. This is very limited in what it supports');
+        GLImmediate.initted = true;
   
         if (!Browser.useWebGL) return; // a 2D canvas may be currently used TODO: make sure we are actually called in that case
   
         // User can override the maximum number of texture units that we emulate. Using fewer texture units increases runtime performance
         // slightly, so it is advantageous to choose as small value as needed.
         // Limit to a maximum of 28 to not overflow the state bits used for renderer caching (31 bits = 3 attributes + 28 texture units).
-        var maxTextureUnits = GLctx.getParameter(GLctx.MAX_TEXTURE_IMAGE_UNITS);
-        GLImmediate.MAX_TEXTURES = Math.min(maxTextureUnits, 4);
+        GLImmediate.MAX_TEXTURES = Math.min(Module['GL_MAX_TEXTURE_IMAGE_UNITS'] || GLctx.getParameter(GLctx.MAX_TEXTURE_IMAGE_UNITS), 4);
   
         GLImmediate.TexEnvJIT.init(GLctx, GLImmediate.MAX_TEXTURES);
   
@@ -8879,6 +8853,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
         // Buffers for data
         GLImmediate.tempData = new Float32Array(GL.MAX_TEMP_BUFFER_SIZE >> 2);
+        GLImmediate.indexData = new Uint16Array(GL.MAX_TEMP_BUFFER_SIZE >> 1);
   
         GLImmediate.vertexDataU8 = new Uint8Array(GLImmediate.tempData.buffer);
   
@@ -9001,7 +8976,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // Generate index data in a format suitable for GLES 2.0/WebGL
         var numVertices = 4 * GLImmediate.vertexCounter / GLImmediate.stride;
         if (!numVertices) return;
-        assert(numVertices % 1 == 0, '`numVertices` must be an integer.');
+        assert(numVertices % 1 == 0, "`numVertices` must be an integer.");
         var emulatedElementArrayBuffer = false;
         var numIndexes = 0;
         if (numProvidedIndexes) {
@@ -9012,7 +8987,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
             // upload based on the indices. If they are in a buffer on the GPU, that is very
             // inconvenient! So if you do not have an array buffer, you should also not have
             // an element array buffer. But best is to use both buffers!
-            assert(!GLctx.currentElementArrayBufferBinding, 'must use array buffers when using element buffer');
+            assert(!GLctx.currentElementArrayBufferBinding);
             for (var i = 0; i < numProvidedIndexes; i++) {
               var currIndex = HEAPU16[(((ptr)+(i*2))>>1)];
               GLImmediate.firstVertex = Math.min(GLImmediate.firstVertex, currIndex);
@@ -9021,16 +8996,15 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           }
           if (!GLctx.currentElementArrayBufferBinding) {
             // If no element array buffer is bound, then indices is a literal pointer to clientside data
-            var byteSize = numProvidedIndexes << 1;
-            assert(byteSize <= GL.MAX_TEMP_BUFFER_SIZE, 'too many immediate mode indexes (a)');
-            var indexBuffer = GL.getTempIndexBuffer(byteSize);
+            assert(numProvidedIndexes << 1 <= GL.MAX_TEMP_BUFFER_SIZE, 'too many immediate mode indexes (a)');
+            var indexBuffer = GL.getTempIndexBuffer(numProvidedIndexes << 1);
             GLctx.bindBuffer(GLctx.ELEMENT_ARRAY_BUFFER, indexBuffer);
-            webglBufferSubData(GLctx.ELEMENT_ARRAY_BUFFER, 0, byteSize, ptr);
+            GLctx.bufferSubData(GLctx.ELEMENT_ARRAY_BUFFER, 0, HEAPU16.subarray((((ptr)>>1)), ((ptr + (numProvidedIndexes << 1))>>1)));
             ptr = 0;
             emulatedElementArrayBuffer = true;
           }
         } else if (GLImmediate.mode > 6) { // above GL_TRIANGLE_FAN are the non-GL ES modes
-          if (GLImmediate.mode != 7) abort('unsupported immediate mode ' + GLImmediate.mode); // GL_QUADS
+          if (GLImmediate.mode != 7) throw 'unsupported immediate mode ' + GLImmediate.mode; // GL_QUADS
           // GLImmediate.firstVertex is the first vertex we want. Quad indexes are
           // in the pattern 0 1 2, 0 2 3, 4 5 6, 4 6 7, so we need to look at
           // index firstVertex * 1.5 to see it.  Then since indexes are 2 bytes
@@ -9062,77 +9036,77 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   GLImmediate.matrixLib = (() => {
   
   /**
- * @fileoverview gl-matrix - High performance matrix and vector operations for WebGL
- * @author Brandon Jones
- * @version 1.2.4
- */
+   * @fileoverview gl-matrix - High performance matrix and vector operations for WebGL
+   * @author Brandon Jones
+   * @version 1.2.4
+   */
   
   // Modified for emscripten:
   // - Global scoping etc.
   // - Disabled some non-closure-compatible javadoc comments.
   
   /*
- * Copyright (c) 2011 Brandon Jones
- *
- * This software is provided 'as-is', without any express or implied
- * warranty. In no event will the authors be held liable for any damages
- * arising from the use of this software.
- *
- * Permission is granted to anyone to use this software for any purpose,
- * including commercial applications, and to alter it and redistribute it
- * freely, subject to the following restrictions:
- *
- *    1. The origin of this software must not be misrepresented; you must not
- *    claim that you wrote the original software. If you use this software
- *    in a product, an acknowledgment in the product documentation would be
- *    appreciated but is not required.
- *
- *    2. Altered source versions must be plainly marked as such, and must not
- *    be misrepresented as being the original software.
- *
- *    3. This notice may not be removed or altered from any source
- *    distribution.
- */
+   * Copyright (c) 2011 Brandon Jones
+   *
+   * This software is provided 'as-is', without any express or implied
+   * warranty. In no event will the authors be held liable for any damages
+   * arising from the use of this software.
+   *
+   * Permission is granted to anyone to use this software for any purpose,
+   * including commercial applications, and to alter it and redistribute it
+   * freely, subject to the following restrictions:
+   *
+   *    1. The origin of this software must not be misrepresented; you must not
+   *    claim that you wrote the original software. If you use this software
+   *    in a product, an acknowledgment in the product documentation would be
+   *    appreciated but is not required.
+   *
+   *    2. Altered source versions must be plainly marked as such, and must not
+   *    be misrepresented as being the original software.
+   *
+   *    3. This notice may not be removed or altered from any source
+   *    distribution.
+   */
   
   
   /**
- * @class 3 Dimensional Vector
- * @name vec3
- */
+   * @class 3 Dimensional Vector
+   * @name vec3
+   */
   var vec3 = {};
   
   /**
- * @class 3x3 Matrix
- * @name mat3
- */
+   * @class 3x3 Matrix
+   * @name mat3
+   */
   var mat3 = {};
   
   /**
- * @class 4x4 Matrix
- * @name mat4
- */
+   * @class 4x4 Matrix
+   * @name mat4
+   */
   var mat4 = {};
   
   /**
- * @class Quaternion
- * @name quat4
- */
+   * @class Quaternion
+   * @name quat4
+   */
   var quat4 = {};
   
   var MatrixArray = Float32Array;
   
   /*
- * vec3
- */
+   * vec3
+   */
   
   /**
- * Creates a new instance of a vec3 using the default array type
- * Any javascript array-like objects containing at least 3 numeric elements can serve as a vec3
- *
- * _param {vec3} [vec] vec3 containing values to initialize with
- *
- * _returns {vec3} New vec3
- */
+   * Creates a new instance of a vec3 using the default array type
+   * Any javascript array-like objects containing at least 3 numeric elements can serve as a vec3
+   *
+   * _param {vec3} [vec] vec3 containing values to initialize with
+   *
+   * _returns {vec3} New vec3
+   */
   vec3.create = function (vec) {
       var dest = new MatrixArray(3);
   
@@ -9148,13 +9122,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Copies the values of one vec3 to another
- *
- * _param {vec3} vec vec3 containing values to copy
- * _param {vec3} dest vec3 receiving copied values
- *
- * _returns {vec3} dest
- */
+   * Copies the values of one vec3 to another
+   *
+   * _param {vec3} vec vec3 containing values to copy
+   * _param {vec3} dest vec3 receiving copied values
+   *
+   * _returns {vec3} dest
+   */
   vec3.set = function (vec, dest) {
       dest[0] = vec[0];
       dest[1] = vec[1];
@@ -9164,14 +9138,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Performs a vector addition
- *
- * _param {vec3} vec First operand
- * _param {vec3} vec2 Second operand
- * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
- *
- * _returns {vec3} dest if specified, vec otherwise
- */
+   * Performs a vector addition
+   *
+   * _param {vec3} vec First operand
+   * _param {vec3} vec2 Second operand
+   * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
+   *
+   * _returns {vec3} dest if specified, vec otherwise
+   */
   vec3.add = function (vec, vec2, dest) {
       if (!dest || vec === dest) {
           vec[0] += vec2[0];
@@ -9187,14 +9161,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Performs a vector subtraction
- *
- * _param {vec3} vec First operand
- * _param {vec3} vec2 Second operand
- * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
- *
- * _returns {vec3} dest if specified, vec otherwise
- */
+   * Performs a vector subtraction
+   *
+   * _param {vec3} vec First operand
+   * _param {vec3} vec2 Second operand
+   * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
+   *
+   * _returns {vec3} dest if specified, vec otherwise
+   */
   vec3.subtract = function (vec, vec2, dest) {
       if (!dest || vec === dest) {
           vec[0] -= vec2[0];
@@ -9210,14 +9184,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Performs a vector multiplication
- *
- * _param {vec3} vec First operand
- * _param {vec3} vec2 Second operand
- * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
- *
- * _returns {vec3} dest if specified, vec otherwise
- */
+   * Performs a vector multiplication
+   *
+   * _param {vec3} vec First operand
+   * _param {vec3} vec2 Second operand
+   * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
+   *
+   * _returns {vec3} dest if specified, vec otherwise
+   */
   vec3.multiply = function (vec, vec2, dest) {
       if (!dest || vec === dest) {
           vec[0] *= vec2[0];
@@ -9233,13 +9207,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Negates the components of a vec3
- *
- * _param {vec3} vec vec3 to negate
- * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
- *
- * _returns {vec3} dest if specified, vec otherwise
- */
+   * Negates the components of a vec3
+   *
+   * _param {vec3} vec vec3 to negate
+   * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
+   *
+   * _returns {vec3} dest if specified, vec otherwise
+   */
   vec3.negate = function (vec, dest) {
       if (!dest) { dest = vec; }
   
@@ -9250,14 +9224,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Multiplies the components of a vec3 by a scalar value
- *
- * _param {vec3} vec vec3 to scale
- * _param {number} val Value to scale by
- * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
- *
- * _returns {vec3} dest if specified, vec otherwise
- */
+   * Multiplies the components of a vec3 by a scalar value
+   *
+   * _param {vec3} vec vec3 to scale
+   * _param {number} val Value to scale by
+   * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
+   *
+   * _returns {vec3} dest if specified, vec otherwise
+   */
   vec3.scale = function (vec, val, dest) {
       if (!dest || vec === dest) {
           vec[0] *= val;
@@ -9273,14 +9247,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Generates a unit vector of the same direction as the provided vec3
- * If vector length is 0, returns [0, 0, 0]
- *
- * _param {vec3} vec vec3 to normalize
- * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
- *
- * _returns {vec3} dest if specified, vec otherwise
- */
+   * Generates a unit vector of the same direction as the provided vec3
+   * If vector length is 0, returns [0, 0, 0]
+   *
+   * _param {vec3} vec vec3 to normalize
+   * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
+   *
+   * _returns {vec3} dest if specified, vec otherwise
+   */
   vec3.normalize = function (vec, dest) {
       if (!dest) { dest = vec; }
   
@@ -9307,14 +9281,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Generates the cross product of two vec3s
- *
- * _param {vec3} vec First operand
- * _param {vec3} vec2 Second operand
- * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
- *
- * _returns {vec3} dest if specified, vec otherwise
- */
+   * Generates the cross product of two vec3s
+   *
+   * _param {vec3} vec First operand
+   * _param {vec3} vec2 Second operand
+   * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
+   *
+   * _returns {vec3} dest if specified, vec otherwise
+   */
   vec3.cross = function (vec, vec2, dest) {
       if (!dest) { dest = vec; }
   
@@ -9328,38 +9302,38 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Calculates the length of a vec3
- *
- * _param {vec3} vec vec3 to calculate length of
- *
- * _returns {number} Length of vec
- */
+   * Calculates the length of a vec3
+   *
+   * _param {vec3} vec vec3 to calculate length of
+   *
+   * _returns {number} Length of vec
+   */
   vec3.length = function (vec) {
       var x = vec[0], y = vec[1], z = vec[2];
       return Math.sqrt(x * x + y * y + z * z);
   };
   
   /**
- * Calculates the dot product of two vec3s
- *
- * _param {vec3} vec First operand
- * _param {vec3} vec2 Second operand
- *
- * _returns {number} Dot product of vec and vec2
- */
+   * Calculates the dot product of two vec3s
+   *
+   * _param {vec3} vec First operand
+   * _param {vec3} vec2 Second operand
+   *
+   * _returns {number} Dot product of vec and vec2
+   */
   vec3.dot = function (vec, vec2) {
       return vec[0] * vec2[0] + vec[1] * vec2[1] + vec[2] * vec2[2];
   };
   
   /**
- * Generates a unit vector pointing from one vector to another
- *
- * _param {vec3} vec Origin vec3
- * _param {vec3} vec2 vec3 to point to
- * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
- *
- * _returns {vec3} dest if specified, vec otherwise
- */
+   * Generates a unit vector pointing from one vector to another
+   *
+   * _param {vec3} vec Origin vec3
+   * _param {vec3} vec2 vec3 to point to
+   * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
+   *
+   * _returns {vec3} dest if specified, vec otherwise
+   */
   vec3.direction = function (vec, vec2, dest) {
       if (!dest) { dest = vec; }
   
@@ -9383,15 +9357,15 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Performs a linear interpolation between two vec3
- *
- * _param {vec3} vec First vector
- * _param {vec3} vec2 Second vector
- * _param {number} lerp Interpolation amount between the two inputs
- * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
- *
- * _returns {vec3} dest if specified, vec otherwise
- */
+   * Performs a linear interpolation between two vec3
+   *
+   * _param {vec3} vec First vector
+   * _param {vec3} vec2 Second vector
+   * _param {number} lerp Interpolation amount between the two inputs
+   * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
+   *
+   * _returns {vec3} dest if specified, vec otherwise
+   */
   vec3.lerp = function (vec, vec2, lerp, dest) {
       if (!dest) { dest = vec; }
   
@@ -9403,14 +9377,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Calculates the euclidean distance between two vec3
- *
- * Params:
- * _param {vec3} vec First vector
- * _param {vec3} vec2 Second vector
- *
- * _returns {number} Distance between vec and vec2
- */
+   * Calculates the euclidean distance between two vec3
+   *
+   * Params:
+   * _param {vec3} vec First vector
+   * _param {vec3} vec2 Second vector
+   *
+   * _returns {number} Distance between vec and vec2
+   */
   vec3.dist = function (vec, vec2) {
       var x = vec2[0] - vec[0],
           y = vec2[1] - vec[1],
@@ -9420,17 +9394,17 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Projects the specified vec3 from screen space into object space
- * Based on the <a href="http://webcvs.freedesktop.org/mesa/Mesa/src/glu/mesa/project.c?revision=1.4&view=markup">Mesa gluUnProject implementation</a>
- *
- * _param {vec3} vec Screen-space vector to project
- * _param {mat4} view View matrix
- * _param {mat4} proj Projection matrix
- * _param {vec4} viewport Viewport as given to gl.viewport [x, y, width, height]
- * _param {vec3} [dest] vec3 receiving unprojected result. If not specified result is written to vec
- *
- * _returns {vec3} dest if specified, vec otherwise
- */
+   * Projects the specified vec3 from screen space into object space
+   * Based on the <a href="http://webcvs.freedesktop.org/mesa/Mesa/src/glu/mesa/project.c?revision=1.4&view=markup">Mesa gluUnProject implementation</a>
+   *
+   * _param {vec3} vec Screen-space vector to project
+   * _param {mat4} view View matrix
+   * _param {mat4} proj Projection matrix
+   * _param {vec4} viewport Viewport as given to gl.viewport [x, y, width, height]
+   * _param {vec3} [dest] vec3 receiving unprojected result. If not specified result is written to vec
+   *
+   * _returns {vec3} dest if specified, vec otherwise
+   */
   vec3.unproject = function (vec, view, proj, viewport, dest) {
       if (!dest) { dest = vec; }
   
@@ -9456,30 +9430,30 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Returns a string representation of a vector
- *
- * _param {vec3} vec Vector to represent as a string
- *
- * _returns {string} String representation of vec
- */
+   * Returns a string representation of a vector
+   *
+   * _param {vec3} vec Vector to represent as a string
+   *
+   * _returns {string} String representation of vec
+   */
   vec3.str = function (vec) {
       return '[' + vec[0] + ', ' + vec[1] + ', ' + vec[2] + ']';
   };
   
   /*
- * mat3
- */
+   * mat3
+   */
   
   /**
- * Creates a new instance of a mat3 using the default array type
- * Any javascript array-like object containing at least 9 numeric elements can serve as a mat3
- *
- * _param {mat3} [mat] mat3 containing values to initialize with
- *
- * _returns {mat3} New mat3
- *
- * @param {Object=} mat
- */
+   * Creates a new instance of a mat3 using the default array type
+   * Any javascript array-like object containing at least 9 numeric elements can serve as a mat3
+   *
+   * _param {mat3} [mat] mat3 containing values to initialize with
+   *
+   * _returns {mat3} New mat3
+   *
+   * @param {Object=} mat
+   */
   mat3.create = function (mat) {
       var dest = new MatrixArray(9);
   
@@ -9499,13 +9473,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Copies the values of one mat3 to another
- *
- * _param {mat3} mat mat3 containing values to copy
- * _param {mat3} dest mat3 receiving copied values
- *
- * _returns {mat3} dest
- */
+   * Copies the values of one mat3 to another
+   *
+   * _param {mat3} mat mat3 containing values to copy
+   * _param {mat3} dest mat3 receiving copied values
+   *
+   * _returns {mat3} dest
+   */
   mat3.set = function (mat, dest) {
       dest[0] = mat[0];
       dest[1] = mat[1];
@@ -9520,12 +9494,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Sets a mat3 to an identity matrix
- *
- * _param {mat3} dest mat3 to set
- *
- * _returns dest if specified, otherwise a new mat3
- */
+   * Sets a mat3 to an identity matrix
+   *
+   * _param {mat3} dest mat3 to set
+   *
+   * _returns dest if specified, otherwise a new mat3
+   */
   mat3.identity = function (dest) {
       if (!dest) { dest = mat3.create(); }
       dest[0] = 1;
@@ -9541,12 +9515,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Transposes a mat3 (flips the values over the diagonal)
- *
- * Params:
- * _param {mat3} mat mat3 to transpose
- * _param {mat3} [dest] mat3 receiving transposed values. If not specified result is written to mat
- */
+   * Transposes a mat3 (flips the values over the diagonal)
+   *
+   * Params:
+   * _param {mat3} mat mat3 to transpose
+   * _param {mat3} [dest] mat3 receiving transposed values. If not specified result is written to mat
+   */
   mat3.transpose = function (mat, dest) {
       // If we are transposing ourselves we can skip a few steps but have to cache some values
       if (!dest || mat === dest) {
@@ -9575,13 +9549,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Copies the elements of a mat3 into the upper 3x3 elements of a mat4
- *
- * _param {mat3} mat mat3 containing values to copy
- * _param {mat4} [dest] mat4 receiving copied values
- *
- * _returns {mat4} dest if specified, a new mat4 otherwise
- */
+   * Copies the elements of a mat3 into the upper 3x3 elements of a mat4
+   *
+   * _param {mat3} mat mat3 containing values to copy
+   * _param {mat4} [dest] mat4 receiving copied values
+   *
+   * _returns {mat4} dest if specified, a new mat4 otherwise
+   */
   mat3.toMat4 = function (mat, dest) {
       if (!dest) { dest = mat4.create(); }
   
@@ -9609,12 +9583,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Returns a string representation of a mat3
- *
- * _param {mat3} mat mat3 to represent as a string
- *
- * _param {string} String representation of mat
- */
+   * Returns a string representation of a mat3
+   *
+   * _param {mat3} mat mat3 to represent as a string
+   *
+   * _param {string} String representation of mat
+   */
   mat3.str = function (mat) {
       return '[' + mat[0] + ', ' + mat[1] + ', ' + mat[2] +
           ', ' + mat[3] + ', ' + mat[4] + ', ' + mat[5] +
@@ -9622,19 +9596,19 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /*
- * mat4
- */
+   * mat4
+   */
   
   /**
- * Creates a new instance of a mat4 using the default array type
- * Any javascript array-like object containing at least 16 numeric elements can serve as a mat4
- *
- * _param {mat4} [mat] mat4 containing values to initialize with
- *
- * _returns {mat4} New mat4
- *
- * @param {Object=} mat
- */
+   * Creates a new instance of a mat4 using the default array type
+   * Any javascript array-like object containing at least 16 numeric elements can serve as a mat4
+   *
+   * _param {mat4} [mat] mat4 containing values to initialize with
+   *
+   * _returns {mat4} New mat4
+   *
+   * @param {Object=} mat
+   */
   mat4.create = function (mat) {
       var dest = new MatrixArray(16);
   
@@ -9661,13 +9635,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Copies the values of one mat4 to another
- *
- * _param {mat4} mat mat4 containing values to copy
- * _param {mat4} dest mat4 receiving copied values
- *
- * _returns {mat4} dest
- */
+   * Copies the values of one mat4 to another
+   *
+   * _param {mat4} mat mat4 containing values to copy
+   * _param {mat4} dest mat4 receiving copied values
+   *
+   * _returns {mat4} dest
+   */
   mat4.set = function (mat, dest) {
       dest[0] = mat[0];
       dest[1] = mat[1];
@@ -9689,12 +9663,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Sets a mat4 to an identity matrix
- *
- * _param {mat4} dest mat4 to set
- *
- * _returns {mat4} dest
- */
+   * Sets a mat4 to an identity matrix
+   *
+   * _param {mat4} dest mat4 to set
+   *
+   * _returns {mat4} dest
+   */
   mat4.identity = function (dest) {
       if (!dest) { dest = mat4.create(); }
       dest[0] = 1;
@@ -9717,11 +9691,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Transposes a mat4 (flips the values over the diagonal)
- *
- * _param {mat4} mat mat4 to transpose
- * _param {mat4} [dest] mat4 receiving transposed values. If not specified result is written to mat
- */
+   * Transposes a mat4 (flips the values over the diagonal)
+   *
+   * _param {mat4} mat mat4 to transpose
+   * _param {mat4} [dest] mat4 receiving transposed values. If not specified result is written to mat
+   */
   mat4.transpose = function (mat, dest) {
       // If we are transposing ourselves we can skip a few steps but have to cache some values
       if (!dest || mat === dest) {
@@ -9764,12 +9738,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Calculates the determinant of a mat4
- *
- * _param {mat4} mat mat4 to calculate determinant of
- *
- * _returns {number} determinant of mat
- */
+   * Calculates the determinant of a mat4
+   *
+   * _param {mat4} mat mat4 to calculate determinant of
+   *
+   * _returns {number} determinant of mat
+   */
   mat4.determinant = function (mat) {
       // Cache the matrix values (makes for huge speed increases!)
       var a00 = mat[0], a01 = mat[1], a02 = mat[2], a03 = mat[3],
@@ -9786,13 +9760,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Calculates the inverse matrix of a mat4
- *
- * _param {mat4} mat mat4 to calculate inverse of
- * _param {mat4} [dest] mat4 receiving inverse matrix. If not specified result is written to mat, null if matrix cannot be inverted
- *
- * @param {Object=} dest
- */
+   * Calculates the inverse matrix of a mat4
+   *
+   * _param {mat4} mat mat4 to calculate inverse of
+   * _param {mat4} [dest] mat4 receiving inverse matrix. If not specified result is written to mat, null if matrix cannot be inverted
+   *
+   * @param {Object=} dest
+   */
   mat4.inverse = function (mat, dest) {
       if (!dest) { dest = mat; }
   
@@ -9843,13 +9817,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Copies the upper 3x3 elements of a mat4 into another mat4
- *
- * _param {mat4} mat mat4 containing values to copy
- * _param {mat4} [dest] mat4 receiving copied values
- *
- * _returns {mat4} dest is specified, a new mat4 otherwise
- */
+   * Copies the upper 3x3 elements of a mat4 into another mat4
+   *
+   * _param {mat4} mat mat4 containing values to copy
+   * _param {mat4} [dest] mat4 receiving copied values
+   *
+   * _returns {mat4} dest is specified, a new mat4 otherwise
+   */
   mat4.toRotationMat = function (mat, dest) {
       if (!dest) { dest = mat4.create(); }
   
@@ -9874,13 +9848,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Copies the upper 3x3 elements of a mat4 into a mat3
- *
- * _param {mat4} mat mat4 containing values to copy
- * _param {mat3} [dest] mat3 receiving copied values
- *
- * _returns {mat3} dest is specified, a new mat3 otherwise
- */
+   * Copies the upper 3x3 elements of a mat4 into a mat3
+   *
+   * _param {mat4} mat mat4 containing values to copy
+   * _param {mat3} [dest] mat3 receiving copied values
+   *
+   * _returns {mat3} dest is specified, a new mat3 otherwise
+   */
   mat4.toMat3 = function (mat, dest) {
       if (!dest) { dest = mat3.create(); }
   
@@ -9898,15 +9872,15 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Calculates the inverse of the upper 3x3 elements of a mat4 and copies the result into a mat3
- * The resulting matrix is useful for calculating transformed normals
- *
- * Params:
- * _param {mat4} mat mat4 containing values to invert and copy
- * _param {mat3} [dest] mat3 receiving values
- *
- * _returns {mat3} dest is specified, a new mat3 otherwise, null if the matrix cannot be inverted
- */
+   * Calculates the inverse of the upper 3x3 elements of a mat4 and copies the result into a mat3
+   * The resulting matrix is useful for calculating transformed normals
+   *
+   * Params:
+   * _param {mat4} mat mat4 containing values to invert and copy
+   * _param {mat3} [dest] mat3 receiving values
+   *
+   * _returns {mat3} dest is specified, a new mat3 otherwise, null if the matrix cannot be inverted
+   */
   mat4.toInverseMat3 = function (mat, dest) {
       // Cache the matrix values (makes for huge speed increases!)
       var a00 = mat[0], a01 = mat[1], a02 = mat[2],
@@ -9939,12 +9913,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Performs a matrix multiplication
- *
- * _param {mat4} mat First operand
- * _param {mat4} mat2 Second operand
- * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to mat
- */
+   * Performs a matrix multiplication
+   *
+   * _param {mat4} mat First operand
+   * _param {mat4} mat2 Second operand
+   * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to mat
+   */
   mat4.multiply = function (mat, mat2, dest) {
       if (!dest) { dest = mat; }
   
@@ -9980,15 +9954,15 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Transforms a vec3 with the given matrix
- * 4th vector component is implicitly '1'
- *
- * _param {mat4} mat mat4 to transform the vector with
- * _param {vec3} vec vec3 to transform
- * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
- *
- * _returns {vec3} dest if specified, vec otherwise
- */
+   * Transforms a vec3 with the given matrix
+   * 4th vector component is implicitly '1'
+   *
+   * _param {mat4} mat mat4 to transform the vector with
+   * _param {vec3} vec vec3 to transform
+   * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
+   *
+   * _returns {vec3} dest if specified, vec otherwise
+   */
   mat4.multiplyVec3 = function (mat, vec, dest) {
       if (!dest) { dest = vec; }
   
@@ -10002,16 +9976,16 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Transforms a vec4 with the given matrix
- *
- * _param {mat4} mat mat4 to transform the vector with
- * _param {vec4} vec vec4 to transform
- * _param {vec4} [dest] vec4 receiving operation result. If not specified result is written to vec
- *
- * _returns {vec4} dest if specified, vec otherwise
- *
- * @param {Object=} dest
- */
+   * Transforms a vec4 with the given matrix
+   *
+   * _param {mat4} mat mat4 to transform the vector with
+   * _param {vec4} vec vec4 to transform
+   * _param {vec4} [dest] vec4 receiving operation result. If not specified result is written to vec
+   *
+   * _returns {vec4} dest if specified, vec otherwise
+   *
+   * @param {Object=} dest
+   */
   mat4.multiplyVec4 = function (mat, vec, dest) {
       if (!dest) { dest = vec; }
   
@@ -10026,12 +10000,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Translates a matrix by the given vector
- *
- * _param {mat4} mat mat4 to translate
- * _param {vec3} vec vec3 specifying the translation
- * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to mat
- */
+   * Translates a matrix by the given vector
+   *
+   * _param {mat4} mat mat4 to translate
+   * _param {vec3} vec vec3 specifying the translation
+   * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to mat
+   */
   mat4.translate = function (mat, vec, dest) {
       var x = vec[0], y = vec[1], z = vec[2],
           a00, a01, a02, a03,
@@ -10062,12 +10036,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Scales a matrix by the given vector
- *
- * _param {mat4} mat mat4 to scale
- * _param {vec3} vec vec3 specifying the scale for each axis
- * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to mat
- */
+   * Scales a matrix by the given vector
+   *
+   * _param {mat4} mat mat4 to scale
+   * _param {vec3} vec vec3 specifying the scale for each axis
+   * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to mat
+   */
   mat4.scale = function (mat, vec, dest) {
       var x = vec[0], y = vec[1], z = vec[2];
   
@@ -10107,14 +10081,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Rotates a matrix by the given angle around the specified axis
- * If rotating around a primary axis (X,Y,Z) one of the specialized rotation functions should be used instead for performance
- *
- * _param {mat4} mat mat4 to rotate
- * _param {number} angle Angle (in radians) to rotate
- * _param {vec3} axis vec3 representing the axis to rotate around
- * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to mat
- */
+   * Rotates a matrix by the given angle around the specified axis
+   * If rotating around a primary axis (X,Y,Z) one of the specialized rotation functions should be used instead for performance
+   *
+   * _param {mat4} mat mat4 to rotate
+   * _param {number} angle Angle (in radians) to rotate
+   * _param {vec3} axis vec3 representing the axis to rotate around
+   * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to mat
+   */
   mat4.rotate = function (mat, angle, axis, dest) {
       var x = axis[0], y = axis[1], z = axis[2],
           len = Math.sqrt(x * x + y * y + z * z),
@@ -10175,12 +10149,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Rotates a matrix by the given angle around the X axis
- *
- * _param {mat4} mat mat4 to rotate
- * _param {number} angle Angle (in radians) to rotate
- * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to mat
- */
+   * Rotates a matrix by the given angle around the X axis
+   *
+   * _param {mat4} mat mat4 to rotate
+   * _param {number} angle Angle (in radians) to rotate
+   * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to mat
+   */
   mat4.rotateX = function (mat, angle, dest) {
       var s = Math.sin(angle),
           c = Math.cos(angle),
@@ -10221,12 +10195,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Rotates a matrix by the given angle around the Y axis
- *
- * _param {mat4} mat mat4 to rotate
- * _param {number} angle Angle (in radians) to rotate
- * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to mat
- */
+   * Rotates a matrix by the given angle around the Y axis
+   *
+   * _param {mat4} mat mat4 to rotate
+   * _param {number} angle Angle (in radians) to rotate
+   * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to mat
+   */
   mat4.rotateY = function (mat, angle, dest) {
       var s = Math.sin(angle),
           c = Math.cos(angle),
@@ -10267,12 +10241,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Rotates a matrix by the given angle around the Z axis
- *
- * _param {mat4} mat mat4 to rotate
- * _param {number} angle Angle (in radians) to rotate
- * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to mat
- */
+   * Rotates a matrix by the given angle around the Z axis
+   *
+   * _param {mat4} mat mat4 to rotate
+   * _param {number} angle Angle (in radians) to rotate
+   * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to mat
+   */
   mat4.rotateZ = function (mat, angle, dest) {
       var s = Math.sin(angle),
           c = Math.cos(angle),
@@ -10314,18 +10288,18 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Generates a frustum matrix with the given bounds
- *
- * _param {number} left Left bound of the frustum
- * _param {number} right Right bound of the frustum
- * _param {number} bottom Bottom bound of the frustum
- * _param {number} top Top bound of the frustum
- * _param {number} near Near bound of the frustum
- * _param {number} far Far bound of the frustum
- * _param {mat4} [dest] mat4 frustum matrix will be written into
- *
- * _returns {mat4} dest if specified, a new mat4 otherwise
- */
+   * Generates a frustum matrix with the given bounds
+   *
+   * _param {number} left Left bound of the frustum
+   * _param {number} right Right bound of the frustum
+   * _param {number} bottom Bottom bound of the frustum
+   * _param {number} top Top bound of the frustum
+   * _param {number} near Near bound of the frustum
+   * _param {number} far Far bound of the frustum
+   * _param {mat4} [dest] mat4 frustum matrix will be written into
+   *
+   * _returns {mat4} dest if specified, a new mat4 otherwise
+   */
   mat4.frustum = function (left, right, bottom, top, near, far, dest) {
       if (!dest) { dest = mat4.create(); }
       var rl = (right - left),
@@ -10351,16 +10325,16 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Generates a perspective projection matrix with the given bounds
- *
- * _param {number} fovy Vertical field of view
- * _param {number} aspect Aspect ratio. typically viewport width/height
- * _param {number} near Near bound of the frustum
- * _param {number} far Far bound of the frustum
- * _param {mat4} [dest] mat4 frustum matrix will be written into
- *
- * _returns {mat4} dest if specified, a new mat4 otherwise
- */
+   * Generates a perspective projection matrix with the given bounds
+   *
+   * _param {number} fovy Vertical field of view
+   * _param {number} aspect Aspect ratio. typically viewport width/height
+   * _param {number} near Near bound of the frustum
+   * _param {number} far Far bound of the frustum
+   * _param {mat4} [dest] mat4 frustum matrix will be written into
+   *
+   * _returns {mat4} dest if specified, a new mat4 otherwise
+   */
   mat4.perspective = function (fovy, aspect, near, far, dest) {
       var top = near * Math.tan(fovy * Math.PI / 360.0),
           right = top * aspect;
@@ -10368,18 +10342,18 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Generates a orthogonal projection matrix with the given bounds
- *
- * _param {number} left Left bound of the frustum
- * _param {number} right Right bound of the frustum
- * _param {number} bottom Bottom bound of the frustum
- * _param {number} top Top bound of the frustum
- * _param {number} near Near bound of the frustum
- * _param {number} far Far bound of the frustum
- * _param {mat4} [dest] mat4 frustum matrix will be written into
- *
- * _returns {mat4} dest if specified, a new mat4 otherwise
- */
+   * Generates a orthogonal projection matrix with the given bounds
+   *
+   * _param {number} left Left bound of the frustum
+   * _param {number} right Right bound of the frustum
+   * _param {number} bottom Bottom bound of the frustum
+   * _param {number} top Top bound of the frustum
+   * _param {number} near Near bound of the frustum
+   * _param {number} far Far bound of the frustum
+   * _param {mat4} [dest] mat4 frustum matrix will be written into
+   *
+   * _returns {mat4} dest if specified, a new mat4 otherwise
+   */
   mat4.ortho = function (left, right, bottom, top, near, far, dest) {
       if (!dest) { dest = mat4.create(); }
       var rl = (right - left),
@@ -10405,15 +10379,15 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Generates a look-at matrix with the given eye position, focal point, and up axis
- *
- * _param {vec3} eye Position of the viewer
- * _param {vec3} center Point the viewer is looking at
- * _param {vec3} up vec3 pointing "up"
- * _param {mat4} [dest] mat4 frustum matrix will be written into
- *
- * _returns {mat4} dest if specified, a new mat4 otherwise
- */
+   * Generates a look-at matrix with the given eye position, focal point, and up axis
+   *
+   * _param {vec3} eye Position of the viewer
+   * _param {vec3} center Point the viewer is looking at
+   * _param {vec3} up vec3 pointing "up"
+   * _param {mat4} [dest] mat4 frustum matrix will be written into
+   *
+   * _returns {mat4} dest if specified, a new mat4 otherwise
+   */
   mat4.lookAt = function (eye, center, up, dest) {
       if (!dest) { dest = mat4.create(); }
   
@@ -10497,21 +10471,21 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Creates a matrix from a quaternion rotation and vector translation
- * This is equivalent to (but much faster than):
- *
- *     mat4.identity(dest);
- *     mat4.translate(dest, vec);
- *     var quatMat = mat4.create();
- *     quat4.toMat4(quat, quatMat);
- *     mat4.multiply(dest, quatMat);
- *
- * _param {quat4} quat Rotation quaternion
- * _param {vec3} vec Translation vector
- * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to a new mat4
- *
- * _returns {mat4} dest if specified, a new mat4 otherwise
- */
+   * Creates a matrix from a quaternion rotation and vector translation
+   * This is equivalent to (but much faster than):
+   *
+   *     mat4.identity(dest);
+   *     mat4.translate(dest, vec);
+   *     var quatMat = mat4.create();
+   *     quat4.toMat4(quat, quatMat);
+   *     mat4.multiply(dest, quatMat);
+   *
+   * _param {quat4} quat Rotation quaternion
+   * _param {vec3} vec Translation vector
+   * _param {mat4} [dest] mat4 receiving operation result. If not specified result is written to a new mat4
+   *
+   * _returns {mat4} dest if specified, a new mat4 otherwise
+   */
   mat4.fromRotationTranslation = function (quat, vec, dest) {
       if (!dest) { dest = mat4.create(); }
   
@@ -10552,12 +10526,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Returns a string representation of a mat4
- *
- * _param {mat4} mat mat4 to represent as a string
- *
- * _returns {string} String representation of mat
- */
+   * Returns a string representation of a mat4
+   *
+   * _param {mat4} mat mat4 to represent as a string
+   *
+   * _returns {string} String representation of mat
+   */
   mat4.str = function (mat) {
       return '[' + mat[0] + ', ' + mat[1] + ', ' + mat[2] + ', ' + mat[3] +
           ', ' + mat[4] + ', ' + mat[5] + ', ' + mat[6] + ', ' + mat[7] +
@@ -10566,17 +10540,17 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /*
- * quat4
- */
+   * quat4
+   */
   
   /**
- * Creates a new instance of a quat4 using the default array type
- * Any javascript array containing at least 4 numeric elements can serve as a quat4
- *
- * _param {quat4} [quat] quat4 containing values to initialize with
- *
- * _returns {quat4} New quat4
- */
+   * Creates a new instance of a quat4 using the default array type
+   * Any javascript array containing at least 4 numeric elements can serve as a quat4
+   *
+   * _param {quat4} [quat] quat4 containing values to initialize with
+   *
+   * _returns {quat4} New quat4
+   */
   quat4.create = function (quat) {
       var dest = new MatrixArray(4);
   
@@ -10591,13 +10565,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Copies the values of one quat4 to another
- *
- * _param {quat4} quat quat4 containing values to copy
- * _param {quat4} dest quat4 receiving copied values
- *
- * _returns {quat4} dest
- */
+   * Copies the values of one quat4 to another
+   *
+   * _param {quat4} quat quat4 containing values to copy
+   * _param {quat4} dest quat4 receiving copied values
+   *
+   * _returns {quat4} dest
+   */
   quat4.set = function (quat, dest) {
       dest[0] = quat[0];
       dest[1] = quat[1];
@@ -10608,15 +10582,15 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Calculates the W component of a quat4 from the X, Y, and Z components.
- * Assumes that quaternion is 1 unit in length.
- * Any existing W component will be ignored.
- *
- * _param {quat4} quat quat4 to calculate W component of
- * _param {quat4} [dest] quat4 receiving calculated values. If not specified result is written to quat
- *
- * _returns {quat4} dest if specified, quat otherwise
- */
+   * Calculates the W component of a quat4 from the X, Y, and Z components.
+   * Assumes that quaternion is 1 unit in length.
+   * Any existing W component will be ignored.
+   *
+   * _param {quat4} quat quat4 to calculate W component of
+   * _param {quat4} [dest] quat4 receiving calculated values. If not specified result is written to quat
+   *
+   * _returns {quat4} dest if specified, quat otherwise
+   */
   quat4.calculateW = function (quat, dest) {
       var x = quat[0], y = quat[1], z = quat[2];
   
@@ -10632,25 +10606,25 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Calculates the dot product of two quaternions
- *
- * _param {quat4} quat First operand
- * _param {quat4} quat2 Second operand
- *
- * @return {number} Dot product of quat and quat2
- */
+   * Calculates the dot product of two quaternions
+   *
+   * _param {quat4} quat First operand
+   * _param {quat4} quat2 Second operand
+   *
+   * @return {number} Dot product of quat and quat2
+   */
   quat4.dot = function(quat, quat2){
       return quat[0]*quat2[0] + quat[1]*quat2[1] + quat[2]*quat2[2] + quat[3]*quat2[3];
   };
   
   /**
- * Calculates the inverse of a quat4
- *
- * _param {quat4} quat quat4 to calculate inverse of
- * _param {quat4} [dest] quat4 receiving inverse values. If not specified result is written to quat
- *
- * _returns {quat4} dest if specified, quat otherwise
- */
+   * Calculates the inverse of a quat4
+   *
+   * _param {quat4} quat quat4 to calculate inverse of
+   * _param {quat4} [dest] quat4 receiving inverse values. If not specified result is written to quat
+   *
+   * _returns {quat4} dest if specified, quat otherwise
+   */
   quat4.inverse = function(quat, dest) {
       var q0 = quat[0], q1 = quat[1], q2 = quat[2], q3 = quat[3],
           dot = q0*q0 + q1*q1 + q2*q2 + q3*q3,
@@ -10674,14 +10648,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
   
   /**
- * Calculates the conjugate of a quat4
- * If the quaternion is normalized, this function is faster than quat4.inverse and produces the same result.
- *
- * _param {quat4} quat quat4 to calculate conjugate of
- * _param {quat4} [dest] quat4 receiving conjugate values. If not specified result is written to quat
- *
- * _returns {quat4} dest if specified, quat otherwise
- */
+   * Calculates the conjugate of a quat4
+   * If the quaternion is normalized, this function is faster than quat4.inverse and produces the same result.
+   *
+   * _param {quat4} quat quat4 to calculate conjugate of
+   * _param {quat4} [dest] quat4 receiving conjugate values. If not specified result is written to quat
+   *
+   * _returns {quat4} dest if specified, quat otherwise
+   */
   quat4.conjugate = function (quat, dest) {
       if (!dest || quat === dest) {
           quat[0] *= -1;
@@ -10697,27 +10671,27 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Calculates the length of a quat4
- *
- * Params:
- * _param {quat4} quat quat4 to calculate length of
- *
- * _returns Length of quat
- */
+   * Calculates the length of a quat4
+   *
+   * Params:
+   * _param {quat4} quat quat4 to calculate length of
+   *
+   * _returns Length of quat
+   */
   quat4.length = function (quat) {
       var x = quat[0], y = quat[1], z = quat[2], w = quat[3];
       return Math.sqrt(x * x + y * y + z * z + w * w);
   };
   
   /**
- * Generates a unit quaternion of the same direction as the provided quat4
- * If quaternion length is 0, returns [0, 0, 0, 0]
- *
- * _param {quat4} quat quat4 to normalize
- * _param {quat4} [dest] quat4 receiving operation result. If not specified result is written to quat
- *
- * _returns {quat4} dest if specified, quat otherwise
- */
+   * Generates a unit quaternion of the same direction as the provided quat4
+   * If quaternion length is 0, returns [0, 0, 0, 0]
+   *
+   * _param {quat4} quat quat4 to normalize
+   * _param {quat4} [dest] quat4 receiving operation result. If not specified result is written to quat
+   *
+   * _returns {quat4} dest if specified, quat otherwise
+   */
   quat4.normalize = function (quat, dest) {
       if (!dest) { dest = quat; }
   
@@ -10740,14 +10714,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Performs quaternion addition
- *
- * _param {quat4} quat First operand
- * _param {quat4} quat2 Second operand
- * _param {quat4} [dest] quat4 receiving operation result. If not specified result is written to quat
- *
- * _returns {quat4} dest if specified, quat otherwise
- */
+   * Performs quaternion addition
+   *
+   * _param {quat4} quat First operand
+   * _param {quat4} quat2 Second operand
+   * _param {quat4} [dest] quat4 receiving operation result. If not specified result is written to quat
+   *
+   * _returns {quat4} dest if specified, quat otherwise
+   */
   quat4.add = function (quat, quat2, dest) {
       if(!dest || quat === dest) {
           quat[0] += quat2[0];
@@ -10764,14 +10738,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Performs a quaternion multiplication
- *
- * _param {quat4} quat First operand
- * _param {quat4} quat2 Second operand
- * _param {quat4} [dest] quat4 receiving operation result. If not specified result is written to quat
- *
- * _returns {quat4} dest if specified, quat otherwise
- */
+   * Performs a quaternion multiplication
+   *
+   * _param {quat4} quat First operand
+   * _param {quat4} quat2 Second operand
+   * _param {quat4} [dest] quat4 receiving operation result. If not specified result is written to quat
+   *
+   * _returns {quat4} dest if specified, quat otherwise
+   */
   quat4.multiply = function (quat, quat2, dest) {
       if (!dest) { dest = quat; }
   
@@ -10787,14 +10761,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Transforms a vec3 with the given quaternion
- *
- * _param {quat4} quat quat4 to transform the vector with
- * _param {vec3} vec vec3 to transform
- * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
- *
- * _returns dest if specified, vec otherwise
- */
+   * Transforms a vec3 with the given quaternion
+   *
+   * _param {quat4} quat quat4 to transform the vector with
+   * _param {vec3} vec vec3 to transform
+   * _param {vec3} [dest] vec3 receiving operation result. If not specified result is written to vec
+   *
+   * _returns dest if specified, vec otherwise
+   */
   quat4.multiplyVec3 = function (quat, vec, dest) {
       if (!dest) { dest = vec; }
   
@@ -10816,14 +10790,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Multiplies the components of a quaternion by a scalar value
- *
- * _param {quat4} quat to scale
- * _param {number} val Value to scale by
- * _param {quat4} [dest] quat4 receiving operation result. If not specified result is written to quat
- *
- * _returns {quat4} dest if specified, quat otherwise
- */
+   * Multiplies the components of a quaternion by a scalar value
+   *
+   * _param {quat4} quat to scale
+   * _param {number} val Value to scale by
+   * _param {quat4} [dest] quat4 receiving operation result. If not specified result is written to quat
+   *
+   * _returns {quat4} dest if specified, quat otherwise
+   */
   quat4.scale = function (quat, val, dest) {
       if(!dest || quat === dest) {
           quat[0] *= val;
@@ -10840,13 +10814,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Calculates a 3x3 matrix from the given quat4
- *
- * _param {quat4} quat quat4 to create matrix from
- * _param {mat3} [dest] mat3 receiving operation result
- *
- * _returns {mat3} dest if specified, a new mat3 otherwise
- */
+   * Calculates a 3x3 matrix from the given quat4
+   *
+   * _param {quat4} quat quat4 to create matrix from
+   * _param {mat3} [dest] mat3 receiving operation result
+   *
+   * _returns {mat3} dest if specified, a new mat3 otherwise
+   */
   quat4.toMat3 = function (quat, dest) {
       if (!dest) { dest = mat3.create(); }
   
@@ -10881,13 +10855,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Calculates a 4x4 matrix from the given quat4
- *
- * _param {quat4} quat quat4 to create matrix from
- * _param {mat4} [dest] mat4 receiving operation result
- *
- * _returns {mat4} dest if specified, a new mat4 otherwise
- */
+   * Calculates a 4x4 matrix from the given quat4
+   *
+   * _param {quat4} quat quat4 to create matrix from
+   * _param {mat4} [dest] mat4 receiving operation result
+   *
+   * _returns {mat4} dest if specified, a new mat4 otherwise
+   */
   quat4.toMat4 = function (quat, dest) {
       if (!dest) { dest = mat4.create(); }
   
@@ -10930,15 +10904,15 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Performs a spherical linear interpolation between two quat4
- *
- * _param {quat4} quat First quaternion
- * _param {quat4} quat2 Second quaternion
- * _param {number} slerp Interpolation amount between the two inputs
- * _param {quat4} [dest] quat4 receiving operation result. If not specified result is written to quat
- *
- * _returns {quat4} dest if specified, quat otherwise
- */
+   * Performs a spherical linear interpolation between two quat4
+   *
+   * _param {quat4} quat First quaternion
+   * _param {quat4} quat2 Second quaternion
+   * _param {number} slerp Interpolation amount between the two inputs
+   * _param {quat4} [dest] quat4 receiving operation result. If not specified result is written to quat
+   *
+   * _returns {quat4} dest if specified, quat otherwise
+   */
   quat4.slerp = function (quat, quat2, slerp, dest) {
       if (!dest) { dest = quat; }
   
@@ -10981,12 +10955,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   /**
- * Returns a string representation of a quaternion
- *
- * _param {quat4} quat quat4 to represent as a string
- *
- * _returns {string} String representation of quat
- */
+   * Returns a string representation of a quaternion
+   *
+   * _param {quat4} quat quat4 to represent as a string
+   *
+   * _returns {string} String representation of quat
+   */
   quat4.str = function (quat) {
       return '[' + quat[0] + ', ' + quat[1] + ', ' + quat[2] + ', ' + quat[3] + ']';
   };
@@ -11005,7 +10979,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
   var GLImmediateSetup = {
   };
-  var _emscripten_glBegin = (mode) => {
+  var _glBegin = (mode) => {
       // Push the old state:
       GLImmediate.enabledClientAttributes_preBegin = GLImmediate.enabledClientAttributes;
       GLImmediate.enabledClientAttributes = [];
@@ -11033,23 +11007,18 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       GLImmediate.rendererComponentPointer = 0;
       GLImmediate.vertexData = GLImmediate.tempData;
     };
-  var _glBegin = _emscripten_glBegin;
 
-  var _emscripten_glBindTexture = (target, texture) => {
+  var _glBindTexture = (target, texture) => {
       GLctx.bindTexture(target, GL.textures[texture]);
     };
-  var _glBindTexture = _emscripten_glBindTexture;
 
-  var _emscripten_glBlendFunc = (x0, x1) => GLctx.blendFunc(x0, x1);
-  var _glBlendFunc = _emscripten_glBlendFunc;
+  var _glBlendFunc = (x0, x1) => GLctx.blendFunc(x0, x1);
 
-  var _emscripten_glClear = (x0) => GLctx.clear(x0);
-  var _glClear = _emscripten_glClear;
+  var _glClear = (x0) => GLctx.clear(x0);
 
-  var _emscripten_glClearColor = (x0, x1, x2, x3) => GLctx.clearColor(x0, x1, x2, x3);
-  var _glClearColor = _emscripten_glClearColor;
+  var _glClearColor = (x0, x1, x2, x3) => GLctx.clearColor(x0, x1, x2, x3);
 
-  var _emscripten_glColor4f = (r, g, b, a) => {
+  var _glColor4f = (r, g, b, a) => {
       r = Math.max(Math.min(r, 1), 0);
       g = Math.max(Math.min(g, 1), 0);
       b = Math.max(Math.min(b, 1), 0);
@@ -11081,29 +11050,21 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         GLctx.vertexAttrib4fv(GLImmediate.COLOR, GLImmediate.clientColor);
       }
     };
-  var _glColor4f = _emscripten_glColor4f;
-  var _emscripten_glColor3f = (r, g, b) => _glColor4f(r, g, b, 1);
-  var _glColor3f = _emscripten_glColor3f;
+  var _glColor3f = (r, g, b) => _glColor4f(r, g, b, 1);
 
-  
-  var _emscripten_glColor3fv = (p) => _glColor3f(HEAPF32[((p)>>2)],
+  var _glColor3fv = (p) => _glColor3f(HEAPF32[((p)>>2)],
                                   HEAPF32[(((p)+(4))>>2)],
                                   HEAPF32[(((p)+(8))>>2)]);
-  var _glColor3fv = _emscripten_glColor3fv;
 
 
-  
-  var _emscripten_glColor4fv = (p) => _glColor4f(HEAPF32[((p)>>2)],
+  var _glColor4fv = (p) => _glColor4f(HEAPF32[((p)>>2)],
                                   HEAPF32[(((p)+(4))>>2)],
                                   HEAPF32[(((p)+(8))>>2)],
                                   HEAPF32[(((p)+(12))>>2)]);
-  var _glColor4fv = _emscripten_glColor4fv;
 
-  var _emscripten_glColor4ub = (r, g, b, a) => _glColor4f((r&255)/255, (g&255)/255, (b&255)/255, (a&255)/255);
-  var _glColor4ub = _emscripten_glColor4ub;
+  var _glColor4ub = (r, g, b, a) => _glColor4f((r&255)/255, (g&255)/255, (b&255)/255, (a&255)/255);
 
-  
-  var _emscripten_glDeleteTextures = (n, textures) => {
+  var _glDeleteTextures = (n, textures) => {
       for (var i = 0; i < n; i++) {
         var id = HEAP32[(((textures)+(i*4))>>2)];
         var texture = GL.textures[id];
@@ -11115,19 +11076,16 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         GL.textures[id] = null;
       }
     };
-  var _glDeleteTextures = _emscripten_glDeleteTextures;
 
-  var _emscripten_glDepthFunc = (x0) => GLctx.depthFunc(x0);
-  var _glDepthFunc = _emscripten_glDepthFunc;
+  var _glDepthFunc = (x0) => GLctx.depthFunc(x0);
 
-  var _emscripten_glDepthMask = (flag) => {
+  var _glDepthMask = (flag) => {
       GLctx.depthMask(!!flag);
     };
-  var _glDepthMask = _emscripten_glDepthMask;
 
 
 
-  var _emscripten_glEnd = () => {
+  var _glEnd = () => {
       GLImmediate.prepareClientAttributes(GLImmediate.rendererComponents[GLImmediate.VERTEX], true);
       GLImmediate.firstVertex = 0;
       GLImmediate.lastVertex = GLImmediate.vertexCounter / (GLImmediate.stride >> 2);
@@ -11141,12 +11099,10 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       GLImmediate.currentRenderer = null; // The set of active client attributes changed, we must re-lookup the renderer to use.
       GLImmediate.modifiedClientAttributes = true;
     };
-  var _glEnd = _emscripten_glEnd;
 
-  var _emscripten_glFlush = () => GLctx.flush();
-  var _glFlush = _emscripten_glFlush;
+  var _glFlush = () => GLctx.flush();
 
-  var _emscripten_glFogf = (pname, param) => { // partial support, TODO
+  var _glFogf = (pname, param) => { // partial support, TODO
       switch (pname) {
         case 0xB63: // GL_FOG_START
           GLEmulation.fogStart = param; break;
@@ -11173,10 +11129,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           break;
       }
     };
-  var _glFogf = _emscripten_glFogf;
 
-  
-  var _emscripten_glFogfv = (pname, param) => { // partial support, TODO
+  var _glFogfv = (pname, param) => { // partial support, TODO
       switch (pname) {
         case 0xB66: // GL_FOG_COLOR
           GLEmulation.fogColor[0] = HEAPF32[((param)>>2)];
@@ -11189,31 +11143,27 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           _glFogf(pname, HEAPF32[((param)>>2)]); break;
       }
     };
-  var _glFogfv = _emscripten_glFogfv;
 
-  var _emscripten_glFogi = (pname, param) => {
+  var _glFogi = (pname, param) => {
       return _glFogf(pname, param);
     };
-  var _glFogi = _emscripten_glFogi;
 
-  var _emscripten_glGenTextures = (n, textures) => {
+  var _glGenTextures = (n, textures) => {
       GL.genObject(n, textures, 'createTexture', GL.textures
         );
     };
-  var _glGenTextures = _emscripten_glGenTextures;
 
-  var _emscripten_glGetError = () => {
+  var _glGetError = () => {
       var error = GLctx.getError() || GL.lastError;
       GL.lastError = 0/*GL_NO_ERROR*/;
       return error;
     };
-  var _glGetError = _emscripten_glGetError;
 
 
 
 
   
-  var _emscripten_glLoadIdentity = () => {
+  var _glLoadIdentity = () => {
       if (Module._muBatchOpen && !Module._muBatchDrawing && Module._mu_mesh_flush) {
         Module._muBatchDrawing = 1;
         Module._mu_mesh_flush();
@@ -11223,10 +11173,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       GLImmediate.matrixVersion[GLImmediate.currentMatrix] = (GLImmediate.matrixVersion[GLImmediate.currentMatrix] + 1)|0;
       GLImmediate.matrixLib.mat4.identity(GLImmediate.matrix[GLImmediate.currentMatrix]);
     };
-  var _glLoadIdentity = _emscripten_glLoadIdentity;
 
   
-  var _emscripten_glMatrixMode = (mode) => {
+  var _glMatrixMode = (mode) => {
       if (mode == 0x1700 /* GL_MODELVIEW */) {
         GLImmediate.currentMatrix = 0/*m*/;
       } else if (mode == 0x1701 /* GL_PROJECTION */) {
@@ -11238,9 +11187,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         throw `Wrong mode ${mode} passed to glMatrixMode`;
       }
     };
-  var _glMatrixMode = _emscripten_glMatrixMode;
 
-  var _emscripten_glPixelStorei = (pname, param) => {
+  var _glPixelStorei = (pname, param) => {
       if (pname == 3317) {
         GL.unpackAlignment = param;
       } else if (pname == 3314) {
@@ -11248,9 +11196,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       }
       GLctx.pixelStorei(pname, param);
     };
-  var _glPixelStorei = _emscripten_glPixelStorei;
 
-  var _emscripten_glPopMatrix = () => {
+  var _glPopMatrix = () => {
       if (GLImmediate.matrixStack[GLImmediate.currentMatrix].length == 0) {
         GL.recordError(0x504/*GL_STACK_UNDERFLOW*/);
         return;
@@ -11264,9 +11211,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       GLImmediate.matrixVersion[GLImmediate.currentMatrix] = (GLImmediate.matrixVersion[GLImmediate.currentMatrix] + 1)|0;
       GLImmediate.matrix[GLImmediate.currentMatrix] = GLImmediate.matrixStack[GLImmediate.currentMatrix].pop();
     };
-  var _glPopMatrix = _emscripten_glPopMatrix;
 
-  var _emscripten_glPushMatrix = () => {
+  var _glPushMatrix = () => {
       if (Module._muBatchOpen && !Module._muBatchDrawing && Module._mu_mesh_flush) {
         Module._muBatchDrawing = 1;
         Module._mu_mesh_flush();
@@ -11277,15 +11223,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       GLImmediate.matrixStack[GLImmediate.currentMatrix].push(
           Array.prototype.slice.call(GLImmediate.matrix[GLImmediate.currentMatrix]));
     };
-  var _glPushMatrix = _emscripten_glPushMatrix;
 
-  
-  
-  
-  
-  
-  
-  
   var heapObjectForWebGLType = (type) => {
       // Micro-optimization for size: Subtract lowest GL enum number (0x1400/* GL_BYTE */) from type to compare
       // smaller values for the heap, for shorter generated code size.
@@ -11316,7 +11254,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   var toTypedArrayIndex = (pointer, heap) =>
       pointer >>> (31 - Math.clz32(heap.BYTES_PER_ELEMENT));
   
-  var _emscripten_glReadPixels = (x, y, width, height, format, type, pixels) => {
+  var _glReadPixels = (x, y, width, height, format, type, pixels) => {
       if (true) {
         if (GLctx.currentPixelPackBufferBinding) {
           GLctx.readPixels(x, y, width, height, format, type, pixels);
@@ -11328,9 +11266,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         return;
       }
     };
-  var _glReadPixels = _emscripten_glReadPixels;
 
-  var _emscripten_glRotated = (angle, x, y, z) => {
+  /** @suppress {duplicate } */
+  var _glRotated = (angle, x, y, z) => {
       if (Module._muBatchOpen && !Module._muBatchDrawing && Module._mu_mesh_flush) {
         Module._muBatchDrawing = 1;
         Module._mu_mesh_flush();
@@ -11340,12 +11278,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       GLImmediate.matrixVersion[GLImmediate.currentMatrix] = (GLImmediate.matrixVersion[GLImmediate.currentMatrix] + 1)|0;
       GLImmediate.matrixLib.mat4.rotate(GLImmediate.matrix[GLImmediate.currentMatrix], angle*Math.PI/180, [x, y, z]);
     };
-  var _emscripten_glRotatef = _emscripten_glRotated;
-  var _glRotatef = _emscripten_glRotatef;
+  var _glRotatef = _glRotated;
 
-  var _emscripten_glScissor = (x0, x1, x2, x3) => GLctx.scissor(x0, x1, x2, x3);
-  var _glScissor = _emscripten_glScissor;
+  var _glScissor = (x0, x1, x2, x3) => GLctx.scissor(x0, x1, x2, x3);
 
+  /** @suppress {duplicate } */
   var muEmitRepeatColor = () => {
       if (!GLImmediate.muColorArmed || !GLImmediate.muColorFirst || GLImmediate.muColorThisVertex) return;
       var start = GLImmediate.vertexCounter << 2;
@@ -11357,18 +11294,16 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       GLImmediate.vertexCounter++;
       GLImmediate.muColorThisVertex = true;
     };
-  var _emscripten_glTexCoord2i = (u, v) => {
+  var _glTexCoord2i = (u, v) => {
       assert(GLImmediate.mode >= 0); // must be in begin/end
       muEmitRepeatColor();
       GLImmediate.vertexData[GLImmediate.vertexCounter++] = u;
       GLImmediate.vertexData[GLImmediate.vertexCounter++] = v;
       GLImmediate.addRendererComponent(GLImmediate.TEXTURE0, 2, GLctx.FLOAT);
     };
-  var _emscripten_glTexCoord2f = _emscripten_glTexCoord2i;
-  var _glTexCoord2f = _emscripten_glTexCoord2f;
+  var _glTexCoord2f = _glTexCoord2i;
 
-  var _emscripten_glTexEnvf = (target, pname, params) => warnOnce('glTexEnvf: TODO');
-  var _glTexEnvf = _emscripten_glTexEnvf;
+  var _glTexEnvf = (target, pname, params) => warnOnce('glTexEnvf: TODO');
 
   var computeUnpackAlignedImageSize = (width, height, sizePerPixel) => {
       function roundedToNextMultipleOf(x, y) {
@@ -11405,7 +11340,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
   
   
-  var emscriptenWebGLGetTexPixelData = (type, format, width, height, pixels) => {
+  var emscriptenWebGLGetTexPixelData = (type, format, width, height, pixels, internalFormat) => {
       var heap = heapObjectForWebGLType(type);
       var sizePerPixel = colorChannelsInGlTextureFormat(format) * heap.BYTES_PER_ELEMENT;
       var bytes = computeUnpackAlignedImageSize(width, height, sizePerPixel);
@@ -11418,7 +11353,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       if (fmt == 4) return 0x1908;
       return fmt;
     };
-  var _emscripten_glTexImage2D = (target, level, internalFormat, width, height, border, format, type, pixels) => {
+  var _glTexImage2D = (target, level, internalFormat, width, height, border, format, type, pixels) => {
       internalFormat = muGlFormat(internalFormat);
       format = muGlFormat(format);
       if (true) {
@@ -11433,28 +11368,25 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           return;
         }
       }
-      var pixelData = pixels ? emscriptenWebGLGetTexPixelData(type, format, width, height, pixels) : null;
+      var pixelData = pixels ? emscriptenWebGLGetTexPixelData(type, format, width, height, pixels, internalFormat) : null;
       GLctx.texImage2D(target, level, internalFormat, width, height, border, format, type, pixelData);
     };
-  var _glTexImage2D = _emscripten_glTexImage2D;
 
-  
-  var _emscripten_glTexParameterfv = (target, pname, params) => {
+  var _glTexParameterfv = (target, pname, params) => {
       if (pname == 0x1004) return;
       var param = HEAPF32[((params)>>2)];
       if (param == 0x2900 || param == 0x812D) param = 0x812F;
       GLctx.texParameterf(target, pname, param);
     };
-  var _glTexParameterfv = _emscripten_glTexParameterfv;
 
-  var _emscripten_glTexParameteri = (x0, x1, x2) => {
+  var _glTexParameteri = (x0, x1, x2) => {
       if (x1 == 0x1004) return;
       if (x2 == 0x2900 || x2 == 0x812D) x2 = 0x812F;
       GLctx.texParameteri(x0, x1, x2);
     };
-  var _glTexParameteri = _emscripten_glTexParameteri;
 
-  var _emscripten_glTranslated = (x, y, z) => {
+  /** @suppress {duplicate } */
+  var _glTranslated = (x, y, z) => {
       if (Module._muBatchOpen && !Module._muBatchDrawing && Module._mu_mesh_flush) {
         Module._muBatchDrawing = 1;
         Module._mu_mesh_flush();
@@ -11464,10 +11396,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       GLImmediate.matrixVersion[GLImmediate.currentMatrix] = (GLImmediate.matrixVersion[GLImmediate.currentMatrix] + 1)|0;
       GLImmediate.matrixLib.mat4.translate(GLImmediate.matrix[GLImmediate.currentMatrix], [x, y, z]);
     };
-  var _emscripten_glTranslatef = _emscripten_glTranslated;
-  var _glTranslatef = _emscripten_glTranslatef;
+  var _glTranslatef = _glTranslated;
 
-  var _emscripten_glVertex2f = (x, y) => {
+  var _glVertex2f = (x, y) => {
       assert(GLImmediate.mode >= 0); // must be in begin/end
       muEmitRepeatColor();
       GLImmediate.vertexData[GLImmediate.vertexCounter++] = x;
@@ -11478,9 +11409,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       GLImmediate.addRendererComponent(GLImmediate.VERTEX, 4, GLctx.FLOAT);
       GLImmediate.muColorThisVertex = false;
     };
-  var _glVertex2f = _emscripten_glVertex2f;
 
-  var _emscripten_glVertex3f = (x, y, z) => {
+  var _glVertex3f = (x, y, z) => {
       assert(GLImmediate.mode >= 0); // must be in begin/end
       muEmitRepeatColor();
       GLImmediate.vertexData[GLImmediate.vertexCounter++] = x;
@@ -11491,18 +11421,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       GLImmediate.addRendererComponent(GLImmediate.VERTEX, 4, GLctx.FLOAT);
       GLImmediate.muColorThisVertex = false;
     };
-  var _glVertex3f = _emscripten_glVertex3f;
 
-  
-  var _emscripten_glVertex3fv = (p) => _glVertex3f(HEAPF32[((p)>>2)],
+  var _glVertex3fv = (p) => _glVertex3f(HEAPF32[((p)>>2)],
                                     HEAPF32[(((p)+(4))>>2)],
                                     HEAPF32[(((p)+(8))>>2)]);
-  var _glVertex3fv = _emscripten_glVertex3fv;
 
-  var _emscripten_glViewport = (x0, x1, x2, x3) => GLctx.viewport(x0, x1, x2, x3);
-  var _glViewport = _emscripten_glViewport;
+  var _glViewport = (x0, x1, x2, x3) => GLctx.viewport(x0, x1, x2, x3);
 
-  var _emscripten_glOrtho = (left, right, bottom, top_, nearVal, farVal) => {
+  var _glOrtho = (left, right, bottom, top_, nearVal, farVal) => {
       if (Module._muBatchOpen && !Module._muBatchDrawing && Module._mu_mesh_flush) {
         Module._muBatchDrawing = 1;
         Module._mu_mesh_flush();
@@ -11513,11 +11439,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       GLImmediate.matrixLib.mat4.multiply(GLImmediate.matrix[GLImmediate.currentMatrix],
           GLImmediate.matrixLib.mat4.ortho(left, right, bottom, top_, nearVal, farVal));
     };
-  var _glOrtho = _emscripten_glOrtho;
-  var _emscripten_gluOrtho2D = (left, right, bottom, top) => _glOrtho(left, right, bottom, top, -1, 1);
-  var _gluOrtho2D = _emscripten_gluOrtho2D;
+  var _gluOrtho2D = (left, right, bottom, top) => _glOrtho(left, right, bottom, top, -1, 1);
 
-  var _emscripten_gluPerspective = (fov, aspect, near, far) => {
+  var _gluPerspective = (fov, aspect, near, far) => {
       if (Module._muBatchOpen && !Module._muBatchDrawing && Module._mu_mesh_flush) {
         Module._muBatchDrawing = 1;
         Module._mu_mesh_flush();
@@ -11529,13 +11453,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         GLImmediate.matrixLib.mat4.perspective(fov, aspect, near, far,
                                                  GLImmediate.matrix[GLImmediate.currentMatrix]);
     };
-  var _gluPerspective = _emscripten_gluPerspective;
 
 
 
   var wasmTableMirror = [];
   
-  
+  /** @type {WebAssembly.Table} */
+  var wasmTable;
   var getWasmTableEntry = (funcPtr) => {
       var func = wasmTableMirror[funcPtr];
       if (!func) {
@@ -11543,49 +11467,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         wasmTableMirror[funcPtr] = func = wasmTable.get(funcPtr);
       }
       /** @suppress {checkTypes} */
-      assert(wasmTable.get(funcPtr) == func, 'table mirror is out of date');
+      assert(wasmTable.get(funcPtr) == func, 'JavaScript-side Wasm function table mirror is out of date!');
       return func;
     };
-
-
-
-
-
-
-
-
-
-
-
-
-  
-  
-  
-  
-  
-  
-  
-    /**
-   * @param {number} ptr
-   * @param {number} value
-   * @param {string} type
-   */
-  function setValue(ptr, value, type = 'i8') {
-    if (type.endsWith('*')) type = '*';
-    switch (type) {
-      case 'i1': HEAP8[ptr] = value; break;
-      case 'i8': HEAP8[ptr] = value; break;
-      case 'i16': HEAP16[((ptr)>>1)] = value; break;
-      case 'i32': HEAP32[((ptr)>>2)] = value; break;
-      case 'i64': HEAP64[((ptr)>>3)] = BigInt(value); break;
-      case 'float': HEAPF32[((ptr)>>2)] = value; break;
-      case 'double': HEAPF64[((ptr)>>3)] = value; break;
-      case '*': HEAPU32[((ptr)>>2)] = value; break;
-      default: abort(`invalid type for setValue: ${type}`);
-    }
-  }
-
-
 
 
 
@@ -11599,10 +11483,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
 
   var FS_createDevice = (...args) => FS.createDevice(...args);
 
-
-
   FS.createPreloadedFile = FS_createPreloadedFile;
-  FS.preloadFile = FS_preloadFile;
   FS.staticInit();;
 
       Module['requestAnimationFrame'] = MainLoop.requestAnimationFrame;
@@ -11615,42 +11496,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       registerPreMainLoop(() => GL.newRenderingFrameStarted());
     ;
 GLImmediate.setupFuncs(); Browser.moduleContextCreatedCallbacks.push(() => GLImmediate.init());;
-safeSetTimeout.pending = new Map(); safeSetTimeout.nextId = 1;;
-
-      // Forward declare GL functions that are overridden by GLEmulation.
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glDrawArrays;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glDrawElements;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glActiveTexture;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glEnable;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glDisable;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glTexEnvf;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glTexEnvi;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glTexEnvfv;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glGetIntegerv;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glIsEnabled;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glGetBooleanv;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glGetString;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glCreateShader;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glShaderSource;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glCompileShader;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glAttachShader;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glDetachShader;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glUseProgram;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glDeleteProgram;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glBindAttribLocation;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glLinkProgram;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glBindBuffer;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glGetFloatv;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glHint;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glEnableVertexAttribArray;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glDisableVertexAttribArray;
-      /**@suppress {duplicate, undefinedVars}*/var _emscripten_glVertexAttribPointer;
-      /**@suppress {duplicate, undefinedVars}*/var _glTexEnvf;
-      /**@suppress {duplicate, undefinedVars}*/var _glTexEnvi;
-      /**@suppress {duplicate, undefinedVars}*/var _glTexEnvfv;
-      /**@suppress {duplicate, undefinedVars}*/var _glGetTexEnviv;
-      /**@suppress {duplicate, undefinedVars}*/var _glGetTexEnvfv;
-      GLEmulation.init();;
+/**@suppress {duplicate, undefinedVars}*/var _emscripten_glDrawArrays;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glDrawElements;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glActiveTexture;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glEnable;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glDisable;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glTexEnvf;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glTexEnvi;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glTexEnvfv;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glGetIntegerv;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glIsEnabled;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glGetBooleanv;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glGetString;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glCreateShader;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glShaderSource;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glCompileShader;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glAttachShader;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glDetachShader;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glUseProgram;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glDeleteProgram;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glBindAttribLocation;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glLinkProgram;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glBindBuffer;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glGetFloatv;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glHint;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glEnableVertexAttribArray;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glDisableVertexAttribArray;/**@suppress {duplicate, undefinedVars}*/var _emscripten_glVertexAttribPointer;/**@suppress {duplicate, undefinedVars}*/var _glTexEnvf;/**@suppress {duplicate, undefinedVars}*/var _glTexEnvi;/**@suppress {duplicate, undefinedVars}*/var _glTexEnvfv;/**@suppress {duplicate, undefinedVars}*/var _glGetTexEnviv;/**@suppress {duplicate, undefinedVars}*/var _glGetTexEnvfv;GLEmulation.init();;
 // End JS library code
 
 // include: postlibrary.js
@@ -11661,14 +11507,15 @@ safeSetTimeout.pending = new Map(); safeSetTimeout.nextId = 1;;
 
   // Begin ATMODULES hooks
   if (Module['noExitRuntime']) noExitRuntime = Module['noExitRuntime'];
-
+if (Module['preloadPlugins']) preloadPlugins = Module['preloadPlugins'];
 if (Module['print']) out = Module['print'];
 if (Module['printErr']) err = Module['printErr'];
+if (Module['wasmBinary']) wasmBinary = Module['wasmBinary'];
   // End ATMODULES hooks
 
   checkIncomingModuleAPI();
 
-  if (Module['arguments']) programArgs = Module['arguments'];
+  if (Module['arguments']) arguments_ = Module['arguments'];
   if (Module['thisProgram']) thisProgram = Module['thisProgram'];
 
   // Assertions on removed incoming Module JS APIs.
@@ -11687,22 +11534,12 @@ if (Module['printErr']) err = Module['printErr'];
   assert(typeof Module['wasmMemory'] == 'undefined', 'Use of `wasmMemory` detected.  Use -sIMPORTED_MEMORY to define wasmMemory externally');
   assert(typeof Module['INITIAL_MEMORY'] == 'undefined', 'Detected runtime INITIAL_MEMORY setting.  Use -sIMPORTED_MEMORY to define wasmMemory dynamically');
 
-  var preInit = Module['preInit'];
-  if (preInit) {
-    if (typeof preInit == 'function') Module['preInit'] = preInit = [preInit];
-    // Written as a loop so that preInit functions that themselves add more
-    // preInit functions.  Is this actually needed?
-    while (preInit.length > 0) {
-      preInit.shift()();
-    }
-  }
-  consumedModuleProp('preInit');
 }
 
 // Begin runtime exports
   Module['addRunDependency'] = addRunDependency;
   Module['removeRunDependency'] = removeRunDependency;
-  Module['FS_preloadFile'] = FS_preloadFile;
+  Module['FS_createPreloadedFile'] = FS_createPreloadedFile;
   Module['FS_unlink'] = FS_unlink;
   Module['FS_createPath'] = FS_createPath;
   Module['FS_createDevice'] = FS_createDevice;
@@ -11719,7 +11556,6 @@ if (Module['printErr']) err = Module['printErr'];
   'stackAlloc',
   'getTempRet0',
   'setTempRet0',
-  'createNamedFunction',
   'zeroMemory',
   'getHeapMax',
   'growMemory',
@@ -11730,6 +11566,7 @@ if (Module['printErr']) err = Module['printErr'];
   'inetNtop6',
   'readSockaddr',
   'writeSockaddr',
+  'emscriptenLog',
   'runMainThreadEmAsm',
   'jstoi_q',
   'autoResumeAudioContext',
@@ -11741,6 +11578,7 @@ if (Module['printErr']) err = Module['printErr'];
   'asmjsMangle',
   'alignMemory',
   'HandleAllocator',
+  'getNativeTypeSize',
   'addOnInit',
   'addOnPostCtor',
   'addOnPreMain',
@@ -11750,13 +11588,20 @@ if (Module['printErr']) err = Module['printErr'];
   'ASSERTIONS',
   'ccall',
   'cwrap',
+  'uleb128Encode',
+  'sigToWasmTypes',
+  'generateFuncType',
   'convertJsFunctionToWasm',
   'getEmptyTableSlot',
   'updateTableMap',
   'getFunctionAddress',
   'addFunction',
   'removeFunction',
-  'getValue',
+  'reallyNegative',
+  'unSign',
+  'strLen',
+  'reSign',
+  'formatString',
   'intArrayToString',
   'AsciiToString',
   'stringToAscii',
@@ -11780,14 +11625,12 @@ if (Module['printErr']) err = Module['printErr'];
   'registerOrientationChangeEventCallback',
   'fillFullscreenChangeEventData',
   'registerFullscreenChangeEventCallback',
-  'callCanvasResizedCallback',
   'JSEvents_requestFullscreen',
   'JSEvents_resizeCanvasForFullscreen',
   'registerRestoreOldStyle',
   'hideEverythingExceptGivenElement',
   'restoreHiddenElements',
   'setLetterbox',
-  'currentFullscreenStrategy',
   'softFullscreenResizeWebGLRenderTarget',
   'doRequestFullscreen',
   'fillPointerlockChangeEventData',
@@ -11801,6 +11644,7 @@ if (Module['printErr']) err = Module['printErr'];
   'registerGamepadEventCallback',
   'registerBeforeUnloadEventCallback',
   'fillBatteryEventData',
+  'battery',
   'registerBatteryEventCallback',
   'setCanvasElementSize',
   'getCanvasElementSize',
@@ -11809,19 +11653,15 @@ if (Module['printErr']) err = Module['printErr'];
   'convertPCtoSourceLocation',
   'wasiRightsToMuslOFlags',
   'wasiOFlagsToMuslOFlags',
-  'safeClearTimeout',
   'setImmediateWrapped',
   'safeRequestAnimationFrame',
   'clearImmediateWrapped',
   'registerPostMainLoop',
   'getPromise',
   'makePromise',
-  'addPromise',
   'idsToPromises',
   'makePromiseCallback',
   'findMatchingCatch',
-  'incrementUncaughtExceptionCount',
-  'decrementUncaughtExceptionCount',
   'Browser_asyncPrepareDataCounter',
   'isLeapYear',
   'ydayFromDate',
@@ -11832,7 +11672,6 @@ if (Module['printErr']) err = Module['printErr'];
   'FS_mkdirTree',
   '_setNetworkCallback',
   'emscriptenWebGLGetUniform',
-  'webglGetProgramUniformLocation',
   'webglGetUniformLocation',
   'webglPrepareUniformLocationsBeforeFirstUse',
   'webglGetLeftBracePos',
@@ -11846,13 +11685,13 @@ if (Module['printErr']) err = Module['printErr'];
   'emulGlDeleteVertexArrays',
   'emulGlIsVertexArray',
   'emulGlBindVertexArray',
+  'ALLOC_NORMAL',
+  'ALLOC_STACK',
+  'allocate',
   'writeStringToMemory',
   'writeAsciiToMemory',
-  'allocateUTF8',
-  'allocateUTF8OnStack',
   'demangle',
   'stackTrace',
-  'getNativeTypeSize',
 ];
 missingLibrarySymbols.forEach(missingLibrarySymbol)
 
@@ -11862,7 +11701,17 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'err',
   'callMain',
   'abort',
+  'wasmMemory',
   'wasmExports',
+  'HEAPF32',
+  'HEAPF64',
+  'HEAP8',
+  'HEAP16',
+  'HEAPU16',
+  'HEAP32',
+  'HEAPU32',
+  'HEAP64',
+  'HEAPU64',
   'writeStackCookie',
   'checkStackCookie',
   'writeI53ToI64',
@@ -11871,15 +11720,6 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'INT53_MAX',
   'INT53_MIN',
   'bigintToI53Checked',
-  'HEAP8',
-  'HEAP16',
-  'HEAPU16',
-  'HEAP32',
-  'HEAPU32',
-  'HEAPF32',
-  'HEAPF64',
-  'HEAP64',
-  'HEAPU64',
   'stackSave',
   'stackRestore',
   'ptrToString',
@@ -11890,6 +11730,7 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'strError',
   'DNS',
   'Protocols',
+  'Sockets',
   'timers',
   'warnOnce',
   'readEmAsmArgsArray',
@@ -11903,7 +11744,6 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'asyncLoad',
   'mmapAlloc',
   'wasmTable',
-  'wasmMemory',
   'getUniqueRunDependency',
   'noExitRuntime',
   'addOnPreRun',
@@ -11912,6 +11752,7 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'freeTableIndexes',
   'functionsInTableMap',
   'setValue',
+  'getValue',
   'PATH',
   'PATH_FS',
   'UTF8Decoder',
@@ -11932,6 +11773,7 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'getBoundingClientRect',
   'fillMouseEventData',
   'registerMouseEventCallback',
+  'currentFullscreenStrategy',
   'restoreOldWindowedStyle',
   'UNWIND_CACHE',
   'ExitStatus',
@@ -11943,16 +11785,21 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'randomFill',
   'safeSetTimeout',
   'emSetImmediate',
+  'emClearImmediate_deps',
   'emClearImmediate',
   'registerPreMainLoop',
   'promiseMap',
   'uncaughtExceptionCount',
+  'exceptionLast',
   'exceptionCaught',
   'ExceptionInfo',
   'Browser',
   'requestFullscreen',
+  'requestFullScreen',
   'setCanvasSize',
+  'getUserMedia',
   'createContext',
+  'getPreloadedImageData__data',
   'wget',
   'MONTH_DAYS_REGULAR',
   'MONTH_DAYS_LEAP',
@@ -11960,10 +11807,8 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'MONTH_DAYS_LEAP_CUMULATIVE',
   'SYSCALLS',
   'preloadPlugins',
-  'FS_createPreloadedFile',
   'FS_modeStringToFlags',
   'FS_getMode',
-  'FS_fileDataToTypedArray',
   'FS_stdin_getChar_buffer',
   'FS_stdin_getChar',
   'FS_readFile',
@@ -11979,6 +11824,7 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'FS_ignorePermissions',
   'FS_filesystems',
   'FS_syncFSRequests',
+  'FS_readFiles',
   'FS_lookupPath',
   'FS_getPath',
   'FS_hashName',
@@ -12029,7 +11875,6 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'FS_mkdir',
   'FS_mkdev',
   'FS_symlink',
-  'FS_link',
   'FS_rename',
   'FS_rmdir',
   'FS_readdir',
@@ -12068,9 +11913,16 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'FS_staticInit',
   'FS_init',
   'FS_quit',
+  'FS_findObject',
   'FS_analyzePath',
   'FS_createFile',
   'FS_forceLoadFile',
+  'FS_absolutePath',
+  'FS_createFolder',
+  'FS_createLink',
+  'FS_joinPath',
+  'FS_mmapAlloc',
+  'FS_standardizePath',
   'MEMFS',
   'TTY',
   'PIPEFS',
@@ -12101,6 +11953,8 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'GLEmulation',
   'GLImmediate',
   'GLImmediateSetup',
+  'allocateUTF8',
+  'allocateUTF8OnStack',
   'print',
   'printErr',
   'jstoi_s',
@@ -12115,79 +11969,55 @@ unexportedSymbols.forEach(unexportedRuntimeSymbol);
 
 function checkIncomingModuleAPI() {
   ignoredModuleProp('fetchSettings');
-  ignoredModuleProp('logReadFiles');
-  ignoredModuleProp('loadSplitModule');
-  ignoredModuleProp('onMalloc');
-  ignoredModuleProp('onRealloc');
-  ignoredModuleProp('onFree');
-  ignoredModuleProp('onSbrkGrow');
-  ignoredModuleProp('onCOSCacheHit');
-  ignoredModuleProp('onCOSCacheMiss');
-  ignoredModuleProp('onCOSStore');
-  ignoredModuleProp('GL_MAX_TEXTURE_IMAGE_UNITS');
-  ignoredModuleProp('SDL_canPlayWithWebAudio');
-  ignoredModuleProp('SDL_numSimultaneouslyQueuedBuffers');
-  ignoredModuleProp('freePreloadedMediaOnUse');
-  ignoredModuleProp('preinitializedWebGLContext');
-  ignoredModuleProp('keyboardListeningElement');
-  ignoredModuleProp('doNotCaptureKeyboard');
-  ignoredModuleProp('extraStackTrace');
-  ignoredModuleProp('preloadPlugins');
-  ignoredModuleProp('preMainLoop');
-  ignoredModuleProp('postMainLoop');
-  ignoredModuleProp('forcedAspectRatio');
-  ignoredModuleProp('mainScriptUrlOrBlob');
-  ignoredModuleProp('onFullScreen');
-  ignoredModuleProp('INITIAL_MEMORY');
-  ignoredModuleProp('wasmMemory');
-  ignoredModuleProp('wasmBinary');
 }
 var ASM_CONSTS = {
-  8547308: ($0, $1, $2) => { var m = (typeof GLImmediate !== "undefined" && GLImmediate.matrix) ? GLImmediate.matrix[0] : null; if (!m) return; if (!Module._muMatSaved) Module._muMatSaved = new Float32Array(16); for (var s = 0; s < 16; s++) Module._muMatSaved[s] = m[s]; var p = $0 >> 2; for (var i = 0; i < 16; i++) m[i] = HEAPF32[p + i]; GLImmediate.matrixVersion[0] = (GLImmediate.matrixVersion[0] | 0) + 1; if ($1) { var c = GLImmediate.clientColor; if (!Module._muColSaved) Module._muColSaved = new Float32Array(4); Module._muColSaved[0] = c[0]; Module._muColSaved[1] = c[1]; Module._muColSaved[2] = c[2]; Module._muColSaved[3] = c[3]; var q = $2 >> 2; c[0] = HEAPF32[q]; c[1] = HEAPF32[q + 1]; c[2] = HEAPF32[q + 2]; c[3] = HEAPF32[q + 3]; } },  
- 8548031: ($0, $1, $2) => { var n = $1 | 0; var layout = $2 | 0; var stride = layout === 0 ? 24 : (layout === 3 ? 16 : 28); var bytes = (n * stride) | 0; if (typeof GLImmediate === "undefined" || GLImmediate.mode < 0) return 0; if (bytes <= 0 || bytes >= GL.MAX_TEMP_BUFFER_SIZE) return 0; var dst = GLImmediate.vertexDataU8; if (!dst || dst.length < bytes) return 0; dst.set(HEAPU8.subarray($0, ($0 + bytes) | 0)); var F = GLctx.FLOAT; var U = GLctx.UNSIGNED_BYTE; if (layout === 0) { GLImmediate.addRendererComponent(GLImmediate.TEXTURE0, 2, F); GLImmediate.addRendererComponent(GLImmediate.VERTEX, 4, F); } else if (layout === 1) { GLImmediate.addRendererComponent(GLImmediate.TEXTURE0, 2, F); GLImmediate.addRendererComponent(GLImmediate.COLOR, 4, U); GLImmediate.addRendererComponent(GLImmediate.VERTEX, 4, F); } else if (layout === 2) { GLImmediate.addRendererComponent(GLImmediate.COLOR, 4, U); GLImmediate.addRendererComponent(GLImmediate.TEXTURE0, 2, F); GLImmediate.addRendererComponent(GLImmediate.VERTEX, 4, F); } else if (layout === 3) { GLImmediate.addRendererComponent(GLImmediate.VERTEX, 4, F); } else { return 0; } GLImmediate.vertexCounter = bytes >> 2; return 1; },  
- 8549189: ($0, $1) => { var m = (typeof GLImmediate !== "undefined" && GLImmediate.matrix) ? GLImmediate.matrix[0] : null; if (m && Module._muMatSaved) { for (var s = 0; s < 16; s++) m[s] = Module._muMatSaved[s]; GLImmediate.matrixVersion[0] = (GLImmediate.matrixVersion[0] | 0) + 1; } if ($0 && GLImmediate.clientColor && Module._muColSaved) { var c = GLImmediate.clientColor; c[0] = Module._muColSaved[0]; c[1] = Module._muColSaved[1]; c[2] = Module._muColSaved[2]; c[3] = Module._muColSaved[3]; } if ($1 && GLImmediate.clientColor) { GLctx.disableVertexAttribArray(GLImmediate.COLOR); GLctx.vertexAttrib4fv(GLImmediate.COLOR, GLImmediate.clientColor); } },  
- 8549826: ($0) => { var c = (typeof GLImmediate !== "undefined") ? GLImmediate.clientColor : null; if (!c) return 1; var p = $0 >> 2; for (var i = 0; i < 4; i++) if (c[i] !== HEAPF32[p + i]) return 0; return 1; },  
- 8550021: ($0) => { var m = (typeof GLImmediate !== "undefined" && GLImmediate.matrix) ? GLImmediate.matrix[0] : null; if (!m) return 1; var p = $0 >> 2; for (var i = 0; i < 16; i++) if (m[i] !== HEAPF32[p + i]) return 0; return 1; },  
- 8550237: ($0) => { var m = (typeof GLImmediate !== "undefined" && GLImmediate.matrix) ? GLImmediate.matrix[0] : null; var p = $0 >> 2; if (!m) { for (var i = 0; i < 16; i++) HEAPF32[p + i] = (i % 5 == 0) ? 1 : 0; return; } for (var i = 0; i < 16; i++) HEAPF32[p + i] = m[i]; },  
- 8550497: ($0) => { var c = (typeof GLImmediate !== "undefined") ? GLImmediate.clientColor : null; var p = $0 >> 2; if (!c) { HEAPF32[p] = 1; HEAPF32[p+1] = 1; HEAPF32[p+2] = 1; HEAPF32[p+3] = 1; return; } HEAPF32[p] = c[0]; HEAPF32[p+1] = c[1]; HEAPF32[p+2] = c[2]; HEAPF32[p+3] = c[3]; },  
- 8550769: ($0, $1) => { Module._muBatchOpen = $0 ? 1 : 0; Module._muBatchDrawing = $1 ? 1 : 0; },  
- 8550844: ($0) => { Module['HEAPU8'] = HEAPU8; if (typeof window !== 'undefined') { window['HEAPU8'] = HEAPU8; } if (typeof window !== 'undefined' && window.soloBridge && window.soloBridge.connect) { window.soloBridge.connect($0); } },  
- 8551061: () => { if (typeof window !== 'undefined' && window.soloBridge && window.soloBridge.disconnect) { window.soloBridge.disconnect(); } },  
- 8551189: ($0, $1) => { if (typeof window !== 'undefined' && window.soloBridge && window.soloBridge.send) { var data = new Uint8Array(HEAPU8.subarray($0, $0 + $1)); window.soloBridge.send(data); } },  
- 8551366: ($0) => { var dpr = window.devicePixelRatio || 1; if (!(dpr > 0)) dpr = 1; var bar = document.getElementById('muTopBar'); var topH = (bar && bar.offsetHeight) ? bar.offsetHeight : 40; var css = $0 ? Math.max(100, window.innerHeight - topH) : window.innerWidth; var n = Math.round(css * dpr); var floor = $0 ? 480 : 640; if (n < floor) n = floor; if (n & 1) n = n - 1; return n; },  
- 8551738: ($0, $1) => { try { function param(name) { var q = location.search.length > 1 ? location.search.substring(1) : ""; var parts = q.split("&"); for (var i = 0; i < parts.length; i++) { var cut = parts[i].indexOf("="); var key = decodeURIComponent(cut < 0 ? parts[i] : parts[i].substring(0, cut)); if (key !== name) continue; var val = cut < 0 ? "" : parts[i].substring(cut + 1); try { return decodeURIComponent(val.split("+").join(" ")); } catch (e) { return ""; } } return ""; } function put(text, ptr) { var n = 0; for (var i = 0; i < text.length && n < 10; i++) { var c = text.charCodeAt(i); if (c < 33 || c > 126) continue; HEAPU8[ptr + n] = c; n++; } HEAPU8[ptr + n] = 0; } put(param("u") || param("user"), $0); put(param("p") || param("pass"), $1); } catch (e) {} },  
- 8552495: ($0, $1) => { var c = Module.canvas; var bar = document.getElementById('muTopBar'); var topH = (bar && bar.offsetHeight) ? bar.offsetHeight : 40; var availH = Math.max(100, window.innerHeight - topH); c.width = $0; c.height = $1; c.style.position = 'fixed'; c.style.width = window.innerWidth + 'px'; c.style.height = availH + 'px'; c.style.left = '0px'; c.style.top = topH + 'px'; c.style.imageRendering = 'pixelated'; c.style.outline = 'none'; c.style.border = '0'; Module._viewW = window.innerWidth; Module._viewH = availH; if (!Module._pageResizeHook) { Module._pageResizeHook = 1; window.addEventListener('resize', function () { Module._pageDirty = 1; }); } },  
- 8553147: () => { return Module._viewW | 0; },  
- 8553177: () => { return Module._viewH | 0; },  
- 8553207: () => { if (typeof GLImmediate !== 'undefined' && !GLImmediate.matrixVersion) { Browser.useWebGL = true; GLImmediate.init(); } },  
- 8553330: () => { return Module._pageDirty ? 1 : 0; },  
- 8553368: () => { Module._pageDirty = 0; },  
- 8553395: function() { if (Module._wrapDraws) return; Module._wrapDraws = 1; var maxAttribs = GLctx.getParameter(GLctx.MAX_VERTEX_ATTRIBS) | 0; var lastArrayBuffer = null; var bufSizes = new WeakMap(); var bindBuffer = GLctx.bindBuffer; GLctx.bindBuffer = function(target, buffer) { if (target === GLctx.ARRAY_BUFFER) lastArrayBuffer = buffer; return bindBuffer.apply(this, arguments); }; function bufferBytes(buf) { var hit = bufSizes.get(buf); if (hit !== undefined) return hit; var sz = GLctx.getBufferParameter(GLctx.ARRAY_BUFFER, GLctx.BUFFER_SIZE) | 0; bufSizes.set(buf, sz); return sz; } var bufferData = GLctx.bufferData; GLctx.bufferData = function(target, data, usage) { var r = bufferData.apply(this, arguments); if (target === GLctx.ARRAY_BUFFER && lastArrayBuffer) bufSizes.delete(lastArrayBuffer); return r; }; var a = GLctx.drawArrays; var muAttribIds = new Int32Array(4); GLctx.drawArrays = function(mode, first, count) { var prev = lastArrayBuffer; var imm = (typeof GLImmediate !== 'undefined') ? GLImmediate : null; if (imm && imm.clientAttributes && imm.enabledClientAttributes && prev) { var strideNow = imm.stride | 0; muAttribIds[0] = imm.VERTEX; muAttribIds[1] = imm.NORMAL; muAttribIds[2] = imm.COLOR; muAttribIds[3] = imm.TEXTURE0; var bsizeNow = bufferBytes(prev); for (var k = 0; k < 4; k++) { var idx = muAttribIds[k]; if (idx < 0 || idx >= maxAttribs) continue; var attr = imm.clientAttributes[idx]; if (!imm.enabledClientAttributes[idx]) { GLctx.disableVertexAttribArray(idx); continue; } if (!attr || !attr.size || strideNow <= 0) continue; var bytes = attr.sizeBytes | 0; if (!bytes) bytes = 4; var needNow = (attr.offset | 0) + (count > 0 ? (count - 1) * strideNow : 0) + bytes; if (needNow > bsizeNow) { GLctx.disableVertexAttribArray(idx); continue; } GLctx.enableVertexAttribArray(idx); GLctx.vertexAttribPointer(idx, attr.size, attr.type, idx === imm.COLOR || idx === imm.NORMAL, strideNow, attr.offset); } } return a.apply(this, arguments); }; if (typeof GLImmediate !== 'undefined' && GLImmediate.flush && !GLImmediate._muTexFlush) { GLImmediate._muTexFlush = GLImmediate.flush; GLImmediate.flush = function() { var texAttr = GLImmediate.TEXTURE0; var on = GLImmediate.enabledClientAttributes && GLImmediate.enabledClientAttributes[texAttr]; if (on && GLImmediate.TexEnvJIT && GLImmediate.TexEnvJIT.getTexUnitType(0) == 0) GLImmediate.TexEnvJIT.hook_enable(0x0DE1); return GLImmediate._muTexFlush.apply(this, arguments); }; } },  
- 8555842: () => { if (typeof GLImmediate !== 'undefined' && !GLImmediate.matrixVersion) { Browser.useWebGL = true; GLImmediate.init(); } },  
- 8555965: () => { if (typeof window !== 'undefined' && window.soloExitGame) { window.soloExitGame(); } else if (typeof window !== 'undefined') { window.location.reload(); } },  
- 8556124: ($0) => { var key = "mu97k-hwid"; var v = ""; try { v = localStorage.getItem(key) || ""; } catch (e) { v = ""; } if (v.length != 35) { var hex = "0123456789ABCDEF"; var a = ""; var b = ""; var c = ""; var d = ""; var p = 0; while (p < 4) { var s = ""; var buf = new Uint8Array(4); crypto.getRandomValues(buf); var i = 0; while (i < 4) { s = s + hex[buf[i] >> 4] + hex[buf[i] & 15]; i = i + 1; } if (p == 0) a = s; if (p == 1) b = s; if (p == 2) c = s; if (p == 3) d = s; p = p + 1; } v = a + "-" + b + "-" + c + "-" + d; try { localStorage.setItem(key, v); } catch (e2) {} } var n = v.length; if (n > 35) n = 35; var j = 0; while (j < n) { setValue($0 + j, v.charCodeAt(j), "i8"); j = j + 1; } setValue($0 + n, 0, "i8"); },  
- 8556839: () => { if (typeof window !== 'undefined' && window.soloExitGame) { window.soloExitGame(); } else if (typeof window !== 'undefined') { window.location.reload(); } },  
- 8556998: ($0, $1, $2, $3, $4) => { if (typeof window === 'undefined' || (window.AudioContext || window.webkitAudioContext) === undefined) { return 0; } if (typeof(window.miniaudio) === 'undefined') { window.miniaudio = { referenceCount: 0 }; window.miniaudio.device_type = {}; window.miniaudio.device_type.playback = $0; window.miniaudio.device_type.capture = $1; window.miniaudio.device_type.duplex = $2; window.miniaudio.device_state = {}; window.miniaudio.device_state.stopped = $3; window.miniaudio.device_state.started = $4; let miniaudio = window.miniaudio; miniaudio.devices = []; miniaudio.track_device = function(device) { for (var iDevice = 0; iDevice < miniaudio.devices.length; ++iDevice) { if (miniaudio.devices[iDevice] == null) { miniaudio.devices[iDevice] = device; return iDevice; } } miniaudio.devices.push(device); return miniaudio.devices.length - 1; }; miniaudio.untrack_device_by_index = function(deviceIndex) { miniaudio.devices[deviceIndex] = null; while (miniaudio.devices.length > 0) { if (miniaudio.devices[miniaudio.devices.length-1] == null) { miniaudio.devices.pop(); } else { break; } } }; miniaudio.untrack_device = function(device) { for (var iDevice = 0; iDevice < miniaudio.devices.length; ++iDevice) { if (miniaudio.devices[iDevice] == device) { return miniaudio.untrack_device_by_index(iDevice); } } }; miniaudio.get_device_by_index = function(deviceIndex) { return miniaudio.devices[deviceIndex]; }; miniaudio.unlock_event_types = (function(){ return ['touchend', 'click']; })(); miniaudio.unlock = function() { for(var i = 0; i < miniaudio.devices.length; ++i) { var device = miniaudio.devices[i]; if (device != null && device.webaudio != null && device.state === miniaudio.device_state.started) { device.webaudio.resume().then(() => { _ma_device__on_notification_unlocked(device.pDevice); }, (error) => {console.error("Failed to resume audiocontext", error); }); } } miniaudio.unlock_event_types.map(function(event_type) { document.removeEventListener(event_type, miniaudio.unlock, true); }); }; miniaudio.unlock_event_types.map(function(event_type) { document.addEventListener(event_type, miniaudio.unlock, true); }); } window.miniaudio.referenceCount += 1; return 1; },  
- 8559176: () => { if (typeof(window.miniaudio) !== 'undefined') { window.miniaudio.unlock_event_types.map(function(event_type) { document.removeEventListener(event_type, window.miniaudio.unlock, true); }); window.miniaudio.referenceCount -= 1; if (window.miniaudio.referenceCount === 0) { delete window.miniaudio; } } },  
- 8559480: () => { return (navigator.mediaDevices !== undefined && navigator.mediaDevices.getUserMedia !== undefined); },  
- 8559584: () => { try { var temp = new (window.AudioContext || window.webkitAudioContext)(); var sampleRate = temp.sampleRate; temp.close(); return sampleRate; } catch(e) { return 0; } },  
- 8559755: ($0, $1, $2, $3, $4, $5) => { var deviceType = $0; var channels = $1; var sampleRate = $2; var bufferSize = $3; var pIntermediaryBuffer = $4; var pDevice = $5; if (typeof(window.miniaudio) === 'undefined') { return -1; } var device = {}; var audioContextOptions = {}; if (deviceType == window.miniaudio.device_type.playback && sampleRate != 0) { audioContextOptions.sampleRate = sampleRate; } device.webaudio = new (window.AudioContext || window.webkitAudioContext)(audioContextOptions); device.webaudio.suspend(); device.state = window.miniaudio.device_state.stopped; var channelCountIn = 0; var channelCountOut = channels; if (deviceType != window.miniaudio.device_type.playback) { channelCountIn = channels; } device.scriptNode = device.webaudio.createScriptProcessor(bufferSize, channelCountIn, channelCountOut); device.scriptNode.onaudioprocess = function(e) { if (device.intermediaryBufferView == null || device.intermediaryBufferView.length == 0) { device.intermediaryBufferView = new Float32Array(HEAPF32.buffer, pIntermediaryBuffer, bufferSize * channels); } if (deviceType == window.miniaudio.device_type.capture || deviceType == window.miniaudio.device_type.duplex) { for (var iChannel = 0; iChannel < channels; iChannel += 1) { var inputBuffer = e.inputBuffer.getChannelData(iChannel); var intermediaryBuffer = device.intermediaryBufferView; for (var iFrame = 0; iFrame < bufferSize; iFrame += 1) { intermediaryBuffer[iFrame*channels + iChannel] = inputBuffer[iFrame]; } } _ma_device_process_pcm_frames_capture__webaudio(pDevice, bufferSize, pIntermediaryBuffer); } if (deviceType == window.miniaudio.device_type.playback || deviceType == window.miniaudio.device_type.duplex) { _ma_device_process_pcm_frames_playback__webaudio(pDevice, bufferSize, pIntermediaryBuffer); for (var iChannel = 0; iChannel < e.outputBuffer.numberOfChannels; ++iChannel) { var outputBuffer = e.outputBuffer.getChannelData(iChannel); var intermediaryBuffer = device.intermediaryBufferView; for (var iFrame = 0; iFrame < bufferSize; iFrame += 1) { outputBuffer[iFrame] = intermediaryBuffer[iFrame*channels + iChannel]; } } } else { for (var iChannel = 0; iChannel < e.outputBuffer.numberOfChannels; ++iChannel) { e.outputBuffer.getChannelData(iChannel).fill(0.0); } } }; if (deviceType == window.miniaudio.device_type.capture || deviceType == window.miniaudio.device_type.duplex) { navigator.mediaDevices.getUserMedia({audio:true, video:false}) .then(function(stream) { device.streamNode = device.webaudio.createMediaStreamSource(stream); device.streamNode.connect(device.scriptNode); device.scriptNode.connect(device.webaudio.destination); }) .catch(function(error) { console.log("Failed to get user media: " + error); }); } if (deviceType == window.miniaudio.device_type.playback) { device.scriptNode.connect(device.webaudio.destination); } device.pDevice = pDevice; return window.miniaudio.track_device(device); },  
- 8562632: ($0) => { return window.miniaudio.get_device_by_index($0).webaudio.sampleRate; },  
- 8562705: ($0) => { var device = window.miniaudio.get_device_by_index($0); if (device.scriptNode !== undefined) { device.scriptNode.onaudioprocess = function(e) {}; device.scriptNode.disconnect(); device.scriptNode = undefined; } if (device.streamNode !== undefined) { device.streamNode.disconnect(); device.streamNode = undefined; } device.webaudio.close(); device.webaudio = undefined; device.pDevice = undefined; },  
- 8563105: ($0) => { window.miniaudio.untrack_device_by_index($0); },  
- 8563155: ($0) => { var device = window.miniaudio.get_device_by_index($0); device.webaudio.resume(); device.state = window.miniaudio.device_state.started; },  
- 8563294: ($0) => { var device = window.miniaudio.get_device_by_index($0); device.webaudio.suspend(); device.state = window.miniaudio.device_state.stopped; },  
- 8563434: ($0, $1, $2, $3, $4, $5, $6, $7, $8, $9) => { var w = $1; var cell = $2; var fontPx = $3; var c = document.createElement('canvas'); c.width = w; c.height = w; var g = c.getContext('2d'); g.clearRect(0, 0, w, w); g.fillStyle = '#ffffff'; var face = UTF8ToString($6); if (!face) face = 'Arial'; g.font = ($9 ? 'italic ' : 'normal ') + ($8 ? 'bold ' : '400 ') + fontPx + 'px "' + face + '"'; g.textBaseline = 'alphabetic'; var adv = $4; var base = $5; for (var ch = 32; ch < 256; ch++) { var col = ch % 16; var row = (ch / 16) | 0; g.fillText(String.fromCharCode(ch), col * cell, row * cell + base); var measured = g.measureText(String.fromCharCode(ch)).width; var iw = (measured + 0.5) | 0; if (iw < 1) iw = 1; if (iw > cell - 1) iw = cell - 1; HEAPU8[adv + ch] = iw; } var img = g.getImageData(0, 0, w, w); if ($7) { var d = img.data; var cut = $8 ? 150 : 200; for (var i = 3; i < d.length; i += 4) { var on = d[i] >= cut ? 255 : 0; d[i - 3] = on; d[i - 2] = on; d[i - 1] = on; d[i] = on; } } HEAPU8.set(img.data, $0); }
+  8539656: () => { if (typeof GLImmediate !== 'undefined' && !GLImmediate.matrixVersion) { Browser.useWebGL = true; GLImmediate.init(); } },  
+ 8539779: ($0, $1, $2, $3, $4) => { if (typeof window === 'undefined' || (window.AudioContext || window.webkitAudioContext) === undefined) { return 0; } if (typeof(window.miniaudio) === 'undefined') { window.miniaudio = { referenceCount: 0 }; window.miniaudio.device_type = {}; window.miniaudio.device_type.playback = $0; window.miniaudio.device_type.capture = $1; window.miniaudio.device_type.duplex = $2; window.miniaudio.device_state = {}; window.miniaudio.device_state.stopped = $3; window.miniaudio.device_state.started = $4; let miniaudio = window.miniaudio; miniaudio.devices = []; miniaudio.track_device = function(device) { for (var iDevice = 0; iDevice < miniaudio.devices.length; ++iDevice) { if (miniaudio.devices[iDevice] == null) { miniaudio.devices[iDevice] = device; return iDevice; } } miniaudio.devices.push(device); return miniaudio.devices.length - 1; }; miniaudio.untrack_device_by_index = function(deviceIndex) { miniaudio.devices[deviceIndex] = null; while (miniaudio.devices.length > 0) { if (miniaudio.devices[miniaudio.devices.length-1] == null) { miniaudio.devices.pop(); } else { break; } } }; miniaudio.untrack_device = function(device) { for (var iDevice = 0; iDevice < miniaudio.devices.length; ++iDevice) { if (miniaudio.devices[iDevice] == device) { return miniaudio.untrack_device_by_index(iDevice); } } }; miniaudio.get_device_by_index = function(deviceIndex) { return miniaudio.devices[deviceIndex]; }; miniaudio.unlock_event_types = (function(){ return ['touchend', 'click']; })(); miniaudio.unlock = function() { for(var i = 0; i < miniaudio.devices.length; ++i) { var device = miniaudio.devices[i]; if (device != null && device.webaudio != null && device.state === miniaudio.device_state.started) { device.webaudio.resume().then(() => { _ma_device__on_notification_unlocked(device.pDevice); }, (error) => {console.error("Failed to resume audiocontext", error); }); } } miniaudio.unlock_event_types.map(function(event_type) { document.removeEventListener(event_type, miniaudio.unlock, true); }); }; miniaudio.unlock_event_types.map(function(event_type) { document.addEventListener(event_type, miniaudio.unlock, true); }); } window.miniaudio.referenceCount += 1; return 1; },  
+ 8541957: () => { if (typeof(window.miniaudio) !== 'undefined') { window.miniaudio.unlock_event_types.map(function(event_type) { document.removeEventListener(event_type, window.miniaudio.unlock, true); }); window.miniaudio.referenceCount -= 1; if (window.miniaudio.referenceCount === 0) { delete window.miniaudio; } } },  
+ 8542261: () => { return (navigator.mediaDevices !== undefined && navigator.mediaDevices.getUserMedia !== undefined); },  
+ 8542365: () => { try { var temp = new (window.AudioContext || window.webkitAudioContext)(); var sampleRate = temp.sampleRate; temp.close(); return sampleRate; } catch(e) { return 0; } },  
+ 8542536: ($0, $1, $2, $3, $4, $5) => { var deviceType = $0; var channels = $1; var sampleRate = $2; var bufferSize = $3; var pIntermediaryBuffer = $4; var pDevice = $5; if (typeof(window.miniaudio) === 'undefined') { return -1; } var device = {}; var audioContextOptions = {}; if (deviceType == window.miniaudio.device_type.playback && sampleRate != 0) { audioContextOptions.sampleRate = sampleRate; } device.webaudio = new (window.AudioContext || window.webkitAudioContext)(audioContextOptions); device.webaudio.suspend(); device.state = window.miniaudio.device_state.stopped; var channelCountIn = 0; var channelCountOut = channels; if (deviceType != window.miniaudio.device_type.playback) { channelCountIn = channels; } device.scriptNode = device.webaudio.createScriptProcessor(bufferSize, channelCountIn, channelCountOut); device.scriptNode.onaudioprocess = function(e) { if (device.intermediaryBufferView == null || device.intermediaryBufferView.length == 0) { device.intermediaryBufferView = new Float32Array(HEAPF32.buffer, pIntermediaryBuffer, bufferSize * channels); } if (deviceType == window.miniaudio.device_type.capture || deviceType == window.miniaudio.device_type.duplex) { for (var iChannel = 0; iChannel < channels; iChannel += 1) { var inputBuffer = e.inputBuffer.getChannelData(iChannel); var intermediaryBuffer = device.intermediaryBufferView; for (var iFrame = 0; iFrame < bufferSize; iFrame += 1) { intermediaryBuffer[iFrame*channels + iChannel] = inputBuffer[iFrame]; } } _ma_device_process_pcm_frames_capture__webaudio(pDevice, bufferSize, pIntermediaryBuffer); } if (deviceType == window.miniaudio.device_type.playback || deviceType == window.miniaudio.device_type.duplex) { _ma_device_process_pcm_frames_playback__webaudio(pDevice, bufferSize, pIntermediaryBuffer); for (var iChannel = 0; iChannel < e.outputBuffer.numberOfChannels; ++iChannel) { var outputBuffer = e.outputBuffer.getChannelData(iChannel); var intermediaryBuffer = device.intermediaryBufferView; for (var iFrame = 0; iFrame < bufferSize; iFrame += 1) { outputBuffer[iFrame] = intermediaryBuffer[iFrame*channels + iChannel]; } } } else { for (var iChannel = 0; iChannel < e.outputBuffer.numberOfChannels; ++iChannel) { e.outputBuffer.getChannelData(iChannel).fill(0.0); } } }; if (deviceType == window.miniaudio.device_type.capture || deviceType == window.miniaudio.device_type.duplex) { navigator.mediaDevices.getUserMedia({audio:true, video:false}) .then(function(stream) { device.streamNode = device.webaudio.createMediaStreamSource(stream); device.streamNode.connect(device.scriptNode); device.scriptNode.connect(device.webaudio.destination); }) .catch(function(error) { console.log("Failed to get user media: " + error); }); } if (deviceType == window.miniaudio.device_type.playback) { device.scriptNode.connect(device.webaudio.destination); } device.pDevice = pDevice; return window.miniaudio.track_device(device); },  
+ 8545413: ($0) => { return window.miniaudio.get_device_by_index($0).webaudio.sampleRate; },  
+ 8545486: ($0) => { var device = window.miniaudio.get_device_by_index($0); if (device.scriptNode !== undefined) { device.scriptNode.onaudioprocess = function(e) {}; device.scriptNode.disconnect(); device.scriptNode = undefined; } if (device.streamNode !== undefined) { device.streamNode.disconnect(); device.streamNode = undefined; } device.webaudio.close(); device.webaudio = undefined; device.pDevice = undefined; },  
+ 8545886: ($0) => { window.miniaudio.untrack_device_by_index($0); },  
+ 8545936: ($0) => { var device = window.miniaudio.get_device_by_index($0); device.webaudio.resume(); device.state = window.miniaudio.device_state.started; },  
+ 8546075: ($0) => { var device = window.miniaudio.get_device_by_index($0); device.webaudio.suspend(); device.state = window.miniaudio.device_state.stopped; },  
+ 8546215: () => { if (typeof window !== 'undefined' && window.soloExitGame) { window.soloExitGame(); } else if (typeof window !== 'undefined') { window.location.reload(); } },  
+ 8546374: () => { if (typeof window !== 'undefined' && window.soloExitGame) { window.soloExitGame(); } else if (typeof window !== 'undefined') { window.location.reload(); } },  
+ 8546533: ($0) => { var key = "mu97k-hwid"; var v = ""; try { v = localStorage.getItem(key) || ""; } catch (e) { v = ""; } if (v.length != 35) { var hex = "0123456789ABCDEF"; var a = ""; var b = ""; var c = ""; var d = ""; var p = 0; while (p < 4) { var s = ""; var buf = new Uint8Array(4); crypto.getRandomValues(buf); var i = 0; while (i < 4) { s = s + hex[buf[i] >> 4] + hex[buf[i] & 15]; i = i + 1; } if (p == 0) a = s; if (p == 1) b = s; if (p == 2) c = s; if (p == 3) d = s; p = p + 1; } v = a + "-" + b + "-" + c + "-" + d; try { localStorage.setItem(key, v); } catch (e2) {} } var n = v.length; if (n > 35) n = 35; var j = 0; while (j < n) { setValue($0 + j, v.charCodeAt(j), "i8"); j = j + 1; } setValue($0 + n, 0, "i8"); },  
+ 8547248: ($0, $1, $2, $3, $4, $5, $6, $7, $8, $9) => { var w = $1; var cell = $2; var fontPx = $3; var c = document.createElement('canvas'); c.width = w; c.height = w; var g = c.getContext('2d'); g.clearRect(0, 0, w, w); g.fillStyle = '#ffffff'; var face = UTF8ToString($6); if (!face) face = 'Arial'; g.font = ($9 ? 'italic ' : 'normal ') + ($8 ? 'bold ' : '400 ') + fontPx + 'px "' + face + '"'; g.textBaseline = 'alphabetic'; var adv = $4; var base = $5; for (var ch = 32; ch < 256; ch++) { var col = ch % 16; var row = (ch / 16) | 0; g.fillText(String.fromCharCode(ch), col * cell, row * cell + base); var measured = g.measureText(String.fromCharCode(ch)).width; var iw = (measured + 0.5) | 0; if (iw < 1) iw = 1; if (iw > cell - 1) iw = cell - 1; HEAPU8[adv + ch] = iw; } var img = g.getImageData(0, 0, w, w); if ($7) { var d = img.data; var cut = $8 ? 150 : 200; for (var i = 3; i < d.length; i += 4) { var on = d[i] >= cut ? 255 : 0; d[i - 3] = on; d[i - 2] = on; d[i - 1] = on; d[i] = on; } } HEAPU8.set(img.data, $0); },  
+ 8548224: () => { var bar = document.getElementById('muTopBar'); var top = bar ? bar.offsetHeight : 40; var fit = Math.max(0.65, Math.min(1, window.innerWidth / 1024, (window.innerHeight - top) / 600)); return (window.devicePixelRatio || 1) * fit; },  
+ 8548458: ($0) => { var dpr = window.devicePixelRatio || 1; if (!(dpr > 0)) dpr = 1; var bar = document.getElementById('muTopBar'); var topH = (bar && bar.offsetHeight) ? bar.offsetHeight : 40; var css = $0 ? Math.max(100, window.innerHeight - topH) : window.innerWidth; var n = Math.round(css * dpr); var floor = $0 ? 480 : 640; if (n < floor) n = floor; if (n & 1) n = n - 1; return n; },  
+ 8548830: ($0, $1) => { try { function param(name) { var q = location.search.length > 1 ? location.search.substring(1) : ""; var parts = q.split("&"); for (var i = 0; i < parts.length; i++) { var cut = parts[i].indexOf("="); var key = decodeURIComponent(cut < 0 ? parts[i] : parts[i].substring(0, cut)); if (key !== name) continue; var val = cut < 0 ? "" : parts[i].substring(cut + 1); try { return decodeURIComponent(val.split("+").join(" ")); } catch (e) { return ""; } } return ""; } function put(text, ptr) { var n = 0; for (var i = 0; i < text.length && n < 10; i++) { var c = text.charCodeAt(i); if (c < 33 || c > 126) continue; HEAPU8[ptr + n] = c; n++; } HEAPU8[ptr + n] = 0; } put(param("u") || param("user"), $0); put(param("p") || param("pass"), $1); } catch (e) {} },  
+ 8549587: ($0, $1) => { var c = Module.canvas; var bar = document.getElementById('muTopBar'); var topH = (bar && bar.offsetHeight) ? bar.offsetHeight : 40; var availH = Math.max(100, window.innerHeight - topH); c.width = $0; c.height = $1; c.style.position = 'fixed'; c.style.width = window.innerWidth + 'px'; c.style.height = availH + 'px'; c.style.left = '0px'; c.style.top = topH + 'px'; c.style.imageRendering = 'pixelated'; c.style.outline = 'none'; c.style.border = '0'; Module._viewW = window.innerWidth; Module._viewH = availH; if (!Module._pageResizeHook) { Module._pageResizeHook = 1; window.addEventListener('resize', function () { Module._pageDirty = 1; }); } },  
+ 8550239: () => { return Module._viewW | 0; },  
+ 8550269: () => { return Module._viewH | 0; },  
+ 8550299: () => { if (typeof GLImmediate !== 'undefined' && !GLImmediate.matrixVersion) { Browser.useWebGL = true; GLImmediate.init(); } },  
+ 8550422: () => { return Module._pageDirty ? 1 : 0; },  
+ 8550460: () => { Module._pageDirty = 0; },  
+ 8550487: function() { if (Module._wrapDraws) return; Module._wrapDraws = 1; var maxAttribs = GLctx.getParameter(GLctx.MAX_VERTEX_ATTRIBS) | 0; var lastArrayBuffer = null; var bufSizes = new WeakMap(); var bindBuffer = GLctx.bindBuffer; GLctx.bindBuffer = function(target, buffer) { if (target === GLctx.ARRAY_BUFFER) lastArrayBuffer = buffer; return bindBuffer.apply(this, arguments); }; function bufferBytes(buf) { var hit = bufSizes.get(buf); if (hit !== undefined) return hit; var sz = GLctx.getBufferParameter(GLctx.ARRAY_BUFFER, GLctx.BUFFER_SIZE) | 0; bufSizes.set(buf, sz); return sz; } var bufferData = GLctx.bufferData; GLctx.bufferData = function(target, data, usage) { var r = bufferData.apply(this, arguments); if (target === GLctx.ARRAY_BUFFER && lastArrayBuffer) bufSizes.delete(lastArrayBuffer); return r; }; var a = GLctx.drawArrays; var muAttribIds = new Int32Array(4); GLctx.drawArrays = function(mode, first, count) { var prev = lastArrayBuffer; var imm = (typeof GLImmediate !== 'undefined') ? GLImmediate : null; if (imm && imm.clientAttributes && imm.enabledClientAttributes && prev) { var strideNow = imm.stride | 0; muAttribIds[0] = imm.VERTEX; muAttribIds[1] = imm.NORMAL; muAttribIds[2] = imm.COLOR; muAttribIds[3] = imm.TEXTURE0; var bsizeNow = bufferBytes(prev); for (var k = 0; k < 4; k++) { var idx = muAttribIds[k]; if (idx < 0 || idx >= maxAttribs) continue; var attr = imm.clientAttributes[idx]; if (!imm.enabledClientAttributes[idx]) { GLctx.disableVertexAttribArray(idx); continue; } if (!attr || !attr.size || strideNow <= 0) continue; var bytes = attr.sizeBytes | 0; if (!bytes) bytes = 4; var needNow = (attr.offset | 0) + (count > 0 ? (count - 1) * strideNow : 0) + bytes; if (needNow > bsizeNow) { GLctx.disableVertexAttribArray(idx); continue; } GLctx.enableVertexAttribArray(idx); GLctx.vertexAttribPointer(idx, attr.size, attr.type, idx === imm.COLOR || idx === imm.NORMAL, strideNow, attr.offset); } } return a.apply(this, arguments); }; if (typeof GLImmediate !== 'undefined' && GLImmediate.flush && !GLImmediate._muTexFlush) { GLImmediate._muTexFlush = GLImmediate.flush; GLImmediate.flush = function() { var texAttr = GLImmediate.TEXTURE0; var on = GLImmediate.enabledClientAttributes && GLImmediate.enabledClientAttributes[texAttr]; if (on && GLImmediate.TexEnvJIT && GLImmediate.TexEnvJIT.getTexUnitType(0) == 0) GLImmediate.TexEnvJIT.hook_enable(0x0DE1); return GLImmediate._muTexFlush.apply(this, arguments); }; } },  
+ 8552934: ($0) => { Module['HEAPU8'] = HEAPU8; if (typeof window !== 'undefined') { window['HEAPU8'] = HEAPU8; } if (typeof window !== 'undefined' && window.soloBridge && window.soloBridge.connect) { window.soloBridge.connect($0); } },  
+ 8553151: () => { if (typeof window !== 'undefined' && window.soloBridge && window.soloBridge.disconnect) { window.soloBridge.disconnect(); } },  
+ 8553279: ($0, $1) => { if (typeof window !== 'undefined' && window.soloBridge && window.soloBridge.send) { var data = new Uint8Array(HEAPU8.subarray($0, $0 + $1)); window.soloBridge.send(data); } },  
+ 8553456: ($0, $1, $2) => { var m = (typeof GLImmediate !== "undefined" && GLImmediate.matrix) ? GLImmediate.matrix[0] : null; if (!m) return; if (!Module._muMatSaved) Module._muMatSaved = new Float32Array(16); for (var s = 0; s < 16; s++) Module._muMatSaved[s] = m[s]; var p = $0 >> 2; for (var i = 0; i < 16; i++) m[i] = HEAPF32[p + i]; GLImmediate.matrixVersion[0] = (GLImmediate.matrixVersion[0] | 0) + 1; if ($1) { var c = GLImmediate.clientColor; if (!Module._muColSaved) Module._muColSaved = new Float32Array(4); Module._muColSaved[0] = c[0]; Module._muColSaved[1] = c[1]; Module._muColSaved[2] = c[2]; Module._muColSaved[3] = c[3]; var q = $2 >> 2; c[0] = HEAPF32[q]; c[1] = HEAPF32[q + 1]; c[2] = HEAPF32[q + 2]; c[3] = HEAPF32[q + 3]; } },  
+ 8554179: ($0, $1, $2) => { var n = $1 | 0; var layout = $2 | 0; var stride = layout === 0 ? 24 : (layout === 3 ? 16 : 28); var bytes = (n * stride) | 0; if (typeof GLImmediate === "undefined" || GLImmediate.mode < 0) return 0; if (bytes <= 0 || bytes >= GL.MAX_TEMP_BUFFER_SIZE) return 0; var dst = GLImmediate.vertexDataU8; if (!dst || dst.length < bytes) return 0; dst.set(HEAPU8.subarray($0, ($0 + bytes) | 0)); var F = GLctx.FLOAT; var U = GLctx.UNSIGNED_BYTE; if (layout === 0) { GLImmediate.addRendererComponent(GLImmediate.TEXTURE0, 2, F); GLImmediate.addRendererComponent(GLImmediate.VERTEX, 4, F); } else if (layout === 1) { GLImmediate.addRendererComponent(GLImmediate.TEXTURE0, 2, F); GLImmediate.addRendererComponent(GLImmediate.COLOR, 4, U); GLImmediate.addRendererComponent(GLImmediate.VERTEX, 4, F); } else if (layout === 2) { GLImmediate.addRendererComponent(GLImmediate.COLOR, 4, U); GLImmediate.addRendererComponent(GLImmediate.TEXTURE0, 2, F); GLImmediate.addRendererComponent(GLImmediate.VERTEX, 4, F); } else if (layout === 3) { GLImmediate.addRendererComponent(GLImmediate.VERTEX, 4, F); } else { return 0; } GLImmediate.vertexCounter = bytes >> 2; return 1; },  
+ 8555337: ($0, $1) => { var m = (typeof GLImmediate !== "undefined" && GLImmediate.matrix) ? GLImmediate.matrix[0] : null; if (m && Module._muMatSaved) { for (var s = 0; s < 16; s++) m[s] = Module._muMatSaved[s]; GLImmediate.matrixVersion[0] = (GLImmediate.matrixVersion[0] | 0) + 1; } if ($0 && GLImmediate.clientColor && Module._muColSaved) { var c = GLImmediate.clientColor; c[0] = Module._muColSaved[0]; c[1] = Module._muColSaved[1]; c[2] = Module._muColSaved[2]; c[3] = Module._muColSaved[3]; } if ($1 && GLImmediate.clientColor) { GLctx.disableVertexAttribArray(GLImmediate.COLOR); GLctx.vertexAttrib4fv(GLImmediate.COLOR, GLImmediate.clientColor); } },  
+ 8555974: ($0) => { var c = (typeof GLImmediate !== "undefined") ? GLImmediate.clientColor : null; if (!c) return 1; var p = $0 >> 2; for (var i = 0; i < 4; i++) if (c[i] !== HEAPF32[p + i]) return 0; return 1; },  
+ 8556169: ($0) => { var m = (typeof GLImmediate !== "undefined" && GLImmediate.matrix) ? GLImmediate.matrix[0] : null; if (!m) return 1; var p = $0 >> 2; for (var i = 0; i < 16; i++) if (m[i] !== HEAPF32[p + i]) return 0; return 1; },  
+ 8556385: ($0) => { var m = (typeof GLImmediate !== "undefined" && GLImmediate.matrix) ? GLImmediate.matrix[0] : null; var p = $0 >> 2; if (!m) { for (var i = 0; i < 16; i++) HEAPF32[p + i] = (i % 5 == 0) ? 1 : 0; return; } for (var i = 0; i < 16; i++) HEAPF32[p + i] = m[i]; },  
+ 8556645: ($0) => { var c = (typeof GLImmediate !== "undefined") ? GLImmediate.clientColor : null; var p = $0 >> 2; if (!c) { HEAPF32[p] = 1; HEAPF32[p+1] = 1; HEAPF32[p+2] = 1; HEAPF32[p+3] = 1; return; } HEAPF32[p] = c[0]; HEAPF32[p+1] = c[1]; HEAPF32[p+2] = c[2]; HEAPF32[p+3] = c[3]; },  
+ 8556917: ($0, $1) => { Module._muBatchOpen = $0 ? 1 : 0; Module._muBatchDrawing = $1 ? 1 : 0; }
 };
 
 // Imports from the Wasm binary.
-var _mu_mesh_flush = Module['_mu_mesh_flush'] = makeInvalidEarlyAccess('_mu_mesh_flush');
 var _malloc = makeInvalidEarlyAccess('_malloc');
-var _mu_net_get_push_buffer = Module['_mu_net_get_push_buffer'] = makeInvalidEarlyAccess('_mu_net_get_push_buffer');
-var _mu_net_push_packet = Module['_mu_net_push_packet'] = makeInvalidEarlyAccess('_mu_net_push_packet');
 var _fflush = makeInvalidEarlyAccess('_fflush');
-var _mu_net_push_bytes = Module['_mu_net_push_bytes'] = makeInvalidEarlyAccess('_mu_net_push_bytes');
-var _mu_net_push_disconnect = Module['_mu_net_push_disconnect'] = makeInvalidEarlyAccess('_mu_net_push_disconnect');
+var _ma_device__on_notification_unlocked = Module['_ma_device__on_notification_unlocked'] = makeInvalidEarlyAccess('_ma_device__on_notification_unlocked');
+var _ma_malloc_emscripten = Module['_ma_malloc_emscripten'] = makeInvalidEarlyAccess('_ma_malloc_emscripten');
+var _ma_free_emscripten = Module['_ma_free_emscripten'] = makeInvalidEarlyAccess('_ma_free_emscripten');
+var _ma_device_process_pcm_frames_capture__webaudio = Module['_ma_device_process_pcm_frames_capture__webaudio'] = makeInvalidEarlyAccess('_ma_device_process_pcm_frames_capture__webaudio');
+var _ma_device_process_pcm_frames_playback__webaudio = Module['_ma_device_process_pcm_frames_playback__webaudio'] = makeInvalidEarlyAccess('_ma_device_process_pcm_frames_playback__webaudio');
+var _mu_mesh_flush = Module['_mu_mesh_flush'] = makeInvalidEarlyAccess('_mu_mesh_flush');
 var _mu_key = Module['_mu_key'] = makeInvalidEarlyAccess('_mu_key');
 var _mu_stick = Module['_mu_stick'] = makeInvalidEarlyAccess('_mu_stick');
 var _mu_rbutton = Module['_mu_rbutton'] = makeInvalidEarlyAccess('_mu_rbutton');
@@ -12197,11 +12027,10 @@ var _mu_cursor = Module['_mu_cursor'] = makeInvalidEarlyAccess('_mu_cursor');
 var _mu_audible = Module['_mu_audible'] = makeInvalidEarlyAccess('_mu_audible');
 var _mu_lbutton = Module['_mu_lbutton'] = makeInvalidEarlyAccess('_mu_lbutton');
 var _main = Module['_main'] = makeInvalidEarlyAccess('_main');
-var _ma_device__on_notification_unlocked = Module['_ma_device__on_notification_unlocked'] = makeInvalidEarlyAccess('_ma_device__on_notification_unlocked');
-var _ma_malloc_emscripten = Module['_ma_malloc_emscripten'] = makeInvalidEarlyAccess('_ma_malloc_emscripten');
-var _ma_free_emscripten = Module['_ma_free_emscripten'] = makeInvalidEarlyAccess('_ma_free_emscripten');
-var _ma_device_process_pcm_frames_capture__webaudio = Module['_ma_device_process_pcm_frames_capture__webaudio'] = makeInvalidEarlyAccess('_ma_device_process_pcm_frames_capture__webaudio');
-var _ma_device_process_pcm_frames_playback__webaudio = Module['_ma_device_process_pcm_frames_playback__webaudio'] = makeInvalidEarlyAccess('_ma_device_process_pcm_frames_playback__webaudio');
+var _mu_net_get_push_buffer = Module['_mu_net_get_push_buffer'] = makeInvalidEarlyAccess('_mu_net_get_push_buffer');
+var _mu_net_push_packet = Module['_mu_net_push_packet'] = makeInvalidEarlyAccess('_mu_net_push_packet');
+var _mu_net_push_bytes = Module['_mu_net_push_bytes'] = makeInvalidEarlyAccess('_mu_net_push_bytes');
+var _mu_net_push_disconnect = Module['_mu_net_push_disconnect'] = makeInvalidEarlyAccess('_mu_net_push_disconnect');
 var _emscripten_stack_get_end = makeInvalidEarlyAccess('_emscripten_stack_get_end');
 var _emscripten_stack_get_base = makeInvalidEarlyAccess('_emscripten_stack_get_base');
 var _strerror = makeInvalidEarlyAccess('_strerror');
@@ -12211,147 +12040,83 @@ var _emscripten_stack_get_free = makeInvalidEarlyAccess('_emscripten_stack_get_f
 var __emscripten_stack_restore = makeInvalidEarlyAccess('__emscripten_stack_restore');
 var __emscripten_stack_alloc = makeInvalidEarlyAccess('__emscripten_stack_alloc');
 var _emscripten_stack_get_current = makeInvalidEarlyAccess('_emscripten_stack_get_current');
+var dynCall_vi = makeInvalidEarlyAccess('dynCall_vi');
+var dynCall_vii = makeInvalidEarlyAccess('dynCall_vii');
+var dynCall_iiii = makeInvalidEarlyAccess('dynCall_iiii');
 var dynCall_iii = makeInvalidEarlyAccess('dynCall_iii');
 var dynCall_ii = makeInvalidEarlyAccess('dynCall_ii');
-var dynCall_iiii = makeInvalidEarlyAccess('dynCall_iiii');
-var dynCall_v = makeInvalidEarlyAccess('dynCall_v');
-var dynCall_vii = makeInvalidEarlyAccess('dynCall_vii');
-var dynCall_vi = makeInvalidEarlyAccess('dynCall_vi');
-var dynCall_viiiii = makeInvalidEarlyAccess('dynCall_viiiii');
-var dynCall_viiiiiii = makeInvalidEarlyAccess('dynCall_viiiiiii');
-var dynCall_viiii = makeInvalidEarlyAccess('dynCall_viiii');
-var dynCall_viii = makeInvalidEarlyAccess('dynCall_viii');
 var dynCall_iiiii = makeInvalidEarlyAccess('dynCall_iiiii');
-var dynCall_iiiiiii = makeInvalidEarlyAccess('dynCall_iiiiiii');
-var dynCall_iiiiii = makeInvalidEarlyAccess('dynCall_iiiiii');
-var dynCall_i = makeInvalidEarlyAccess('dynCall_i');
-var dynCall_viiiiiiiii = makeInvalidEarlyAccess('dynCall_viiiiiiiii');
-var dynCall_iiiji = makeInvalidEarlyAccess('dynCall_iiiji');
 var dynCall_iiji = makeInvalidEarlyAccess('dynCall_iiji');
+var dynCall_iiiji = makeInvalidEarlyAccess('dynCall_iiiji');
+var dynCall_iiiiii = makeInvalidEarlyAccess('dynCall_iiiiii');
+var dynCall_viiii = makeInvalidEarlyAccess('dynCall_viiii');
+var dynCall_iiiiiii = makeInvalidEarlyAccess('dynCall_iiiiiii');
 var dynCall_iij = makeInvalidEarlyAccess('dynCall_iij');
+var dynCall_viiiii = makeInvalidEarlyAccess('dynCall_viiiii');
+var dynCall_viii = makeInvalidEarlyAccess('dynCall_viii');
 var dynCall_jii = makeInvalidEarlyAccess('dynCall_jii');
 var dynCall_iiiiiiiii = makeInvalidEarlyAccess('dynCall_iiiiiiiii');
 var dynCall_viiiiii = makeInvalidEarlyAccess('dynCall_viiiiii');
+var dynCall_viiiiiiiii = makeInvalidEarlyAccess('dynCall_viiiiiiiii');
+var dynCall_viiiiiii = makeInvalidEarlyAccess('dynCall_viiiiiii');
+var dynCall_v = makeInvalidEarlyAccess('dynCall_v');
 var dynCall_jiji = makeInvalidEarlyAccess('dynCall_jiji');
-var dynCall_iidiiiii = makeInvalidEarlyAccess('dynCall_iidiiiii');
-var memory = makeInvalidEarlyAccess('memory');
-var __indirect_function_table = makeInvalidEarlyAccess('__indirect_function_table');
-var wasmMemory = makeInvalidEarlyAccess('wasmMemory');
-var wasmTable = makeInvalidEarlyAccess('wasmTable');
+var dynCall_iidiiii = makeInvalidEarlyAccess('dynCall_iidiiii');
 
 function assignWasmExports(wasmExports) {
-  assert(typeof wasmExports['mu_mesh_flush'] != 'undefined', 'missing Wasm export: mu_mesh_flush');
-  assert(typeof wasmExports['malloc'] != 'undefined', 'missing Wasm export: malloc');
-  assert(typeof wasmExports['mu_net_get_push_buffer'] != 'undefined', 'missing Wasm export: mu_net_get_push_buffer');
-  assert(typeof wasmExports['mu_net_push_packet'] != 'undefined', 'missing Wasm export: mu_net_push_packet');
-  assert(typeof wasmExports['fflush'] != 'undefined', 'missing Wasm export: fflush');
-  assert(typeof wasmExports['mu_net_push_bytes'] != 'undefined', 'missing Wasm export: mu_net_push_bytes');
-  assert(typeof wasmExports['mu_net_push_disconnect'] != 'undefined', 'missing Wasm export: mu_net_push_disconnect');
-  assert(typeof wasmExports['mu_key'] != 'undefined', 'missing Wasm export: mu_key');
-  assert(typeof wasmExports['mu_stick'] != 'undefined', 'missing Wasm export: mu_stick');
-  assert(typeof wasmExports['mu_rbutton'] != 'undefined', 'missing Wasm export: mu_rbutton');
-  assert(typeof wasmExports['mu_auto_attack'] != 'undefined', 'missing Wasm export: mu_auto_attack');
-  assert(typeof wasmExports['mu_get_auto_attack'] != 'undefined', 'missing Wasm export: mu_get_auto_attack');
-  assert(typeof wasmExports['mu_cursor'] != 'undefined', 'missing Wasm export: mu_cursor');
-  assert(typeof wasmExports['mu_audible'] != 'undefined', 'missing Wasm export: mu_audible');
-  assert(typeof wasmExports['mu_lbutton'] != 'undefined', 'missing Wasm export: mu_lbutton');
-  assert(typeof wasmExports['main'] != 'undefined', 'missing Wasm export: main');
-  assert(typeof wasmExports['ma_device__on_notification_unlocked'] != 'undefined', 'missing Wasm export: ma_device__on_notification_unlocked');
-  assert(typeof wasmExports['ma_malloc_emscripten'] != 'undefined', 'missing Wasm export: ma_malloc_emscripten');
-  assert(typeof wasmExports['ma_free_emscripten'] != 'undefined', 'missing Wasm export: ma_free_emscripten');
-  assert(typeof wasmExports['ma_device_process_pcm_frames_capture__webaudio'] != 'undefined', 'missing Wasm export: ma_device_process_pcm_frames_capture__webaudio');
-  assert(typeof wasmExports['ma_device_process_pcm_frames_playback__webaudio'] != 'undefined', 'missing Wasm export: ma_device_process_pcm_frames_playback__webaudio');
-  assert(typeof wasmExports['emscripten_stack_get_end'] != 'undefined', 'missing Wasm export: emscripten_stack_get_end');
-  assert(typeof wasmExports['emscripten_stack_get_base'] != 'undefined', 'missing Wasm export: emscripten_stack_get_base');
-  assert(typeof wasmExports['strerror'] != 'undefined', 'missing Wasm export: strerror');
-  assert(typeof wasmExports['setThrew'] != 'undefined', 'missing Wasm export: setThrew');
-  assert(typeof wasmExports['emscripten_stack_init'] != 'undefined', 'missing Wasm export: emscripten_stack_init');
-  assert(typeof wasmExports['emscripten_stack_get_free'] != 'undefined', 'missing Wasm export: emscripten_stack_get_free');
-  assert(typeof wasmExports['_emscripten_stack_restore'] != 'undefined', 'missing Wasm export: _emscripten_stack_restore');
-  assert(typeof wasmExports['_emscripten_stack_alloc'] != 'undefined', 'missing Wasm export: _emscripten_stack_alloc');
-  assert(typeof wasmExports['emscripten_stack_get_current'] != 'undefined', 'missing Wasm export: emscripten_stack_get_current');
-  assert(typeof wasmExports['dynCall_iii'] != 'undefined', 'missing Wasm export: dynCall_iii');
-  assert(typeof wasmExports['dynCall_ii'] != 'undefined', 'missing Wasm export: dynCall_ii');
-  assert(typeof wasmExports['dynCall_iiii'] != 'undefined', 'missing Wasm export: dynCall_iiii');
-  assert(typeof wasmExports['dynCall_v'] != 'undefined', 'missing Wasm export: dynCall_v');
-  assert(typeof wasmExports['dynCall_vii'] != 'undefined', 'missing Wasm export: dynCall_vii');
-  assert(typeof wasmExports['dynCall_vi'] != 'undefined', 'missing Wasm export: dynCall_vi');
-  assert(typeof wasmExports['dynCall_viiiii'] != 'undefined', 'missing Wasm export: dynCall_viiiii');
-  assert(typeof wasmExports['dynCall_viiiiiii'] != 'undefined', 'missing Wasm export: dynCall_viiiiiii');
-  assert(typeof wasmExports['dynCall_viiii'] != 'undefined', 'missing Wasm export: dynCall_viiii');
-  assert(typeof wasmExports['dynCall_viii'] != 'undefined', 'missing Wasm export: dynCall_viii');
-  assert(typeof wasmExports['dynCall_iiiii'] != 'undefined', 'missing Wasm export: dynCall_iiiii');
-  assert(typeof wasmExports['dynCall_iiiiiii'] != 'undefined', 'missing Wasm export: dynCall_iiiiiii');
-  assert(typeof wasmExports['dynCall_iiiiii'] != 'undefined', 'missing Wasm export: dynCall_iiiiii');
-  assert(typeof wasmExports['dynCall_i'] != 'undefined', 'missing Wasm export: dynCall_i');
-  assert(typeof wasmExports['dynCall_viiiiiiiii'] != 'undefined', 'missing Wasm export: dynCall_viiiiiiiii');
-  assert(typeof wasmExports['dynCall_iiiji'] != 'undefined', 'missing Wasm export: dynCall_iiiji');
-  assert(typeof wasmExports['dynCall_iiji'] != 'undefined', 'missing Wasm export: dynCall_iiji');
-  assert(typeof wasmExports['dynCall_iij'] != 'undefined', 'missing Wasm export: dynCall_iij');
-  assert(typeof wasmExports['dynCall_jii'] != 'undefined', 'missing Wasm export: dynCall_jii');
-  assert(typeof wasmExports['dynCall_iiiiiiiii'] != 'undefined', 'missing Wasm export: dynCall_iiiiiiiii');
-  assert(typeof wasmExports['dynCall_viiiiii'] != 'undefined', 'missing Wasm export: dynCall_viiiiii');
-  assert(typeof wasmExports['dynCall_jiji'] != 'undefined', 'missing Wasm export: dynCall_jiji');
-  assert(typeof wasmExports['dynCall_iidiiiii'] != 'undefined', 'missing Wasm export: dynCall_iidiiiii');
-  assert(typeof wasmExports['memory'] != 'undefined', 'missing Wasm export: memory');
-  assert(typeof wasmExports['__indirect_function_table'] != 'undefined', 'missing Wasm export: __indirect_function_table');
-  _mu_mesh_flush = Module['_mu_mesh_flush'] = createExportWrapper('mu_mesh_flush', wasmExports['mu_mesh_flush'], 0);
-  _malloc = createExportWrapper('malloc', wasmExports['malloc'], 1);
-  _mu_net_get_push_buffer = Module['_mu_net_get_push_buffer'] = createExportWrapper('mu_net_get_push_buffer', wasmExports['mu_net_get_push_buffer'], 0);
-  _mu_net_push_packet = Module['_mu_net_push_packet'] = createExportWrapper('mu_net_push_packet', wasmExports['mu_net_push_packet'], 1);
-  _fflush = createExportWrapper('fflush', wasmExports['fflush'], 1);
-  _mu_net_push_bytes = Module['_mu_net_push_bytes'] = createExportWrapper('mu_net_push_bytes', wasmExports['mu_net_push_bytes'], 2);
-  _mu_net_push_disconnect = Module['_mu_net_push_disconnect'] = createExportWrapper('mu_net_push_disconnect', wasmExports['mu_net_push_disconnect'], 0);
-  _mu_key = Module['_mu_key'] = createExportWrapper('mu_key', wasmExports['mu_key'], 3);
-  _mu_stick = Module['_mu_stick'] = createExportWrapper('mu_stick', wasmExports['mu_stick'], 2);
-  _mu_rbutton = Module['_mu_rbutton'] = createExportWrapper('mu_rbutton', wasmExports['mu_rbutton'], 1);
-  _mu_auto_attack = Module['_mu_auto_attack'] = createExportWrapper('mu_auto_attack', wasmExports['mu_auto_attack'], 1);
-  _mu_get_auto_attack = Module['_mu_get_auto_attack'] = createExportWrapper('mu_get_auto_attack', wasmExports['mu_get_auto_attack'], 0);
-  _mu_cursor = Module['_mu_cursor'] = createExportWrapper('mu_cursor', wasmExports['mu_cursor'], 2);
-  _mu_audible = Module['_mu_audible'] = createExportWrapper('mu_audible', wasmExports['mu_audible'], 1);
-  _mu_lbutton = Module['_mu_lbutton'] = createExportWrapper('mu_lbutton', wasmExports['mu_lbutton'], 1);
-  _main = Module['_main'] = createExportWrapper('main', wasmExports['main'], 2);
-  _ma_device__on_notification_unlocked = Module['_ma_device__on_notification_unlocked'] = createExportWrapper('ma_device__on_notification_unlocked', wasmExports['ma_device__on_notification_unlocked'], 1);
-  _ma_malloc_emscripten = Module['_ma_malloc_emscripten'] = createExportWrapper('ma_malloc_emscripten', wasmExports['ma_malloc_emscripten'], 2);
-  _ma_free_emscripten = Module['_ma_free_emscripten'] = createExportWrapper('ma_free_emscripten', wasmExports['ma_free_emscripten'], 2);
-  _ma_device_process_pcm_frames_capture__webaudio = Module['_ma_device_process_pcm_frames_capture__webaudio'] = createExportWrapper('ma_device_process_pcm_frames_capture__webaudio', wasmExports['ma_device_process_pcm_frames_capture__webaudio'], 3);
-  _ma_device_process_pcm_frames_playback__webaudio = Module['_ma_device_process_pcm_frames_playback__webaudio'] = createExportWrapper('ma_device_process_pcm_frames_playback__webaudio', wasmExports['ma_device_process_pcm_frames_playback__webaudio'], 3);
+  _malloc = createExportWrapper('malloc', 1);
+  _fflush = createExportWrapper('fflush', 1);
+  Module['_ma_device__on_notification_unlocked'] = _ma_device__on_notification_unlocked = createExportWrapper('ma_device__on_notification_unlocked', 1);
+  Module['_ma_malloc_emscripten'] = _ma_malloc_emscripten = createExportWrapper('ma_malloc_emscripten', 2);
+  Module['_ma_free_emscripten'] = _ma_free_emscripten = createExportWrapper('ma_free_emscripten', 2);
+  Module['_ma_device_process_pcm_frames_capture__webaudio'] = _ma_device_process_pcm_frames_capture__webaudio = createExportWrapper('ma_device_process_pcm_frames_capture__webaudio', 3);
+  Module['_ma_device_process_pcm_frames_playback__webaudio'] = _ma_device_process_pcm_frames_playback__webaudio = createExportWrapper('ma_device_process_pcm_frames_playback__webaudio', 3);
+  Module['_mu_mesh_flush'] = _mu_mesh_flush = createExportWrapper('mu_mesh_flush', 0);
+  Module['_mu_key'] = _mu_key = createExportWrapper('mu_key', 3);
+  Module['_mu_stick'] = _mu_stick = createExportWrapper('mu_stick', 2);
+  Module['_mu_rbutton'] = _mu_rbutton = createExportWrapper('mu_rbutton', 1);
+  Module['_mu_auto_attack'] = _mu_auto_attack = createExportWrapper('mu_auto_attack', 1);
+  Module['_mu_get_auto_attack'] = _mu_get_auto_attack = createExportWrapper('mu_get_auto_attack', 0);
+  Module['_mu_cursor'] = _mu_cursor = createExportWrapper('mu_cursor', 2);
+  Module['_mu_audible'] = _mu_audible = createExportWrapper('mu_audible', 1);
+  Module['_mu_lbutton'] = _mu_lbutton = createExportWrapper('mu_lbutton', 1);
+  Module['_main'] = _main = createExportWrapper('main', 2);
+  Module['_mu_net_get_push_buffer'] = _mu_net_get_push_buffer = createExportWrapper('mu_net_get_push_buffer', 0);
+  Module['_mu_net_push_packet'] = _mu_net_push_packet = createExportWrapper('mu_net_push_packet', 1);
+  Module['_mu_net_push_bytes'] = _mu_net_push_bytes = createExportWrapper('mu_net_push_bytes', 2);
+  Module['_mu_net_push_disconnect'] = _mu_net_push_disconnect = createExportWrapper('mu_net_push_disconnect', 0);
   _emscripten_stack_get_end = wasmExports['emscripten_stack_get_end'];
   _emscripten_stack_get_base = wasmExports['emscripten_stack_get_base'];
-  _strerror = createExportWrapper('strerror', wasmExports['strerror'], 1);
-  _setThrew = createExportWrapper('setThrew', wasmExports['setThrew'], 2);
+  _strerror = createExportWrapper('strerror', 1);
+  _setThrew = createExportWrapper('setThrew', 2);
   _emscripten_stack_init = wasmExports['emscripten_stack_init'];
   _emscripten_stack_get_free = wasmExports['emscripten_stack_get_free'];
   __emscripten_stack_restore = wasmExports['_emscripten_stack_restore'];
   __emscripten_stack_alloc = wasmExports['_emscripten_stack_alloc'];
   _emscripten_stack_get_current = wasmExports['emscripten_stack_get_current'];
-  dynCall_iii = createExportWrapper('dynCall_iii', wasmExports['dynCall_iii'], 3);
-  dynCall_ii = createExportWrapper('dynCall_ii', wasmExports['dynCall_ii'], 2);
-  dynCall_iiii = createExportWrapper('dynCall_iiii', wasmExports['dynCall_iiii'], 4);
-  dynCall_v = createExportWrapper('dynCall_v', wasmExports['dynCall_v'], 1);
-  dynCall_vii = createExportWrapper('dynCall_vii', wasmExports['dynCall_vii'], 3);
-  dynCall_vi = createExportWrapper('dynCall_vi', wasmExports['dynCall_vi'], 2);
-  dynCall_viiiii = createExportWrapper('dynCall_viiiii', wasmExports['dynCall_viiiii'], 6);
-  dynCall_viiiiiii = createExportWrapper('dynCall_viiiiiii', wasmExports['dynCall_viiiiiii'], 8);
-  dynCall_viiii = createExportWrapper('dynCall_viiii', wasmExports['dynCall_viiii'], 5);
-  dynCall_viii = createExportWrapper('dynCall_viii', wasmExports['dynCall_viii'], 4);
-  dynCall_iiiii = createExportWrapper('dynCall_iiiii', wasmExports['dynCall_iiiii'], 5);
-  dynCall_iiiiiii = createExportWrapper('dynCall_iiiiiii', wasmExports['dynCall_iiiiiii'], 7);
-  dynCall_iiiiii = createExportWrapper('dynCall_iiiiii', wasmExports['dynCall_iiiiii'], 6);
-  dynCall_i = createExportWrapper('dynCall_i', wasmExports['dynCall_i'], 1);
-  dynCall_viiiiiiiii = createExportWrapper('dynCall_viiiiiiiii', wasmExports['dynCall_viiiiiiiii'], 10);
-  dynCall_iiiji = createExportWrapper('dynCall_iiiji', wasmExports['dynCall_iiiji'], 5);
-  dynCall_iiji = createExportWrapper('dynCall_iiji', wasmExports['dynCall_iiji'], 4);
-  dynCall_iij = createExportWrapper('dynCall_iij', wasmExports['dynCall_iij'], 3);
-  dynCall_jii = createExportWrapper('dynCall_jii', wasmExports['dynCall_jii'], 3);
-  dynCall_iiiiiiiii = createExportWrapper('dynCall_iiiiiiiii', wasmExports['dynCall_iiiiiiiii'], 9);
-  dynCall_viiiiii = createExportWrapper('dynCall_viiiiii', wasmExports['dynCall_viiiiii'], 7);
-  dynCall_jiji = createExportWrapper('dynCall_jiji', wasmExports['dynCall_jiji'], 4);
-  dynCall_iidiiiii = createExportWrapper('dynCall_iidiiiii', wasmExports['dynCall_iidiiiii'], 8);
-  memory = wasmMemory = wasmExports['memory'];
-  __indirect_function_table = wasmTable = wasmExports['__indirect_function_table'];
+  dynCall_vi = createExportWrapper('dynCall_vi', 2);
+  dynCall_vii = createExportWrapper('dynCall_vii', 3);
+  dynCall_iiii = createExportWrapper('dynCall_iiii', 4);
+  dynCall_iii = createExportWrapper('dynCall_iii', 3);
+  dynCall_ii = createExportWrapper('dynCall_ii', 2);
+  dynCall_iiiii = createExportWrapper('dynCall_iiiii', 5);
+  dynCall_iiji = createExportWrapper('dynCall_iiji', 4);
+  dynCall_iiiji = createExportWrapper('dynCall_iiiji', 5);
+  dynCall_iiiiii = createExportWrapper('dynCall_iiiiii', 6);
+  dynCall_viiii = createExportWrapper('dynCall_viiii', 5);
+  dynCall_iiiiiii = createExportWrapper('dynCall_iiiiiii', 7);
+  dynCall_iij = createExportWrapper('dynCall_iij', 3);
+  dynCall_viiiii = createExportWrapper('dynCall_viiiii', 6);
+  dynCall_viii = createExportWrapper('dynCall_viii', 4);
+  dynCall_jii = createExportWrapper('dynCall_jii', 3);
+  dynCall_iiiiiiiii = createExportWrapper('dynCall_iiiiiiiii', 9);
+  dynCall_viiiiii = createExportWrapper('dynCall_viiiiii', 7);
+  dynCall_viiiiiiiii = createExportWrapper('dynCall_viiiiiiiii', 10);
+  dynCall_viiiiiii = createExportWrapper('dynCall_viiiiiii', 8);
+  dynCall_v = createExportWrapper('dynCall_v', 1);
+  dynCall_jiji = createExportWrapper('dynCall_jiji', 4);
+  dynCall_iidiiii = createExportWrapper('dynCall_iidiiii', 7);
 }
-
 var wasmImports = {
   /** @export */
   __assert_fail: ___assert_fail,
@@ -12379,6 +12144,8 @@ var wasmImports = {
   _emscripten_throw_longjmp: __emscripten_throw_longjmp,
   /** @export */
   clock_time_get: _clock_time_get,
+  /** @export */
+  emscripten_asm_const_double: _emscripten_asm_const_double,
   /** @export */
   emscripten_asm_const_int: _emscripten_asm_const_int,
   /** @export */
@@ -12516,8 +12283,6 @@ var wasmImports = {
   /** @export */
   gluPerspective: _gluPerspective,
   /** @export */
-  invoke_i,
-  /** @export */
   invoke_ii,
   /** @export */
   invoke_iii,
@@ -12534,6 +12299,8 @@ var wasmImports = {
   /** @export */
   invoke_viiiiiiiii
 };
+var wasmExports;
+createWasm();
 
 function invoke_iii(index,a1,a2) {
   var sp = stackSave();
@@ -12541,7 +12308,7 @@ function invoke_iii(index,a1,a2) {
     return dynCall_iii(index,a1,a2);
   } catch(e) {
     stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
+    if (e !== e+0) throw e;
     _setThrew(1, 0);
   }
 }
@@ -12552,18 +12319,7 @@ function invoke_ii(index,a1) {
     return dynCall_ii(index,a1);
   } catch(e) {
     stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_vi(index,a1) {
-  var sp = stackSave();
-  try {
-    dynCall_vi(index,a1);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
+    if (e !== e+0) throw e;
     _setThrew(1, 0);
   }
 }
@@ -12574,7 +12330,7 @@ function invoke_viii(index,a1,a2,a3) {
     dynCall_viii(index,a1,a2,a3);
   } catch(e) {
     stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
+    if (e !== e+0) throw e;
     _setThrew(1, 0);
   }
 }
@@ -12585,18 +12341,18 @@ function invoke_vii(index,a1,a2) {
     dynCall_vii(index,a1,a2);
   } catch(e) {
     stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
+    if (e !== e+0) throw e;
     _setThrew(1, 0);
   }
 }
 
-function invoke_i(index) {
+function invoke_vi(index,a1) {
   var sp = stackSave();
   try {
-    return dynCall_i(index);
+    dynCall_vi(index,a1);
   } catch(e) {
     stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
+    if (e !== e+0) throw e;
     _setThrew(1, 0);
   }
 }
@@ -12607,7 +12363,7 @@ function invoke_iiiii(index,a1,a2,a3,a4) {
     return dynCall_iiiii(index,a1,a2,a3,a4);
   } catch(e) {
     stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
+    if (e !== e+0) throw e;
     _setThrew(1, 0);
   }
 }
@@ -12618,7 +12374,7 @@ function invoke_iiii(index,a1,a2,a3) {
     return dynCall_iiii(index,a1,a2,a3);
   } catch(e) {
     stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
+    if (e !== e+0) throw e;
     _setThrew(1, 0);
   }
 }
@@ -12629,7 +12385,7 @@ function invoke_viiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
     dynCall_viiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9);
   } catch(e) {
     stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
+    if (e !== e+0) throw e;
     _setThrew(1, 0);
   }
 }
@@ -12670,40 +12426,56 @@ function stackCheckInit() {
   writeStackCookie();
 }
 
-async function run() {
-  assert(!calledRun);
-  calledRun = true;
+function run() {
+
+  if (runDependencies > 0) {
+    dependenciesFulfilled = run;
+    return;
+  }
 
   stackCheckInit();
 
   preRun();
 
-  if (runDependencies) {
-    await resolveRunDependencies();
+  // a preRun added a dependency, run will be called later
+  if (runDependencies > 0) {
+    dependenciesFulfilled = run;
+    return;
   }
 
-  var setStatus = Module['setStatus'];
-  if (setStatus) {
-    setStatus('Running...');
-    // Yield to the event loop to allow the browser to paint "Running..."
-    await new Promise((resolve) => setTimeout(resolve, 1));
-    // Then we want to clear the status text, but only after the rest of this function runs.
-    setTimeout(setStatus, 1, '');
+  function doRun() {
+    // run may have just been called through dependencies being fulfilled just in this very frame,
+    // or while the async setStatus time below was happening
+    assert(!calledRun);
+    calledRun = true;
+    Module['calledRun'] = true;
+
+    if (ABORT) return;
+
+    initRuntime();
+
+    preMain();
+
+    Module['onRuntimeInitialized']?.();
+    consumedModuleProp('onRuntimeInitialized');
+
+    var noInitialRun = Module['noInitialRun'] || false;
+    if (!noInitialRun) callMain();
+
+    postRun();
   }
 
-  if (ABORT) return;
-
-  initRuntime();
-
-  // No ATMAINS hooks
-
-  Module['onRuntimeInitialized']?.();
-  consumedModuleProp('onRuntimeInitialized');
-
-  var noInitialRun = Module['noInitialRun'] || false;
-  if (!noInitialRun) callMain();
-
-  postRun();
+  if (Module['setStatus']) {
+    Module['setStatus']('Running...');
+    setTimeout(() => {
+      setTimeout(() => Module['setStatus'](''), 1);
+      doRun();
+    }, 1);
+  } else
+  {
+    doRun();
+  }
+  checkStackCookie();
 }
 
 function checkUnflushedContent() {
@@ -12727,11 +12499,16 @@ function checkUnflushedContent() {
   try { // it doesn't matter if it fails
     _fflush(0);
     // also flush in the JS FS layer
-    for (var tty of Object.values(TTY.ttys)) {
-      if (tty.output.length) {
+    ['stdout', 'stderr'].forEach((name) => {
+      var info = FS.analyzePath('/dev/' + name);
+      if (!info) return;
+      var stream = info.object;
+      var rdev = stream.rdev;
+      var tty = TTY.ttys[rdev];
+      if (tty?.output?.length) {
         has = true;
       }
-    }
+    });
   } catch(e) {}
   out = oldOut;
   err = oldErr;
@@ -12740,11 +12517,18 @@ function checkUnflushedContent() {
   }
 }
 
-var wasmExports;
+function preInit() {
+  if (Module['preInit']) {
+    if (typeof Module['preInit'] == 'function') Module['preInit'] = [Module['preInit']];
+    while (Module['preInit'].length > 0) {
+      Module['preInit'].shift()();
+    }
+  }
+  consumedModuleProp('preInit');
+}
 
-// With async instantation wasmExports is assigned asynchronously when the
-// instance is received.
-createWasm().then(() => run());
+preInit();
+run();
 
 // end include: postamble.js
 

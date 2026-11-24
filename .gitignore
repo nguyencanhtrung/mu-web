@@ -3,6 +3,7 @@ src/server/build/
 build/
 *.o
 *.obj
+!src/client/Client/Data/World*/EncTerrain*.obj
 *.dmp
 *.flag
 

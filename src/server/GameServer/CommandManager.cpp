@@ -20,6 +20,9 @@
 #include "Util.h"
 #include "Monster.h"
 #include "InvasionManager.h"
+#include "DefaultClassInfo.h"
+#include <cerrno>
+#include <cstdlib>
 
 CCommandManager gCommandManager;
 
@@ -539,6 +542,17 @@ bool CCommandManager::ManagementCore(LPOBJ lpObj, char* message)
 		{
 			this->CommandGm(lpObj, argument);
 
+			break;
+		}
+
+		case COMMAND_GM_SET_STR:
+		case COMMAND_GM_SET_ENE:
+		case COMMAND_GM_SET_RESET:
+		case COMMAND_GM_SET_LEVEL:
+		case COMMAND_GM_SET_AGI:
+		case COMMAND_GM_SET_VIT:
+		{
+			this->CommandGMSet(lpObj, argument, CommandData.Index);
 			break;
 		}
 	}
@@ -1114,6 +1128,9 @@ void CCommandManager::DGCommandResetRecv(SDHP_COMMAND_RESET_RECV* lpMsg)
 
 	lpObj->Experience = gLevelExperience[lpObj->Level - 1];
 
+	// In keep-stats mode, award only the newly earned reset points.
+	int previousResetPoint = (gServerInfo.m_CommandResetStats[lpObj->AccountLevel] == 0) ? gResetTable.GetResetPoint(lpObj) : 0;
+
 	lpObj->Reset += gBonusManager.GetBonusValue(lpObj, BONUS_INDEX_RESET_AMOUNT, gServerInfo.m_CommandResetCount[lpObj->AccountLevel], -1, -1, -1, -1);
 
 	lpMsg->ResetDay += gBonusManager.GetBonusValue(lpObj, BONUS_INDEX_RESET_AMOUNT, gServerInfo.m_CommandResetCount[lpObj->AccountLevel], -1, -1, -1, -1);
@@ -1205,6 +1222,11 @@ void CCommandManager::DGCommandResetRecv(SDHP_COMMAND_RESET_RECV* lpMsg)
 		lpObj->Vitality = gDefaultClassInfo.m_DefaultClassInfo[lpObj->Class].Vitality;
 
 		lpObj->Energy = gDefaultClassInfo.m_DefaultClassInfo[lpObj->Class].Energy;
+	}
+	else
+	{
+		int point = gResetTable.GetResetPoint(lpObj) - previousResetPoint;
+		lpObj->LevelUpPoint += (point * gServerInfo.m_CommandResetPointRate[lpObj->Class]) / 100;
 	}
 
 	gObjectManager.CharacterCalcAttribute(lpObj->Index);
@@ -2115,6 +2137,102 @@ void CCommandManager::CommandGMTamaStart(LPOBJ lpObj, char* arg)
 	gNotice.GCNoticeSend(lpObj->Index, 1, "Tamachan programado. Inicio en aproximadamente 2 minutos.");
 
 	gLog.Output(LOG_COMMAND, "[CommandTamaStart][%s][%s] - (InvasionIndex: %d)", lpObj->Account, lpObj->Name, tamachanIndex);
+}
+
+void CCommandManager::CommandGMSet(LPOBJ lpObj, char* arg, int command)
+{
+	if (gGameMaster.CheckGameMasterLevel(lpObj, 1) == false)
+	{
+		gNotice.GCNoticeSend(lpObj->Index, 1, "[GM] Enable GM mode with /gm on first.");
+		return;
+	}
+
+	const char* name;
+	int minimum = 0;
+	int maximum;
+
+	switch (command)
+	{
+		case COMMAND_GM_SET_STR:
+			name = "/setstr";
+			minimum = gDefaultClassInfo.m_DefaultClassInfo[lpObj->Class].Strength;
+			maximum = gServerInfo.m_MaxStatPoint[lpObj->AccountLevel];
+			break;
+		case COMMAND_GM_SET_ENE:
+			name = "/setene";
+			minimum = gDefaultClassInfo.m_DefaultClassInfo[lpObj->Class].Energy;
+			maximum = gServerInfo.m_MaxStatPoint[lpObj->AccountLevel];
+			break;
+		case COMMAND_GM_SET_AGI:
+			name = "/setagi";
+			minimum = gDefaultClassInfo.m_DefaultClassInfo[lpObj->Class].Dexterity;
+			maximum = gServerInfo.m_MaxStatPoint[lpObj->AccountLevel];
+			break;
+		case COMMAND_GM_SET_VIT:
+			name = "/setvit";
+			minimum = gDefaultClassInfo.m_DefaultClassInfo[lpObj->Class].Vitality;
+			maximum = gServerInfo.m_MaxStatPoint[lpObj->AccountLevel];
+			break;
+		case COMMAND_GM_SET_RESET:
+			name = "/setreset";
+			maximum = gServerInfo.m_CommandResetLimit[lpObj->AccountLevel];
+			break;
+		case COMMAND_GM_SET_LEVEL:
+			name = "/setlevel";
+			minimum = 1;
+			maximum = gServerInfo.m_MaxCharacterLevel;
+			break;
+		default:
+			return;
+	}
+
+	// Accept one decimal integer only; reject overflow and trailing arguments.
+	while (*arg == ' ' || *arg == '\t') { ++arg; }
+	char* end;
+	errno = 0;
+	long value = strtol(arg, &end, 10);
+	bool valid = (end != arg && *arg >= '0' && *arg <= '9' && errno != ERANGE);
+	while (*end == ' ' || *end == '\t') { ++end; }
+	if (!valid || *end != '\0' || value < minimum || value > maximum)
+	{
+		gNotice.GCNoticeSend(lpObj->Index, 1, "[GM] Usage: %s <value> (%d..%d)", name, minimum, maximum);
+		return;
+	}
+
+	switch (command)
+	{
+		case COMMAND_GM_SET_STR:
+			lpObj->Strength = (int)value;
+			break;
+		case COMMAND_GM_SET_ENE:
+			lpObj->Energy = (int)value;
+			break;
+		case COMMAND_GM_SET_AGI:
+			lpObj->Dexterity = (int)value;
+			break;
+		case COMMAND_GM_SET_VIT:
+			lpObj->Vitality = (int)value;
+			break;
+		case COMMAND_GM_SET_RESET:
+			lpObj->Reset = (int)value;
+			break;
+		case COMMAND_GM_SET_LEVEL:
+			lpObj->Level = (short)value;
+			lpObj->Experience = gLevelExperience[lpObj->Level - 1];
+			gObjCalcExperience(lpObj);
+			break;
+	}
+
+	gObjectManager.CharacterCalcAttribute(lpObj->Index);
+	GCNewCharacterInfoSend(lpObj);
+	if (command == COMMAND_GM_SET_RESET)
+	{
+		// Solo saves reset totals in a separate extension, with no daily counters.
+		GDResetInfoSaveSend(lpObj->Index, 0, 0, 0);
+	}
+	GDCharacterInfoSaveSend(lpObj->Index);
+	gNotice.GCNoticeSend(lpObj->Index, 1, "[GM] %s = %d", name, (int)value);
+	gLog.Output(LOG_COMMAND, "[CommandGMSet][%s][%s] %s = %d", lpObj->Account, lpObj->Name, name, (int)value);
 }
 
 void CCommandManager::CommandGm(LPOBJ lpObj, char* arg)

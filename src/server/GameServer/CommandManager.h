@@ -37,6 +37,12 @@ enum eCommandNumber
 	COMMAND_GM_MAKEMOB = 29,
 	COMMAND_GM_TAMASTART = 30,
 	COMMAND_GM = 31,
+	COMMAND_GM_SET_STR = 32,
+	COMMAND_GM_SET_ENE = 33,
+	COMMAND_GM_SET_RESET = 34,
+	COMMAND_GM_SET_LEVEL = 35,
+	COMMAND_GM_SET_AGI = 36,
+	COMMAND_GM_SET_VIT = 37,
 };
 
 //**********************************************//
@@ -226,6 +232,8 @@ public:
 	void CommandGMTamaStart(LPOBJ lpObj, char* arg);
 
 	void CommandGm(LPOBJ lpObj, char* arg);
+
+	void CommandGMSet(LPOBJ lpObj, char* arg, int command);
 
 private:
 

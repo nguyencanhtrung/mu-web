@@ -49,6 +49,12 @@ $ConfigFile = Join-Path $ClientDir "Client\Config.ini"
 $WebDir = Join-Path $RepoRoot "web"
 $SourcesList = Join-Path $ClientDir "m2-sources.txt"
 
+# EncTerrain*.obj are game placement assets, not compiler object files.
+& node (Join-Path $ClientDir "test-assets.cjs") --source-only
+if ($LASTEXITCODE -ne 0) {
+    throw "Required map placement assets are missing. Client build stopped."
+}
+
 New-Item -ItemType Directory -Force -Path $ObjDir, $ProofDir, $WebDir | Out-Null
 
 if (-not (Test-Path $DataDir)) {
@@ -157,7 +163,7 @@ Write-Host "Link successful." -ForegroundColor Green
 $patchScript = Join-Path $ClientDir "patch-login-page.ps1"
 if (Test-Path $patchScript) {
     Write-Host "Applying WebGL patches..." -ForegroundColor Cyan
-    & powershell -NoProfile -File $patchScript -Token login103
+    & powershell -NoProfile -File $patchScript -Token login107
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Patching failed!"
         exit 1

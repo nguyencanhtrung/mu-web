@@ -25,6 +25,9 @@ if errorlevel 1 (
 
 set "CLIENT_DIR=%~dp0"
 if "%CLIENT_DIR:~-1%"=="\" set "CLIENT_DIR=%CLIENT_DIR:~0,-1%"
+
+node "%CLIENT_DIR%\test-assets.cjs" --source-only
+if errorlevel 1 exit /b 1
 for %%I in ("%CLIENT_DIR%\..\..") do set "REPO_ROOT=%%~fI"
 
 set "OUT=%CLIENT_DIR%\out"
@@ -60,7 +63,7 @@ if errorlevel 1 (
 )
 echo LINK_OK
 
-powershell -NoProfile -File "%CLIENT_DIR%\patch-login-page.ps1" -Token login103
+powershell -NoProfile -File "%CLIENT_DIR%\patch-login-page.ps1" -Token login107
 if errorlevel 1 (
   echo PATCH_FAIL
   exit /b 1
